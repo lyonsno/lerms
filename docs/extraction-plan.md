@@ -17,6 +17,16 @@ Current Perceptasia branch:
 cc/palm-daddy-live-receipt-video-0609
 ```
 
+## Source Truth
+
+The repo ontology source is:
+
+```text
+docs/ontology.md
+```
+
+README and attractor docs should compress or operationalize that ontology, not replace it.
+
 ## Extraction Boundary
 
 Extract contracts, not raw history.

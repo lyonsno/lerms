@@ -1,13 +1,18 @@
 # LERMS
 
-LERMS is the emerging hand-tracked hill-defense game spun out of the Perceptasia finger-fluid proving route.
+LERMS is the hand-tracked glove-wealth ecology spun out of the Perceptasia finger-fluid proving route.
 
-The current playable attractor is simple and specific:
+The source ontology lives in [docs/ontology.md](docs/ontology.md). That document is the stronger truth; this README is only the compressed public face.
+
+The core frame is not "tower defense" and not "gesture shooter." A glove guards a hoard it cannot hold, using fluids it secretes from finger pores, against worm-lemming thieves that convert stolen wealth into terrain, offspring, infrastructure, and political movement.
+
+The current playable attractor is specific:
 
 - A small ghostly caster hand sits near the bottom of the screen.
 - Finger direction emits colored finger juice into a terrain field.
-- Lerms climb the hill-of-hills toward the glove's treasure hoard.
-- The treasure is made of chunky coins called goins.
+- Lerms climb the breathing hill-of-hills toward the glove's hoard.
+- Glove wealth is made of touched, handled, lost, pocketed, clasped objects.
+- Its most important unit is the goin: a thickened coin-puck of portable desire.
 - Lerms steal goins and run away with them.
 - Beaming a fleeing goin-carrier makes it drop the goin.
 - Dropped goins roll down the hill, pulling nearby lerms away from the hoard.
@@ -28,12 +33,14 @@ This repo exists so design, gameplay, renderer, asset, and integration work can 
 
 - Input contract: bottom-anchored caster hand, fingertip direction, finger identity, fist/charge, and live route latency truth.
 - Terrain contract: cylinder-channel hill-of-hills with rounded hills, valleys, floors, ceilings, periodic variation, and slow roiling motion.
-- Fluid contract: world-space finger-juice transport that can arc, pool, splash, push, and affect lerm species differently.
-- Enemy contract: lerms as species with silhouettes, motion, fluid constitutions, and goin-stealing behavior.
-- Treasure contract: goins as physical bait, score, distraction, and reverse-flow crowd-control objects.
+- Fluid contract: five finger juices as action-without-touch: index knockback, middle adhesive gunk, ring fertilizer, thumb slick, and pinky weirdness.
+- Enemy contract: lerms as species with silhouettes, motion, fluid constitutions, theft behavior, and stolen-wealth metabolism.
+- Treasure contract: goins and other glove wealth as bait, score, heat, infrastructure substrate, and reverse-flow crowd-control objects.
 
 ## Development Posture
 
 Do not flatten this into a generic shooter, tower defense toy, or particle demo. The hand, terrain, fluid, lerms, and goins should all rhyme mechanically and visually.
 
 The first useful game loop is not damage. It is theft, interruption, dropped treasure, and redirected crowd desire.
+
+The deeper promise is property becoming ecology: a false hand replaces touch with weather, and the hill remembers bad decisions by tilting them into new forms.
