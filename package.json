@@ -1,0 +1,16 @@
+{
+  "name": "lerms",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "vite": "^8.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}
