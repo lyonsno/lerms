@@ -29,6 +29,10 @@ http://localhost:8742/?hand_blocks=1&finger_fluid=1&finger_fluid_swarm=1&finger_
 
 This repo exists so design, gameplay, renderer, asset, and integration work can start accruing under the game name instead of living indefinitely as a Perceptasia side quest.
 
+## Campaign Map
+
+The playable architecture lives in [docs/campaign-map.md](docs/campaign-map.md). The short version: the first real vertical is not a prettier particle effect. It is the steal/drop/reroute spine where lerms climb toward glove wealth, steal goins, get interrupted by finger juice, drop goins, and redirect the swarm.
+
 ## First Extraction Targets
 
 - Input contract: bottom-anchored caster hand, fingertip direction, finger identity, fist/charge, and live route latency truth.
