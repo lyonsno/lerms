@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   summarizeFirstVerticalFrame,
+  type FirstVerticalFrame,
+  type FirstVerticalSummary,
   type SourceTruth,
   type TerrainSample
 } from './first-vertical.ts';
@@ -11,7 +13,7 @@ import { buildRedLermBodyMotionWitness } from '../red-lerm-body-motion.ts';
 import { composeFirstVerticalFrame } from './first-vertical-composer.ts';
 import type { HillOfHillsTerrain, HillOfHillsTerrainParams } from '../terrain/hill-of-hills.ts';
 
-const ROUTE = 'first-vertical-composer/witness-file' as const;
+export const FIRST_VERTICAL_COMPOSER_WITNESS_ROUTE = 'first-vertical-composer/witness-file' as const;
 
 interface CliArgs {
   out: string | null;
@@ -19,6 +21,30 @@ interface CliArgs {
   timestampMs: number;
   maxSampleAgeMs: number;
   redSampleAgeMs: number;
+}
+
+export interface FirstVerticalComposerFixtureFrameOptions {
+  frameId: string;
+  timestampMs: number;
+  maxSampleAgeMs?: number;
+  redSampleAgeMs?: number;
+}
+
+export interface FirstVerticalComposerWitnessReport {
+  ok: true;
+  phase: 'complete';
+  route: typeof FIRST_VERTICAL_COMPOSER_WITNESS_ROUTE;
+  outputPath: string;
+  authorityNote: 'integrated fixture evidence; not a live first vertical';
+  chamberId: 'lerms-underhill';
+  intentionallyEmpty: {
+    liveFingerJuicePackets: true;
+    liveGoinPhysics: true;
+    liveCrowdAi: true;
+    generatedLermMotion: true;
+  };
+  frame: FirstVerticalFrame;
+  summary: FirstVerticalSummary;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -81,40 +107,13 @@ export function runFirstVerticalComposerWitnessCli(argv = process.argv.slice(2))
   }
 
   try {
-    const terrain = buildTerrainFixture(args.timestampMs);
-    const redLermWitness = buildRedLermBodyMotionWitness();
-    const redFrame = {
-      ...redLermWitness.firstVerticalFrame,
-      source: {
-        ...redLermWitness.firstVerticalFrame.source,
-        sampleAgeMs: args.redSampleAgeMs
-      }
-    };
-    const frame = composeFirstVerticalFrame({
+    writeJson(args.out, buildFirstVerticalComposerWitnessReport({
+      outputPath: args.out,
       frameId: args.frameId,
       timestampMs: args.timestampMs,
-      terrain,
-      sources: [redFrame],
-      maxSampleAgeMs: args.maxSampleAgeMs
-    });
-    const summary = summarizeFirstVerticalFrame(frame);
-
-    writeJson(args.out, {
-      ok: true,
-      phase: 'complete',
-      route: ROUTE,
-      outputPath: args.out,
-      authorityNote: 'integrated fixture evidence; not a live first vertical',
-      chamberId: 'lerms-underhill',
-      intentionallyEmpty: {
-        liveFingerJuicePackets: true,
-        liveGoinPhysics: true,
-        liveCrowdAi: true,
-        generatedLermMotion: true
-      },
-      frame,
-      summary
-    });
+      maxSampleAgeMs: args.maxSampleAgeMs,
+      redSampleAgeMs: args.redSampleAgeMs
+    }));
     return 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -123,7 +122,7 @@ export function runFirstVerticalComposerWitnessCli(argv = process.argv.slice(2))
       phase: 'composing-first-vertical-frame',
       failureKind: 'composer-frame-invalid',
       error: message,
-      route: ROUTE,
+      route: FIRST_VERTICAL_COMPOSER_WITNESS_ROUTE,
       lastTrustworthyEvidence: {
         outputPath: args.out,
         redSampleAgeMs: args.redSampleAgeMs,
@@ -132,6 +131,64 @@ export function runFirstVerticalComposerWitnessCli(argv = process.argv.slice(2))
     });
     return 1;
   }
+}
+
+export function buildFirstVerticalComposerWitnessReport({
+  outputPath,
+  frameId,
+  timestampMs,
+  maxSampleAgeMs = 500,
+  redSampleAgeMs = 0
+}: FirstVerticalComposerFixtureFrameOptions & { outputPath: string }): FirstVerticalComposerWitnessReport {
+  const frame = buildFirstVerticalComposerFixtureFrame({
+    frameId,
+    timestampMs,
+    maxSampleAgeMs,
+    redSampleAgeMs
+  });
+  const summary = summarizeFirstVerticalFrame(frame);
+
+  return {
+    ok: true,
+    phase: 'complete',
+    route: FIRST_VERTICAL_COMPOSER_WITNESS_ROUTE,
+    outputPath,
+    authorityNote: 'integrated fixture evidence; not a live first vertical',
+    chamberId: 'lerms-underhill',
+    intentionallyEmpty: {
+      liveFingerJuicePackets: true,
+      liveGoinPhysics: true,
+      liveCrowdAi: true,
+      generatedLermMotion: true
+    },
+    frame,
+    summary
+  };
+}
+
+export function buildFirstVerticalComposerFixtureFrame({
+  frameId,
+  timestampMs,
+  maxSampleAgeMs = 500,
+  redSampleAgeMs = 0
+}: FirstVerticalComposerFixtureFrameOptions): FirstVerticalFrame {
+  const terrain = buildTerrainFixture(timestampMs);
+  const redLermWitness = buildRedLermBodyMotionWitness();
+  const redFrame = {
+    ...redLermWitness.firstVerticalFrame,
+    source: {
+      ...redLermWitness.firstVerticalFrame.source,
+      sampleAgeMs: redSampleAgeMs
+    }
+  };
+
+  return composeFirstVerticalFrame({
+    frameId,
+    timestampMs,
+    terrain,
+    sources: [redFrame],
+    maxSampleAgeMs
+  });
 }
 
 function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
