@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "test:contracts": "rm -rf /tmp/lerms-contract-tests && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir /tmp/lerms-contract-tests --noEmit false src/contracts/first-vertical.ts tests/first-vertical-contracts.ts && node /tmp/lerms-contract-tests/tests/first-vertical-contracts.js",
     "test:red-lerm": "node --experimental-strip-types tests/red-lerm-body-motion-contracts.mjs && node tests/red-lerm-body-motion-witness-contracts.mjs",
     "witness:red-lerm": "node --experimental-strip-types src/red-lerm-body-motion-witness.ts",
     "typecheck": "tsc --noEmit"

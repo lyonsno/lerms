@@ -1,5 +1,24 @@
 export const RED_LERM_BODY_MOTION_SCHEMA = 'lerms.red-lerm-body-motion.v0' as const;
 
+import {
+  CARRIER_DROP_EVENT_SCHEMA,
+  FIRST_VERTICAL_INTERFACE_SCHEMA,
+  GOIN_STATE_SCHEMA,
+  JUICE_HIT_EVENT_SCHEMA,
+  LERM_STATE_SCHEMA,
+  SOURCE_TRUTH_SCHEMA,
+  TERRAIN_SAMPLE_SCHEMA,
+  type CarrierDropEvent,
+  type FirstVerticalFrame,
+  type GoinState,
+  type JuiceHitEvent,
+  type LermState,
+  type SimulationAuthority,
+  type SourceTruth,
+  type TerrainSample,
+  type Vec3,
+} from './contracts/first-vertical.ts';
+
 export type RedLermSourceKind = 'fixture' | 'authored' | 'generated' | 'live';
 export type RedLermSourceStatus = RedLermSourceKind | 'fallback';
 export type RedLermStateBucket =
@@ -92,7 +111,36 @@ export type RedLermBodyMotionWitness = {
   };
   sourceTruth: RedLermSourceTruth;
   samples: RedLermBodyMotionSample[];
+  firstVerticalFrame: FirstVerticalFrame;
   stateBuckets: Record<RedLermStateBucket, number>;
+  motionAdapter: {
+    schema: 'lerms.red-lerm-motion-adapter.v0';
+    sourceFrame: string;
+    worldFrame: 'lerms.first-vertical.world.v0';
+    units: 'world-units';
+    upAxis: 'y';
+    attachmentSlots: readonly [
+      'body_root',
+      'face_or_head',
+      'underside_or_feet',
+      'carry_socket',
+      'hit_reaction_anchor',
+      'trail_or_aura',
+    ];
+    featureEvidenceSockets: readonly string[];
+    adaptedPoseFields: readonly string[];
+  };
+  assetTruth: {
+    assetIdentity: 'lerms.red-lerm-body.prototype.v0';
+    speciesIdentity: 'lerms.red-lerm.v0';
+    bodySchemaIdentity: 'lerms.red-lerm-body-schema.v0';
+    representationKind: 'fixture';
+    truthStatus: 'scene-local-reference';
+    visualStatus: 'placeholder';
+    requestedRouteIdentity: string;
+    effectiveRouteIdentity: string;
+    motionContractIdentity: typeof RED_LERM_BODY_MOTION_SCHEMA;
+  };
   witnessFields: {
     stateBuckets: RedLermStateBucket[];
     sourceTruth: string[];
@@ -209,6 +257,50 @@ export function buildRedLermBodyMotionWitness(
     },
     sourceTruth,
     samples,
+    firstVerticalFrame: buildFirstVerticalFrame(sourceTruth, samples),
+    motionAdapter: {
+      schema: 'lerms.red-lerm-motion-adapter.v0',
+      sourceFrame: sourceTruth.effectiveMotionSource.id,
+      worldFrame: 'lerms.first-vertical.world.v0',
+      units: 'world-units',
+      upAxis: 'y',
+      attachmentSlots: [
+        'body_root',
+        'face_or_head',
+        'underside_or_feet',
+        'carry_socket',
+        'hit_reaction_anchor',
+        'trail_or_aura',
+      ],
+      featureEvidenceSockets: [
+        'rootMetrics.travelXZ',
+        'torsoFrame.chestRootHorizontalLean.range',
+        'limbEnvelope.handSpan.range',
+        'stanceContact.stanceWidth.range',
+        'expansionCompression.bboxVolume.range',
+        'eventSpikes.0.speed',
+      ],
+      adaptedPoseFields: [
+        'lerm.rootOffset',
+        'lerm.faceCueLead',
+        'lerm.bodyLean',
+        'lerm.scalePulse',
+        'lerm.envelopeRadius',
+        'lerm.eventAccent',
+        'lerm.footfallPulse',
+      ],
+    },
+    assetTruth: {
+      assetIdentity: 'lerms.red-lerm-body.prototype.v0',
+      speciesIdentity: 'lerms.red-lerm.v0',
+      bodySchemaIdentity: 'lerms.red-lerm-body-schema.v0',
+      representationKind: 'fixture',
+      truthStatus: 'scene-local-reference',
+      visualStatus: 'placeholder',
+      requestedRouteIdentity: sourceTruth.requestedMotionSource.route,
+      effectiveRouteIdentity: sourceTruth.effectiveMotionSource.route,
+      motionContractIdentity: RED_LERM_BODY_MOTION_SCHEMA,
+    },
     stateBuckets,
     witnessFields: {
       stateBuckets: STATE_BUCKETS,
@@ -222,6 +314,177 @@ export function buildRedLermBodyMotionWitness(
       ],
     },
   };
+}
+
+function buildFirstVerticalFrame(
+  sourceTruth: RedLermSourceTruth,
+  samples: readonly RedLermBodyMotionSample[],
+): FirstVerticalFrame {
+  const source = toFirstVerticalSourceTruth(sourceTruth, 'red-lerm-body-motion-frame');
+  const terrainSamples = samples.map((sampleItem) => toTerrainSample(source, sampleItem));
+  const lerms = samples.map((sampleItem) => toLermState(source, sampleItem));
+  const goins: GoinState[] = [
+    {
+      schema: GOIN_STATE_SCHEMA,
+      id: 'goin-hoard-nearest',
+      source,
+      state: 'dropped',
+      world: [0.08, 1.28, -0.12],
+      velocity: [0.1, -0.02, -0.45],
+      desireRadius: 1.2,
+      mass: 1,
+    },
+    {
+      schema: GOIN_STATE_SCHEMA,
+      id: 'loose-goin-gunk-gunk-gunk',
+      source,
+      state: 'rolling',
+      world: [0.16, 1.04, -0.42],
+      velocity: [0.18, -0.03, -0.62],
+      desireRadius: 1.45,
+      mass: 1,
+    },
+  ];
+  const juiceHits: JuiceHitEvent[] = [
+    {
+      schema: JUICE_HIT_EVENT_SCHEMA,
+      id: 'juice-hit-red-lerm-index-knockback',
+      source,
+      chemistry: 'index_knockback',
+      targetKind: 'lerm',
+      targetId: 'red-lerm-hit-reaction',
+      contactWorld: [0.1, 1.38, -0.02],
+      impulse: [0.35, 0.16, -0.7],
+      sourcePacketId: 'fixture-index-knockback-packet',
+      strength: 0.9,
+    },
+  ];
+  const carrierDropEvents: CarrierDropEvent[] = [
+    {
+      schema: CARRIER_DROP_EVENT_SCHEMA,
+      id: 'carrier-drop-red-lerm-goin-hoard-nearest',
+      source,
+      cause: 'juice_hit',
+      lermId: 'red-lerm-tumble-flail',
+      goinId: 'goin-hoard-nearest',
+      world: [0.08, 1.28, -0.12],
+      outgoingVelocity: [0.1, -0.02, -0.45],
+      rerouteRadius: 1.2,
+      triggeringHitId: 'juice-hit-red-lerm-index-knockback',
+    },
+  ];
+
+  return {
+    schema: FIRST_VERTICAL_INTERFACE_SCHEMA,
+    source,
+    terrainSamples,
+    lerms,
+    goins,
+    juiceHits,
+    carrierDropEvents,
+  };
+}
+
+function toFirstVerticalSourceTruth(sourceTruth: RedLermSourceTruth, frameId: string): SourceTruth {
+  return {
+    schema: SOURCE_TRUTH_SCHEMA,
+    authority: toFirstVerticalAuthority(sourceTruth),
+    route: sourceTruth.effectiveMotionSource.route,
+    frameId,
+    timestampMs: 0,
+    sampleAgeMs: 0,
+    backend: sourceTruth.effectiveMotionSource.id,
+    configId: sourceTruth.fixtureId,
+  };
+}
+
+function toFirstVerticalAuthority(sourceTruth: RedLermSourceTruth): SimulationAuthority {
+  if (sourceTruth.fallbackActive) return 'fallback';
+  if (sourceTruth.effectiveMotionSource.kind === 'fixture') return 'synthetic_fixture';
+  if (sourceTruth.effectiveMotionSource.kind === 'live') return 'live_simulation';
+  if (sourceTruth.effectiveMotionSource.kind === 'generated') return 'synthetic_fixture';
+  return 'visual_only';
+}
+
+function toTerrainSample(source: SourceTruth, sampleItem: RedLermBodyMotionSample): TerrainSample {
+  return {
+    schema: TERRAIN_SAMPLE_SCHEMA,
+    id: terrainSampleId(sampleItem),
+    source,
+    world: toWorld(sampleItem),
+    normal: sampleItem.terrainContact.normal,
+    height: Number((1.1 + sampleItem.terrainContact.slope * 0.45).toFixed(4)),
+    slope: sampleItem.terrainContact.slope,
+    region: sampleItem.stateBucket === 'approach-uphill' ? 'approach' : sampleItem.stateBucket === 'steal-goin' ? 'crown' : 'slope',
+  };
+}
+
+function toLermState(source: SourceTruth, sampleItem: RedLermBodyMotionSample): LermState {
+  const carryingGoinId = requiresFirstVerticalCarriedGoin(sampleItem)
+    ? sampleItem.goinInteraction.goinId ?? undefined
+    : undefined;
+  const targetGoinId =
+    sampleItem.rerouteIntent.kind === 'loose-goin-chase' || sampleItem.goinInteraction.kind === 'targeting'
+      ? sampleItem.goinInteraction.goinId ?? undefined
+      : undefined;
+
+  return {
+    schema: LERM_STATE_SCHEMA,
+    id: redLermSocketId(sampleItem),
+    source,
+    species: 'red',
+    state: toFirstVerticalLermState(sampleItem.stateBucket),
+    world: toWorld(sampleItem),
+    heading: headingToVec3(sampleItem.heading.angleRad),
+    terrainContact: {
+      terrainSampleId: terrainSampleId(sampleItem),
+      grounded: sampleItem.terrainContact.kind !== 'airborne',
+      contactWorld: toWorld(sampleItem),
+    },
+    carryingGoinId,
+    targetGoinId,
+    speed: sampleItem.locomotion.speed,
+    hitStunMs: sampleItem.hitReaction.kind === 'none' ? undefined : 220,
+  };
+}
+
+function terrainSampleId(sampleItem: RedLermBodyMotionSample): string {
+  return `terrain-${sampleItem.stateBucket}`;
+}
+
+function redLermSocketId(sampleItem: RedLermBodyMotionSample): string {
+  return `red-lerm-${sampleItem.stateBucket}`;
+}
+
+function toFirstVerticalLermState(stateBucket: RedLermStateBucket): LermState['state'] {
+  const states: Record<RedLermStateBucket, LermState['state']> = {
+    'approach-uphill': 'approaching_hoard',
+    'steal-goin': 'stealing_goin',
+    'carry-goin': 'carrying_goin',
+    'flee-with-goin': 'fleeing_with_goin',
+    'hit-reaction': 'hit_reacting',
+    'tumble-flail': 'tumbling',
+    'drop-goin': 'recovering',
+    'reroute-loose-goin': 'rerouting_to_goin',
+  };
+  return states[stateBucket];
+}
+
+function requiresFirstVerticalCarriedGoin(sampleItem: RedLermBodyMotionSample): boolean {
+  return sampleItem.stateBucket === 'steal-goin' || sampleItem.stateBucket === 'carry-goin' || sampleItem.stateBucket === 'flee-with-goin';
+}
+
+function toWorld(sampleItem: RedLermBodyMotionSample): Vec3 {
+  const t = sampleItem.t;
+  return [
+    Number((t * 0.18).toFixed(4)),
+    Number((1.42 - t * 0.1 + sampleItem.terrainContact.slope * 0.12).toFixed(4)),
+    Number((0.44 - t * 0.26).toFixed(4)),
+  ];
+}
+
+function headingToVec3(angleRad: number): Vec3 {
+  return [Number(Math.cos(angleRad).toFixed(4)), 0, Number(Math.sin(angleRad).toFixed(4))];
 }
 
 function buildFixtureSamples(): RedLermBodyMotionSample[] {

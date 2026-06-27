@@ -5,6 +5,15 @@ import {
   buildRedLermBodyMotionWitness,
   resolveRedLermBodyMotionSource,
 } from '../src/red-lerm-body-motion.ts';
+import {
+  CARRIER_DROP_EVENT_SCHEMA,
+  FIRST_VERTICAL_INTERFACE_SCHEMA,
+  GOIN_STATE_SCHEMA,
+  JUICE_HIT_EVENT_SCHEMA,
+  LERM_STATE_SCHEMA,
+  assertFirstVerticalFrame,
+  summarizeFirstVerticalFrame,
+} from '../src/contracts/first-vertical.ts';
 
 assert.equal(
   RED_LERM_BODY_MOTION_SCHEMA,
@@ -102,6 +111,58 @@ assert.deepEqual(witness.witnessFields.sourceTruth, [
   'fixtureId',
   'fallbackActive',
 ]);
+
+assert.equal(witness.firstVerticalFrame.schema, FIRST_VERTICAL_INTERFACE_SCHEMA);
+assertFirstVerticalFrame(witness.firstVerticalFrame);
+
+const frameSummary = summarizeFirstVerticalFrame(witness.firstVerticalFrame);
+assert.equal(frameSummary.authority, 'synthetic_fixture');
+assert.equal(frameSummary.lermCount, requiredStateBuckets.length);
+assert.equal(frameSummary.goinCount, 2);
+assert.equal(frameSummary.juiceHitCount, 1);
+assert.equal(frameSummary.carrierDropCount, 1);
+assert.equal(frameSummary.lermStateCounts.approaching_hoard, 1);
+assert.equal(frameSummary.lermStateCounts.stealing_goin, 1);
+assert.equal(frameSummary.lermStateCounts.carrying_goin, 1);
+assert.equal(frameSummary.lermStateCounts.fleeing_with_goin, 1);
+assert.equal(frameSummary.lermStateCounts.hit_reacting, 1);
+assert.equal(frameSummary.lermStateCounts.tumbling, 1);
+assert.equal(frameSummary.lermStateCounts.recovering, 1);
+assert.equal(frameSummary.lermStateCounts.rerouting_to_goin, 1);
+assert.equal(frameSummary.goinStateCounts.rolling, 1);
+
+const firstVerticalLerms = witness.firstVerticalFrame.lerms;
+const carryingLerms = firstVerticalLerms.filter((lerm) =>
+  ['stealing_goin', 'carrying_goin', 'fleeing_with_goin'].includes(lerm.state),
+);
+assert.equal(carryingLerms.length, 3);
+for (const lerm of carryingLerms) {
+  assert.equal(lerm.schema, LERM_STATE_SCHEMA);
+  assert.equal(lerm.species, 'red');
+  assert.equal(lerm.carryingGoinId, 'goin-hoard-nearest');
+}
+
+const carriedGoin = witness.firstVerticalFrame.goins.find((goin) => goin.id === 'goin-hoard-nearest');
+assert.ok(carriedGoin, 'carried goin socket exists');
+assert.equal(carriedGoin.schema, GOIN_STATE_SCHEMA);
+assert.equal(carriedGoin.state, 'dropped');
+
+const rollingGoin = witness.firstVerticalFrame.goins.find((goin) => goin.state === 'rolling');
+assert.ok(rollingGoin, 'rolling loose goin socket exists');
+assert.equal(rollingGoin.id, 'loose-goin-gunk-gunk-gunk');
+
+const juiceHit = witness.firstVerticalFrame.juiceHits[0];
+assert.equal(juiceHit.schema, JUICE_HIT_EVENT_SCHEMA);
+assert.equal(juiceHit.chemistry, 'index_knockback');
+assert.equal(juiceHit.targetKind, 'lerm');
+assert.equal(juiceHit.targetId, 'red-lerm-hit-reaction');
+
+const dropEvent = witness.firstVerticalFrame.carrierDropEvents[0];
+assert.equal(dropEvent.schema, CARRIER_DROP_EVENT_SCHEMA);
+assert.equal(dropEvent.cause, 'juice_hit');
+assert.equal(dropEvent.lermId, 'red-lerm-tumble-flail');
+assert.equal(dropEvent.goinId, 'goin-hoard-nearest');
+assert.equal(dropEvent.triggeringHitId, juiceHit.id);
 
 const liveFallback = resolveRedLermBodyMotionSource({
   requestedMotionSource: {
