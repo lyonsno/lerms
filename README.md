@@ -4,17 +4,17 @@ LERMS is the hand-tracked glove-wealth ecology spun out of the Perceptasia finge
 
 The source ontology lives in [docs/ontology.md](docs/ontology.md). That document is the stronger truth; this README is only the compressed public face.
 
-The core frame is not "tower defense" and not "gesture shooter." A glove guards a hoard it cannot hold, using fluids it secretes from finger pores, against worm-lemming thieves that convert stolen wealth into terrain, offspring, infrastructure, and political movement.
+A glove guards a hoard it cannot hold, using fluids it secretes from finger pores, against worm-lemming thieves that convert stolen wealth into terrain, offspring, infrastructure, and political movement.
 
 The current playable attractor is specific:
 
-- A small ghostly caster hand sits near the bottom of the screen.
+- A small caster glove avatar sits near the bottom of the screen.
 - Finger direction emits colored finger juice into a terrain field.
 - Lerms climb the breathing hill-of-hills toward the glove's hoard.
 - Glove wealth is made of touched, handled, lost, pocketed, clasped objects.
 - Its most important unit is the goin: a thickened coin-puck of portable desire.
 - Lerms steal goins and run away with them.
-- Beaming a fleeing goin-carrier makes it drop the goin.
+- Beaning a fleeing goin-carrier makes it drop the goin.
 - Dropped goins roll down the hill, pulling nearby lerms away from the hoard.
 
 This repo is the product/game surface. Perceptasia remains the hand-tracking proving viewport for now; WiLoR-MLX remains the model/backend substrate; Kaminos remains the likely source for serious renderer/fluid/terrain experiments before extraction.
@@ -45,6 +45,6 @@ The playable architecture lives in [docs/campaign-map.md](docs/campaign-map.md).
 
 Do not flatten this into a generic shooter, tower defense toy, or particle demo. The hand, terrain, fluid, lerms, and goins should all rhyme mechanically and visually.
 
-The first useful game loop is not damage. It is theft, interruption, dropped treasure, and redirected crowd desire.
+The first useful game loop is theft, interruption, dropped treasure, and redirected crowd desire.
 
 The deeper promise is property becoming ecology: a false hand replaces touch with weather, and the hill remembers bad decisions by tilting them into new forms.
