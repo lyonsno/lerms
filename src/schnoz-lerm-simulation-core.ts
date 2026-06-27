@@ -20,6 +20,12 @@ import {
   evaluateFirstVerticalSourceTruthUpgrade,
   type FirstVerticalSourceTruthUpgradeEvaluation,
 } from './contracts/first-vertical-source-truth-upgrade.ts';
+import {
+  adaptMushfingerClipletToSchnozMotion,
+  buildSchnozMotionAdapterInput,
+  type MushfingerClipletPlaybackSampleEnvelope,
+  type SchnozMotionAdapterOutput,
+} from './schnoz-motion-adapter.ts';
 
 export const SCHNOZ_SIM_ROUTE = 'lerms/schnoz-lerm-simulation/witness-file' as const;
 export const SCHNOZ_SIM_CONFIG_ID = 'schnoz-sim-steal-drop-reroute-v0' as const;
@@ -45,6 +51,7 @@ export type SchnozRenderLerm = {
   carryingGoinId?: string;
   targetGoinId?: string;
   hitStunMs?: number;
+  motionAdapter?: SchnozMotionAdapterOutput;
 };
 
 export type SchnozRenderGoin = {
@@ -313,7 +320,17 @@ function frame(
   hitFlash?: SchnozTimelineFrame['hitFlash'],
   reroute?: SchnozTimelineFrame['reroute'],
 ): SchnozTimelineFrame {
-  return { index, label, timeMs, events, lerms, goins, hitFlash, reroute, motionEvidence };
+  const adaptedLerms = lerms.map((item) => ({
+    ...item,
+    motionAdapter: adaptMushfingerClipletToSchnozMotion(buildSchnozMotionAdapterInput({
+      gameplayState: item.state,
+      carryingGoinId: item.carryingGoinId,
+      targetGoinId: item.targetGoinId,
+      hitStunMs: item.hitStunMs,
+      mushfingerPlaybackSample: mushfingerPlaybackSampleForFrame(index, motionEvidence),
+    })),
+  }));
+  return { index, label, timeMs, events, lerms: adaptedLerms, goins, hitFlash, reroute, motionEvidence };
 }
 
 function lerm(
@@ -330,4 +347,76 @@ function lerm(
 
 function goin(id: string, world: Vec3, state: GoinState['state']): SchnozRenderGoin {
   return { id, world, state };
+}
+
+function mushfingerPlaybackSampleForFrame(
+  index: number,
+  motionEvidence: SchnozMotionEvidence,
+): MushfingerClipletPlaybackSampleEnvelope {
+  const compression = compressionForLabel(motionEvidence.clipletLabel);
+  const effort = effortForLabel(motionEvidence.clipletLabel);
+  const sourceFrame = 148 + index * 5;
+  const interpolation = (index % 6) / 5;
+  return {
+    schema: 'kaminos.generated-motion-cliplet-playback-sample-envelope.v0',
+    playback: {
+      schema: 'kaminos.generated-motion-cliplet-playback-sample.v0',
+      playbackId: 'lerms_schnoz_proxy_mushfinger_playback_v0',
+      sourceClipId: 'panel_a_man_stops_short_startles_and_sprints_in__temporal_v0',
+      mode: 'loop',
+      t: Number((index * 0.12).toFixed(5)),
+      wrappedTime: Number((index * 0.12).toFixed(5)),
+      localTime: Number((index * 0.12).toFixed(5)),
+      interpolation,
+      segmentId: `lerms_schnoz_proxy_cliplet_${String(index).padStart(3, '0')}`,
+      segmentIndex: index,
+      labelGuess: motionEvidence.clipletLabel,
+      sourceTime: Number((4.93333 + index * 0.12).toFixed(5)),
+      sourceFrame,
+      sourceRange: {
+        startSourceFrame: sourceFrame,
+        endSourceFrame: sourceFrame + 7,
+        sourceStartTime: Number((4.93333 + index * 0.12).toFixed(5)),
+        sourceEndTime: Number((5.05333 + index * 0.12).toFixed(5)),
+      },
+    },
+    motionSample: {
+      root: [0.03 * index, 0.02 + compression * 0.03, 0.22 + index * 0.08],
+      attention: [0.08 * (index + 1), 0.05, 0.48 + index * 0.1],
+      effort,
+      phase: motionEvidence.sourcePhaseLabel,
+      temporalSample: {
+        sourceFrame,
+        time: Number((4.93333 + index * 0.12).toFixed(5)),
+        phaseLabel: motionEvidence.sourcePhaseLabel,
+        root: [0.03 * index, 0.02 + compression * 0.03, 0.22 + index * 0.08],
+        chestRoot: [index % 2 === 0 ? 0.04 : -0.04, 0.78 - compression * 0.12, 0.06],
+        handSpan: 0.5 + effort * 0.08,
+        stanceWidth: 0.32 + effort * 0.03,
+        bboxVolume: 1.08 + compression * 0.52,
+        bowCompression: compression,
+      },
+    },
+    source: {
+      route: 'motion-server:http://127.0.0.1:8098/generate',
+      model: 'kimodo',
+      status: 'archived-live-generated-witness',
+    },
+  };
+}
+
+function compressionForLabel(label: string): number {
+  if (label.includes('brake') || label.includes('compress')) return 0.92;
+  if (label.includes('drop')) return 0.62;
+  if (label.includes('turn') || label.includes('flee')) return 0.32;
+  if (label.includes('recover')) return 0.22;
+  return 0.14;
+}
+
+function effortForLabel(label: string): number {
+  if (label.includes('flee') || label.includes('chase')) return 0.82;
+  if (label.includes('brake') || label.includes('compress')) return 0.96;
+  if (label.includes('steal') || label.includes('reach')) return 0.74;
+  if (label.includes('drop')) return 0.68;
+  return 0.48;
 }

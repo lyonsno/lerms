@@ -29,6 +29,7 @@ import {
   SCHNOZ_SIM_ROUTE,
   buildSchnozSimulationSnapshot,
 } from './schnoz-lerm-simulation-core.ts';
+import type { SchnozMotionAdapterOutput } from './schnoz-motion-adapter.ts';
 
 const WITNESS_SCHEMA = 'lerms.schnoz-lerm-simulation-witness.v0' as const;
 const ROUTE = SCHNOZ_SIM_ROUTE;
@@ -62,6 +63,7 @@ type SchnozRenderLerm = {
   carryingGoinId?: string;
   targetGoinId?: string;
   hitStunMs?: number;
+  motionAdapter?: SchnozMotionAdapterOutput;
 };
 
 type SchnozRenderGoin = {
@@ -469,19 +471,41 @@ function drawSchnozLerm(
   height: number,
   item: SchnozRenderLerm,
 ): void {
-  const [x, y] = project(item.world, x0, y0, width, height);
-  const radius = item.state === 'tumbling' ? 20 : 17;
+  const channels = item.motionAdapter?.channels;
+  const world: Vec3 = channels
+    ? [
+        item.world[0] + channels.rootOffset[0],
+        item.world[1] + channels.rootOffset[1],
+        item.world[2] + channels.rootOffset[2],
+      ]
+    : item.world;
+  const [x, y] = project(world, x0, y0, width, height);
+  const radius = Math.round((item.state === 'tumbling' ? 20 : 17) * (channels?.envelopeRadius ?? 1));
   fillCircle(pixels, metricBuffer, x, y, radius, RED, 1);
-  const headingX = item.heading[0] >= 0 ? 1 : -1;
-  fillCircle(pixels, metricBuffer, x + headingX * 17, y - 3, 8, SCHNOZ, 1);
+  const heading = channels?.heading ?? item.heading;
+  const headingX = heading[0] >= 0 ? 1 : -1;
+  fillCircle(pixels, metricBuffer, x + headingX * Math.round(16 + (channels?.faceCueLead ?? 0.18) * 8), y - 3, 8, SCHNOZ, 1);
   fillCircle(pixels, metricBuffer, x - headingX * 7, y + 6, 6, DARK_RED, 1);
-  if (item.carryingGoinId) drawLine(pixels, metricBuffer, x, y, x + headingX * 24, y + 18, SOURCE, 5, 3);
+  if (item.carryingGoinId) {
+    drawLine(
+      pixels,
+      metricBuffer,
+      x,
+      y,
+      x + headingX * Math.round(24 + (channels?.carrierTetherAccent ?? 0.65) * 10),
+      y + 18,
+      SOURCE,
+      5,
+      3,
+    );
+  }
   if (item.state === 'hit_reacting' || item.state === 'tumbling') {
-    drawLine(pixels, metricBuffer, x - 22, y - 18, x + 20, y + 20, HIT, 3, 3);
-    drawLine(pixels, metricBuffer, x + 22, y - 18, x - 20, y + 20, HIT, 3, 3);
+    const hit = Math.round(18 + (channels?.hitCompression ?? 0.82) * 10);
+    drawLine(pixels, metricBuffer, x - hit, y - 18, x + hit, y + 20, HIT, 3, 3);
+    drawLine(pixels, metricBuffer, x + hit, y - 18, x - hit, y + 20, HIT, 3, 3);
   }
   if (item.state === 'rerouting_to_goin') {
-    fillCircle(pixels, metricBuffer, x + headingX * 23, y - 16, 7, REROUTE, 4);
+    fillCircle(pixels, metricBuffer, x + headingX * 23, y - 16, Math.round(7 + (channels?.rerouteTargetPull ?? 0.6) * 5), REROUTE, 4);
   }
 }
 

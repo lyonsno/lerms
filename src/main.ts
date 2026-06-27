@@ -298,7 +298,8 @@ function renderSchnozSmoke(
     proxyBody: snapshot.proxyBody,
     sourceTruthUpgrade: snapshot.sourceTruthUpgrade,
     summary: snapshot.summary,
-    motionEvidence: frame.motionEvidence
+    motionEvidence: frame.motionEvidence,
+    motionAdapter: frame.lerms[0]?.motionAdapter || null
   };
 
   (window as unknown as { __lermsSchnozSmokeState?: typeof liveState }).__lermsSchnozSmokeState = liveState;
@@ -312,6 +313,7 @@ function renderSchnozSmoke(
     `lerms: ${snapshot.summary.lermCount} goins: ${snapshot.summary.goinCount} hits: ${snapshot.summary.juiceHitCount} drops: ${snapshot.summary.carrierDropCount}`,
     `cliplet: ${frame.motionEvidence.clipletLabel}`,
     `phase: ${frame.motionEvidence.sourcePhaseLabel}`,
+    `adapter: ${frame.lerms[0]?.motionAdapter?.schema || 'missing'} / ${frame.lerms[0]?.motionAdapter?.source.sourceStatus || 'unknown-source-status'}`,
     `sockets: ${frame.motionEvidence.featureEvidenceSockets.slice(0, 3).join(', ')}`,
     'body: proxy_schnoz_sphere / final red-lerm visual claim: false'
   ].join('\n');
@@ -397,41 +399,70 @@ function drawLiveSchnozLerm(
   blend: number,
   timestampMs: number
 ): void {
-  const world = interpolateWorld(lerm.world, next?.world, blend);
-  const heading = next ? interpolateWorld(lerm.heading, next.heading, blend) : lerm.heading;
+  const adapter = lerm.motionAdapter;
+  const channels = adapter?.channels;
+  const bodySquash = channels ? channels.bodySquash : 1;
+  const bodyStretch = channels ? channels.bodyStretch : 1;
+  const bodyLean = channels ? channels.bodyLean : 0;
+  const faceCueLead = channels ? channels.faceCueLead : 0.18;
+  const eventAccent = channels ? channels.eventAccent : 0;
+  const carrierTetherAccent = channels ? channels.carrierTetherAccent : 0.65;
+  const rerouteTargetPull = channels ? channels.rerouteTargetPull : 0.62;
+  const hitCompression = channels ? channels.hitCompression : 0.82;
+  const baseWorld = interpolateWorld(lerm.world, next?.world, blend);
+  const world = channels
+    ? [
+        baseWorld[0] + channels.rootOffset[0],
+        baseWorld[1] + channels.rootOffset[1],
+        baseWorld[2] + channels.rootOffset[2]
+      ] as const
+    : baseWorld;
+  const heading = channels?.heading ?? (next ? interpolateWorld(lerm.heading, next.heading, blend) : lerm.heading);
   const point = projectSchnoz(world[0], world[1], world[2], width, height);
   const headingSign = heading[0] >= 0 ? 1 : -1;
-  const statePulse = Math.sin(timestampMs * 0.019 + lerm.id.length) * 0.5 + 0.5;
+  const statePulse = channels?.footfallPulse ?? (Math.sin(timestampMs * 0.019 + lerm.id.length) * 0.5 + 0.5);
   const radius =
     lerm.state === 'tumbling'
-      ? 26 + statePulse * 4
+      ? (26 + statePulse * 4) * (channels?.envelopeRadius ?? 1)
       : lerm.state === 'hit_reacting'
-        ? 23 + statePulse * 5
-        : 21 + statePulse * 2;
+        ? (23 + statePulse * 5) * (channels?.envelopeRadius ?? 1)
+        : (21 + statePulse * 2) * (channels?.envelopeRadius ?? 1);
 
   ctx.fillStyle = lerm.state === 'hit_reacting' || lerm.state === 'tumbling' ? '#d92751' : '#de2d3a';
+  ctx.save();
+  ctx.translate(point.x, point.y);
+  ctx.rotate(bodyLean);
+  ctx.scale(bodyStretch, bodySquash);
   ctx.beginPath();
-  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 
   ctx.fillStyle = '#7d1323';
   ctx.beginPath();
-  ctx.arc(point.x - headingSign * 7, point.y + radius * 0.36, radius * 0.36, 0, Math.PI * 2);
+  ctx.arc(point.x - headingSign * 7, point.y + radius * 0.36 * bodySquash, radius * 0.36, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = '#f98752';
   ctx.beginPath();
-  ctx.arc(point.x + headingSign * (radius * 0.95), point.y - radius * 0.12, radius * 0.45, 0, Math.PI * 2);
+  ctx.arc(
+    point.x + headingSign * (radius * (0.82 + faceCueLead * 0.4)),
+    point.y - radius * 0.12,
+    radius * 0.45,
+    0,
+    Math.PI * 2
+  );
   ctx.fill();
 
   ctx.fillStyle = '#101617';
   ctx.beginPath();
-  ctx.arc(point.x + headingSign * (radius * 1.08), point.y - radius * 0.18, 3.2, 0, Math.PI * 2);
+  ctx.arc(point.x + headingSign * (radius * 1.08), point.y - radius * 0.18, 3.2 + eventAccent * 1.2, 0, Math.PI * 2);
   ctx.fill();
 
   if (lerm.carryingGoinId) {
-    ctx.strokeStyle = 'rgba(241, 222, 158, 0.85)';
-    ctx.lineWidth = 5;
+    const accent = carrierTetherAccent;
+    ctx.strokeStyle = `rgba(241, 222, 158, ${Math.min(0.95, 0.42 + accent * 0.48)})`;
+    ctx.lineWidth = 4 + accent * 4;
     ctx.beginPath();
     ctx.moveTo(point.x, point.y + 8);
     ctx.lineTo(point.x + headingSign * 34, point.y + 28);
@@ -439,16 +470,18 @@ function drawLiveSchnozLerm(
   }
 
   if (lerm.targetGoinId || lerm.state === 'rerouting_to_goin') {
-    ctx.strokeStyle = 'rgba(190, 119, 255, 0.86)';
-    ctx.lineWidth = 3;
+    const pull = rerouteTargetPull;
+    ctx.strokeStyle = `rgba(190, 119, 255, ${0.42 + pull * 0.44})`;
+    ctx.lineWidth = 2 + pull * 4;
     ctx.beginPath();
-    ctx.arc(point.x + headingSign * 29, point.y - 24, 10 + statePulse * 5, 0, Math.PI * 2);
+    ctx.arc(point.x + headingSign * 29, point.y - 24, 10 + statePulse * 5 + pull * 5, 0, Math.PI * 2);
     ctx.stroke();
   }
 
   if (lerm.state === 'hit_reacting' || lerm.state === 'tumbling') {
-    ctx.strokeStyle = 'rgba(101, 217, 255, 0.85)';
-    ctx.lineWidth = 4;
+    const hit = hitCompression;
+    ctx.strokeStyle = `rgba(101, 217, 255, ${Math.min(0.95, 0.45 + hit * 0.34)})`;
+    ctx.lineWidth = 3 + hit * 3;
     ctx.beginPath();
     ctx.moveTo(point.x - 24, point.y - 22);
     ctx.lineTo(point.x + 24, point.y + 22);
