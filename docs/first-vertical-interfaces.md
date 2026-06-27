@@ -3,6 +3,7 @@
 This document names the first public sockets between LERMS subsystems. It is deliberately narrower than the ontology and less ambitious than the eventual renderer, fluid solver, terrain, or crowd simulation.
 
 The TypeScript source of truth is [`src/contracts/first-vertical.ts`](../src/contracts/first-vertical.ts).
+The first shared adapter is [`src/contracts/first-vertical-composer.ts`](../src/contracts/first-vertical-composer.ts).
 
 ## Purpose
 
@@ -91,6 +92,25 @@ This is the spine event. If the vertical cannot produce and witness it, the vert
 The frame envelope that joins terrain samples, lerm states, goin states, juice hits, and carrier-drop events under one source-truth packet.
 
 Witnesses should use this envelope when claiming that the first vertical loop happened.
+
+## First Vertical Composer
+
+Subsystem lanes may emit partial `lerms.first-vertical-frame.v0` packets while the vertical is still converging. The composer is the narrow joining point for those partial packets.
+
+`composeFirstVerticalFrame` currently accepts:
+
+- one Hill of Hills terrain packet;
+- zero or more subsystem frames, such as red-lerm body/motion witnesses, future finger-juice packets, and goin packets;
+- a composed `frameId`, `timestampMs`, optional route, and freshness budget.
+
+The composer owns:
+
+- preserving source truth and folding authority to the weakest participating source;
+- rejecting stale source packets instead of silently presenting old evidence as live;
+- rejecting duplicate terrain, lerm, goin, juice-hit, and carrier-drop IDs;
+- asserting the final frame with the shared `assertFirstVerticalFrame` validator.
+
+The first vertical should route new subsystem outputs through the composer unless a lane has a specific reason to test a subsystem in isolation. A composed frame with fixture-backed red lerms must remain `synthetic_fixture` until the red-lerm source is live; a live terrain packet alone is not enough to claim a live composed vertical.
 
 ## Non-Goals
 

@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "test:contracts": "rm -rf /tmp/lerms-contract-tests && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir /tmp/lerms-contract-tests --noEmit false src/contracts/first-vertical.ts src/terrain/hill-of-hills.ts tests/first-vertical-contracts.ts tests/hill-of-hills-terrain.ts && node /tmp/lerms-contract-tests/tests/first-vertical-contracts.js && node /tmp/lerms-contract-tests/tests/hill-of-hills-terrain.js"
+    "test:contracts": "rm -rf /tmp/lerms-contract-tests && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir /tmp/lerms-contract-tests --noEmit false src/contracts/first-vertical.ts src/terrain/hill-of-hills.ts tests/first-vertical-contracts.ts tests/hill-of-hills-terrain.ts && node /tmp/lerms-contract-tests/tests/first-vertical-contracts.js && node /tmp/lerms-contract-tests/tests/hill-of-hills-terrain.js",
+    "test:composer": "node --experimental-strip-types tests/first-vertical-composer-contracts.ts",
+    "test:red-lerm": "node --experimental-strip-types tests/red-lerm-body-motion-contracts.mjs && node tests/red-lerm-body-motion-witness-contracts.mjs",
+    "witness:red-lerm": "node --experimental-strip-types src/red-lerm-body-motion-witness.ts"
   },
   "dependencies": {
     "vite": "^8.1.0"
   },
   "devDependencies": {
+    "@types/node": "^26.0.1",
     "typescript": "^5.5.0"
   }
 }
