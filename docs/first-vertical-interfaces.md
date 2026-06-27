@@ -87,6 +87,38 @@ The explicit event that turns carrier interruption into goin reroute pressure. I
 
 This is the spine event. If the vertical cannot produce and witness it, the vertical has not proven theft into ecology.
 
+### `lerms.glove-input-frame.v0`
+
+The screen-plane glove input bridge for WiLoR Mini hand tracking. It is intentionally not a 3D hand contract.
+
+Load-bearing fields are source truth, timing/freshness, coordinate-frame identity, finger identity, screen-normalized fingertip positions, screen-plane finger directions, thumb/index pinch state, and pinky extension/hold. The coordinate frame must declare `space: screen_normalized`, `origin: top_left`, `handedness: operator_unmirrored`, and `depthPolicy: non_load_bearing`.
+
+Absolute depth, world-hand position, and "closer to camera means stronger launch" are not load-bearing. If depth-like values appear in a future sidecar packet, they are debug/evidence only until the hand substrate is explicitly upgraded.
+
+Route truth matters. A live WiLoR bridge must expose effective route, backend/model/config identity, freshness/latency, mirroring policy, hand confidence, and fallback status. A requested live route that silently falls back is invalid; fixture or fallback input must downgrade any composed gameplay frame.
+
+### `lerms.glove-well-command.v0`
+
+The local command derived from `lerms.glove-input-frame.v0` for Glove Well sacrifice launches.
+
+Phases are:
+
+- `idle`: no primed goin.
+- `priming`: thumb/index pinch attracts or fattens a goin fragment from the Glove Well.
+- `aiming`: pinky extension/hold supplies a dotted screen-plane arc while the goin is primed.
+- `released`: pinch opens after priming and launches the goin along the current aim arc.
+- `cooldown`: stale or non-actionable held state that must not create a new release.
+
+Release is an event, not a continuously asserted state. It must trace back to the input frame that opened the pinch. Stale input may preserve a displayed aim briefly, but it must not create a new prime or release.
+
+The first Greedy witness route is:
+
+```sh
+npm run witness:glove-well -- --report /tmp/lerms-glove-well-launch-witness.json
+```
+
+That route uses fixture glove input and deterministic goin physics. It is useful for proving command conversion, launch arc, rolling goin output, and reroute desire, but it must remain downgraded until a real non-fallback WiLoR Mini sidecar producer emits live `lerms.glove-input-frame.v0` packets.
+
 ### `lerms.first-vertical-frame.v0`
 
 The frame envelope that joins terrain samples, lerm states, goin states, juice hits, and carrier-drop events under one source-truth packet.
