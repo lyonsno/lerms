@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "test:red-lerm": "node --experimental-strip-types tests/red-lerm-body-motion-contracts.mjs && node tests/red-lerm-body-motion-witness-contracts.mjs",
+    "witness:red-lerm": "node --experimental-strip-types src/red-lerm-body-motion-witness.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "vite": "^8.1.0"
   },
   "devDependencies": {
+    "@types/node": "^26.0.1",
     "typescript": "^5.5.0"
   }
 }
