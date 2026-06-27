@@ -67,6 +67,11 @@ for (const [kind, weight] of Object.entries(centerMaterial.blends)) {
   assertUnit(weight as number, `blend weight ${kind}`);
 }
 
+const centerPhase = (center as any).phaseInfluence;
+assert(centerPhase, 'terrain sample exposes phase influence for terrain decisions');
+assert(centerPhase.kind === 'none', 'default center sample has no active phase influence');
+assert(centerPhase.amount === 0, 'default center phase influence is zero');
+
 const pushed = createHillOfHillsTerrain({
   channelRadius: 4.2,
   channelCurvature: 1.8,
@@ -150,6 +155,67 @@ assert(
 assert(
   tighterFeatures.witness.topologyChecksum !== sharperTexture.witness.topologyChecksum,
   'feature spacing and texture scale are independent topology controls'
+);
+
+const stablePhase = createHillOfHillsTerrain({
+  seed: 9876,
+  gridResolutionX: 34,
+  gridResolutionZ: 48,
+  ditchPhaseIntensity: 0,
+  ditchPhaseLimit: 4,
+  ditchPhaseTimeMs: 900
+});
+assert(stablePhase.phaseState.mode === 'stable', 'zero ditch phase intensity keeps terrain phase stable');
+assert(stablePhase.phaseState.activeEpisodes.length === 0, 'stable terrain has no active phase episodes');
+assert(stablePhase.witness.phaseMode === 'stable', 'stable witness records stable phase mode');
+assert(stablePhase.witness.activePhaseCount === 0, 'stable witness records no active phase episodes');
+assert(stablePhase.witness.phaseInfluenceRange.max === 0, 'stable witness phase influence max is zero');
+assert(
+  stablePhase.samples.every((terrainSample) => terrainSample.phaseInfluence.kind === 'none' && terrainSample.phaseInfluence.amount === 0),
+  'stable samples carry explicit empty phase influence'
+);
+
+const ditchPhaseParams: Partial<HillOfHillsTerrainParams> = {
+  seed: 9876,
+  gridResolutionX: 34,
+  gridResolutionZ: 48,
+  ditchPhaseSeed: 1212,
+  ditchPhaseIntensity: 0.9,
+  ditchPhaseLimit: 3,
+  ditchPhaseRadius: 1.4,
+  ditchPhaseTimeMs: 900,
+  ditchPhaseDurationMs: 1800
+};
+const ditchPhaseA = createHillOfHillsTerrain(ditchPhaseParams);
+const ditchPhaseB = createHillOfHillsTerrain(ditchPhaseParams);
+assert(ditchPhaseA.phaseState.mode === 'ditch_forming', 'ditch phase activates terrain phase state');
+assert(ditchPhaseA.phaseState.activeEpisodes.length > 0, 'ditch phase creates active local episodes');
+assert(ditchPhaseA.witness.phaseMode === 'ditch_forming', 'ditch phase witness records ditch-forming mode');
+assert(ditchPhaseA.witness.activePhaseCount === ditchPhaseA.phaseState.activeEpisodes.length, 'witness active phase count matches phase state');
+assert(ditchPhaseA.witness.phaseChecksum === ditchPhaseB.witness.phaseChecksum, 'ditch phase checksum is deterministic');
+assert(ditchPhaseA.witness.phaseInfluenceChecksum === ditchPhaseB.witness.phaseInfluenceChecksum, 'ditch phase sample influence checksum is deterministic');
+assert(ditchPhaseA.witness.phaseInfluenceRange.max > 0.35, 'ditch phase creates visible sample influence');
+assert((ditchPhaseA.witness.phaseInfluenceKinds.ditch_forming ?? 0) > 0, 'witness counts ditch-forming influenced samples');
+const influencedSamples = ditchPhaseA.samples.filter((terrainSample) => terrainSample.phaseInfluence.amount > 0.3);
+assert(influencedSamples.length > 0, 'ditch phase marks local influenced samples');
+assert(
+  influencedSamples.some(
+    (terrainSample) =>
+      terrainSample.proxyMaterial.kind === 'ditch-shadow' ||
+      terrainSample.proxyMaterial.wetness > 0.58 ||
+      terrainSample.topology.ditchPotential > 0.72
+  ),
+  'ditch phase locally darkens or wets selected ditch samples'
+);
+const stableById = new Map(stablePhase.samples.map((terrainSample) => [terrainSample.id, terrainSample]));
+const loweredInfluenced = influencedSamples.filter((terrainSample) => {
+  const stableSample = stableById.get(terrainSample.id);
+  return stableSample ? terrainSample.height < stableSample.height - 0.04 : false;
+});
+assert(loweredInfluenced.length > 0, 'ditch phase locally deepens selected samples versus stable terrain');
+assert(
+  ditchPhaseA.witness.topologyChecksum !== stablePhase.witness.topologyChecksum,
+  'ditch phase changes topology checksum without changing feature density'
 );
 
 for (const terrainSample of baseline.samples) {

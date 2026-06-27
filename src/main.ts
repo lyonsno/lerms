@@ -22,6 +22,11 @@ const appCanvas = canvas;
 const ctx = context;
 let params: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
+  ditchPhaseIntensity: 0.72,
+  ditchPhaseLimit: 3,
+  ditchPhaseRadius: 1.35,
+  ditchPhaseTimeMs: 760,
+  ditchPhaseDurationMs: 2400,
   gridResolutionX: 116,
   gridResolutionZ: 148
 };
@@ -53,7 +58,11 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'featureSpacing', label: 'Feature spacing', min: 0.45, max: 2.1, step: 0.05 },
   { key: 'textureScale', label: 'Texture scale', min: 0.4, max: 3, step: 0.05 },
   { key: 'textureDamping', label: 'Texture damping', min: 0, max: 1, step: 0.05 },
-  { key: 'detailDamping', label: 'Detail damping', min: 0, max: 1, step: 0.05 }
+  { key: 'detailDamping', label: 'Detail damping', min: 0, max: 1, step: 0.05 },
+  { key: 'ditchPhaseIntensity', label: 'Ditch forming', min: 0, max: 1, step: 0.05 },
+  { key: 'ditchPhaseLimit', label: 'Ditch count', min: 0, max: 8, step: 1 },
+  { key: 'ditchPhaseRadius', label: 'Ditch radius', min: 0.5, max: 2.4, step: 0.05 },
+  { key: 'ditchPhaseTimeMs', label: 'Ditch phase', min: 0, max: 2400, step: 40 }
 ];
 
 const controls = createControls();
@@ -74,9 +83,14 @@ function render(timestampMs: number): void {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const motion = Math.sin(timestampMs * 0.00008) * 0.18;
+  const ditchPhaseTimeMs =
+    params.ditchPhaseIntensity > 0
+      ? (params.ditchPhaseTimeMs + timestampMs * 0.42) % params.ditchPhaseDurationMs
+      : params.ditchPhaseTimeMs;
   terrain = createHillOfHillsTerrain(
     {
       ...params,
+      ditchPhaseTimeMs,
       crownZ: defaultHillOfHillsParams.crownZ + motion
     },
     {
@@ -177,6 +191,32 @@ function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number,
     ctx.stroke();
   }
 
+  for (let zi = 2; zi < gridResolutionZ - 2; zi += 3) {
+    ctx.beginPath();
+    let drawing = false;
+    let strength = 0;
+    for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
+      const sample = samples[zi * gridResolutionX + xi];
+      if (sample.phaseInfluence.amount < 0.18) {
+        drawing = false;
+        continue;
+      }
+      strength = Math.max(strength, sample.phaseInfluence.amount);
+      const point = project(sample.world[0], sample.world[1] + 0.055, sample.world[2], currentTerrain, width, height);
+      if (!drawing) {
+        ctx.moveTo(point.x, point.y);
+        drawing = true;
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
+    }
+    if (strength > 0) {
+      ctx.strokeStyle = `rgba(24, 18, 46, ${0.34 + strength * 0.38})`;
+      ctx.lineWidth = 4.2 + strength * 4.4;
+      ctx.stroke();
+    }
+  }
+
   for (let zi = 4; zi < gridResolutionZ - 4; zi += 7) {
     for (let xi = 4; xi < gridResolutionX - 4; xi += 7) {
       const sample = samples[zi * gridResolutionX + xi];
@@ -236,7 +276,8 @@ function colorForSample(
 ): string {
   const t = (heightValue - range.min) / Math.max(0.001, range.max - range.min);
   const sideLight = normal[0] * -0.32 + normal[1] * 0.72 + normal[2] * -0.2;
-  const wetShadow = sample.proxyMaterial.wetness * 0.16 + sample.topology.ditchPotential * 0.1;
+  const phaseShadow = sample.phaseInfluence.amount * 0.22;
+  const wetShadow = sample.proxyMaterial.wetness * 0.16 + sample.topology.ditchPotential * 0.1 + phaseShadow;
   const growthLift = sample.proxyMaterial.growthTint * 0.14;
   const routeLift = sample.topology.routePressure * 0.1;
   const light = Math.max(0.36, Math.min(1.18, 0.6 + sideLight * 0.32 + t * 0.16 + routeLift + growthLift - wetShadow));
@@ -258,6 +299,9 @@ function drawWitness(currentTerrain: HillOfHillsTerrain): void {
     `height: ${witness.heightRange.min.toFixed(2)} .. ${witness.heightRange.max.toFixed(2)}`,
     `checksum: ${witness.sampleChecksum}`,
     `topology: ${witness.topologyChecksum} / material: ${witness.proxyMaterialChecksum}`,
+    `phase: ${witness.phaseMode} epoch ${witness.terrainEpoch} active ${witness.activePhaseCount}`,
+    `phase checksum: ${witness.phaseChecksum} / influence ${witness.phaseInfluenceChecksum}`,
+    `phase influence: ${witness.phaseInfluenceRange.min.toFixed(2)} .. ${witness.phaseInfluenceRange.max.toFixed(2)}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`
   ].join('\n');

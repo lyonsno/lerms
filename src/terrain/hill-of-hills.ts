@@ -13,6 +13,8 @@ import {
 export const HILL_OF_HILLS_WITNESS_SCHEMA = 'lerms.hill-of-hills-witness.v0' as const;
 
 export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 'invalid';
+export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming';
+export type HillOfHillsPhaseInfluenceKind = 'none' | 'ditch_forming';
 export type HillOfHillsProxyMaterialKind =
   | 'crown-warmth'
   | 'approach-clay'
@@ -40,6 +42,28 @@ export interface HillOfHillsProxyMaterial {
   blends: Partial<Record<HillOfHillsProxyMaterialKind, number>>;
 }
 
+export interface HillOfHillsPhaseEpisode {
+  id: string;
+  kind: 'ditch_forming';
+  center: Vec3;
+  radius: number;
+  progress: number;
+  intensity: number;
+}
+
+export interface HillOfHillsPhaseState {
+  mode: HillOfHillsPhaseMode;
+  terrainEpoch: number;
+  activeEpisodes: readonly HillOfHillsPhaseEpisode[];
+  checksum: string;
+}
+
+export interface HillOfHillsPhaseInfluence {
+  kind: HillOfHillsPhaseInfluenceKind;
+  amount: number;
+  episodeId?: string;
+}
+
 export interface HillOfHillsTerrainParams {
   seed: number;
   width: number;
@@ -62,6 +86,12 @@ export interface HillOfHillsTerrainParams {
   textureScale: number;
   textureDamping: number;
   detailDamping: number;
+  ditchPhaseSeed: number;
+  ditchPhaseIntensity: number;
+  ditchPhaseLimit: number;
+  ditchPhaseRadius: number;
+  ditchPhaseTimeMs: number;
+  ditchPhaseDurationMs: number;
   gridResolutionX: number;
   gridResolutionZ: number;
   crownZ: number;
@@ -70,6 +100,7 @@ export interface HillOfHillsTerrainParams {
 export interface HillOfHillsTerrain {
   params: HillOfHillsTerrainParams;
   source: SourceTruth;
+  phaseState: HillOfHillsPhaseState;
   samples: readonly HillOfHillsTerrainSample[];
   witness: HillOfHillsWitness;
 }
@@ -77,6 +108,7 @@ export interface HillOfHillsTerrain {
 export interface HillOfHillsTerrainSample extends TerrainSample {
   topology: HillOfHillsTopology;
   proxyMaterial: HillOfHillsProxyMaterial;
+  phaseInfluence: HillOfHillsPhaseInfluence;
 }
 
 export interface HillOfHillsWitness {
@@ -103,6 +135,13 @@ export interface HillOfHillsWitness {
   regionCounts: Partial<Record<TerrainRegion, number>>;
   topologyChecksum: string;
   proxyMaterialChecksum: string;
+  phaseMode: HillOfHillsPhaseMode;
+  terrainEpoch: number;
+  activePhaseCount: number;
+  phaseChecksum: string;
+  phaseInfluenceChecksum: string;
+  phaseInfluenceRange: Range;
+  phaseInfluenceKinds: Partial<Record<HillOfHillsPhaseInfluenceKind, number>>;
   topologyRanges: {
     flowAccumulation: Range;
     ridgeStrength: Range;
@@ -139,6 +178,7 @@ interface HeightParts {
   hills: number;
   valleys: number;
   detail: number;
+  phaseDitch: number;
   height: number;
 }
 
@@ -169,6 +209,12 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   textureScale: 1,
   textureDamping: 0.5,
   detailDamping: 0.42,
+  ditchPhaseSeed: 7301,
+  ditchPhaseIntensity: 0,
+  ditchPhaseLimit: 0,
+  ditchPhaseRadius: 1.25,
+  ditchPhaseTimeMs: 0,
+  ditchPhaseDurationMs: 1800,
   gridResolutionX: 72,
   gridResolutionZ: 96,
   crownZ: 5.2
@@ -181,19 +227,21 @@ export function createHillOfHillsTerrain(
   const effectiveParams = normalizeParams({ ...defaultHillOfHillsParams, ...params });
   const fallbackStatus = normalizeFallbackStatus(sourceOptions);
   const source = createTerrainSource(effectiveParams, sourceOptions, fallbackStatus);
-  const samples = generateSamples(effectiveParams, source);
-  const witness = createWitness(effectiveParams, source, samples, fallbackStatus);
+  const phaseState = createPhaseState(effectiveParams);
+  const samples = generateSamples(effectiveParams, source, phaseState);
+  const witness = createWitness(effectiveParams, source, phaseState, samples, fallbackStatus);
 
   return {
     params: effectiveParams,
     source,
+    phaseState,
     samples,
     witness
   };
 }
 
 export function sampleHillOfHillsTerrain(terrain: HillOfHillsTerrain, x: number, z: number): HillOfHillsTerrainSample {
-  return sampleTerrain(terrain.params, terrain.source, x, z);
+  return sampleTerrain(terrain.params, terrain.source, terrain.phaseState, x, z);
 }
 
 export function createHillOfHillsFrame(terrain: HillOfHillsTerrain): FirstVerticalFrame {
@@ -236,6 +284,12 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     textureScale: clamp(finiteOr(params.textureScale, 1), 0.25, 3.5),
     textureDamping: clamp(finiteOr(params.textureDamping, 0.5), 0, 1),
     detailDamping: clamp(finiteOr(params.detailDamping, 0.5), 0, 1),
+    ditchPhaseSeed: Math.floor(finiteOr(params.ditchPhaseSeed, defaultHillOfHillsParams.ditchPhaseSeed)),
+    ditchPhaseIntensity: clamp(finiteOr(params.ditchPhaseIntensity, 0), 0, 1),
+    ditchPhaseLimit: Math.round(clamp(finiteOr(params.ditchPhaseLimit, 0), 0, 8)),
+    ditchPhaseRadius: clamp(finiteAtLeast(params.ditchPhaseRadius, 0.35) * worldScale, 0.35 * worldScale, 3.2 * worldScale),
+    ditchPhaseTimeMs: Math.max(0, finiteOr(params.ditchPhaseTimeMs, 0)),
+    ditchPhaseDurationMs: finiteAtLeast(params.ditchPhaseDurationMs, 240),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
     gridResolutionZ: Math.max(8, Math.round(finiteOr(params.gridResolutionZ, 96))),
     crownZ: clamp(finiteOr(params.crownZ, defaultHillOfHillsParams.crownZ) * worldScale, -length * 0.5, length * 0.5)
@@ -283,7 +337,100 @@ function authorityForFallbackStatus(
   return requestedAuthority ?? 'live_simulation';
 }
 
-function generateSamples(params: HillOfHillsTerrainParams, source: SourceTruth): HillOfHillsTerrainSample[] {
+function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseState {
+  const duration = Math.max(1, params.ditchPhaseDurationMs);
+  const terrainEpoch = Math.floor(params.ditchPhaseTimeMs / duration);
+  const phaseClock = (params.ditchPhaseTimeMs % duration) / duration;
+  const cycleProgress = smoothstep(0.04, 0.46, phaseClock) * (1 - smoothstep(0.9, 1, phaseClock));
+  const intensity = clamp(params.ditchPhaseIntensity * cycleProgress, 0, 1);
+
+  if (intensity <= 0 || params.ditchPhaseLimit <= 0) {
+    const checksumInput = `stable:${terrainEpoch}:${params.ditchPhaseSeed}:${params.ditchPhaseIntensity.toFixed(3)}`;
+    return {
+      mode: 'stable',
+      terrainEpoch,
+      activeEpisodes: [],
+      checksum: checksum(checksumInput)
+    };
+  }
+
+  const rng = mulberry32(params.ditchPhaseSeed + terrainEpoch * 131071 + params.seed * 17);
+  const episodes: HillOfHillsPhaseEpisode[] = [];
+  const halfFloor = params.floorWidth * 0.5;
+
+  for (let i = 0; i < params.ditchPhaseLimit; i += 1) {
+    const side = rng() < 0.5 ? -1 : 1;
+    const gutterBias = halfFloor * (0.86 + rng() * 0.86);
+    const x = side * clamp(gutterBias, halfFloor * 0.66, params.channelRadius * 0.72);
+    const z = -params.length * 0.42 + rng() * params.length * 0.84;
+    const radius = params.ditchPhaseRadius * (0.72 + rng() * 0.46);
+    const localProgress = clamp(cycleProgress * (0.82 + rng() * 0.2), 0, 1);
+    const localIntensity = intensity * (0.72 + rng() * 0.3);
+    episodes.push({
+      id: `ditch-${terrainEpoch}-${i}-${roundId(x)}-${roundId(z)}`,
+      kind: 'ditch_forming',
+      center: [x, 0, z],
+      radius,
+      progress: localProgress,
+      intensity: localIntensity
+    });
+  }
+
+  return {
+    mode: 'ditch_forming',
+    terrainEpoch,
+    activeEpisodes: episodes,
+    checksum: checksum(episodes.map((episode) => phaseEpisodeSignature(episode)).join('|'))
+  };
+}
+
+function phaseEpisodeSignature(episode: HillOfHillsPhaseEpisode): string {
+  return [
+    episode.id,
+    episode.kind,
+    episode.center[0].toFixed(3),
+    episode.center[2].toFixed(3),
+    episode.radius.toFixed(3),
+    episode.progress.toFixed(3),
+    episode.intensity.toFixed(3)
+  ].join(':');
+}
+
+function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: number): HillOfHillsPhaseInfluence {
+  let bestAmount = 0;
+  let bestEpisodeId: string | undefined;
+
+  for (const episode of phaseState.activeEpisodes) {
+    const dx = (x - episode.center[0]) / Math.max(0.001, episode.radius * 0.48);
+    const dz = (z - episode.center[2]) / Math.max(0.001, episode.radius * 1.9);
+    const ellipticalDistance = Math.hypot(dx, dz);
+    const band = 1 - smoothstep(0.12, 1, ellipticalDistance);
+    const amount = clamp(band * episode.intensity, 0, 1);
+    if (amount > bestAmount) {
+      bestAmount = amount;
+      bestEpisodeId = episode.id;
+    }
+  }
+
+  if (bestAmount <= 0) {
+    return {
+      kind: 'none',
+      amount: 0
+    };
+  }
+
+  return {
+    kind: 'ditch_forming',
+    amount: bestAmount,
+    episodeId: bestEpisodeId
+  };
+}
+
+function generateSamples(
+  params: HillOfHillsTerrainParams,
+  source: SourceTruth,
+  phaseState: HillOfHillsPhaseState
+): HillOfHillsTerrainSample[] {
   const samples: HillOfHillsTerrainSample[] = [];
   const dx = params.width / (params.gridResolutionX - 1);
   const dz = params.length / (params.gridResolutionZ - 1);
@@ -292,7 +439,7 @@ function generateSamples(params: HillOfHillsTerrainParams, source: SourceTruth):
     const z = -params.length * 0.5 + zi * dz;
     for (let xi = 0; xi < params.gridResolutionX; xi += 1) {
       const x = -params.width * 0.5 + xi * dx;
-      samples.push(sampleTerrain(params, source, x, z, `terrain-${xi}-${zi}`));
+      samples.push(sampleTerrain(params, source, phaseState, x, z, `terrain-${xi}-${zi}`));
     }
   }
 
@@ -302,26 +449,28 @@ function generateSamples(params: HillOfHillsTerrainParams, source: SourceTruth):
 function sampleTerrain(
   params: HillOfHillsTerrainParams,
   source: SourceTruth,
+  phaseState: HillOfHillsPhaseState,
   x: number,
   z: number,
   id?: string
 ): HillOfHillsTerrainSample {
   const clampedX = clamp(x, -params.width * 0.5, params.width * 0.5);
   const clampedZ = clamp(z, -params.length * 0.5, params.length * 0.5);
-  const heightParts = heightAt(params, clampedX, clampedZ);
+  const phaseInfluence = phaseInfluenceAt(phaseState, clampedX, clampedZ);
+  const heightParts = heightAt(params, phaseState, clampedX, clampedZ);
   const height = heightParts.height;
   const epsX = Math.max(0.02, params.width / (params.gridResolutionX * 2));
   const epsZ = Math.max(0.02, params.length / (params.gridResolutionZ * 2));
-  const heightLeft = heightAt(params, clampedX - epsX, clampedZ).height;
-  const heightRight = heightAt(params, clampedX + epsX, clampedZ).height;
-  const heightBack = heightAt(params, clampedX, clampedZ - epsZ).height;
-  const heightForward = heightAt(params, clampedX, clampedZ + epsZ).height;
+  const heightLeft = heightAt(params, phaseState, clampedX - epsX, clampedZ).height;
+  const heightRight = heightAt(params, phaseState, clampedX + epsX, clampedZ).height;
+  const heightBack = heightAt(params, phaseState, clampedX, clampedZ - epsZ).height;
+  const heightForward = heightAt(params, phaseState, clampedX, clampedZ + epsZ).height;
   const dx = (heightRight - heightLeft) / (epsX * 2);
   const dz = (heightForward - heightBack) / (epsZ * 2);
   const normal = normalize([-dx, 1, -dz]);
   const slope = Math.hypot(dx, dz);
-  const region = classifyRegion(params, clampedX, clampedZ, height, slope);
-  const topology = topologyAt(params, clampedX, clampedZ, heightParts, dx, dz, slope, region);
+  const region = classifyRegion(params, phaseState, clampedX, clampedZ, height, slope);
+  const topology = topologyAt(params, clampedX, clampedZ, heightParts, dx, dz, slope, region, phaseInfluence);
   const proxyMaterial = proxyMaterialFor(region, topology);
 
   return {
@@ -334,7 +483,8 @@ function sampleTerrain(
     slope,
     region,
     topology,
-    proxyMaterial
+    proxyMaterial,
+    phaseInfluence
   };
 }
 
@@ -346,7 +496,8 @@ function topologyAt(
   dx: number,
   dz: number,
   slope: number,
-  region: TerrainRegion
+  region: TerrainRegion,
+  phaseInfluence: HillOfHillsPhaseInfluence
 ): HillOfHillsTopology {
   const lateral = Math.abs(x);
   const halfFloor = params.floorWidth * 0.5;
@@ -354,12 +505,16 @@ function topologyAt(
   const centerRoute = 1 - smoothstep(halfFloor * 0.42, halfFloor * 1.08, lateral);
   const crownPull = 1 - clamp(Math.abs(z - params.crownZ) / Math.max(0.001, params.length * 0.48), 0, 1);
   const gutterBand = Math.exp(-Math.pow((lateral - halfFloor * 1.28) / Math.max(0.35, halfFloor * 0.33), 2));
-  const valleyStrength = clamp(heightParts.valleys / Math.max(0.001, params.valleyHeight * 1.9), 0, 1);
+  const valleyStrength = clamp(
+    heightParts.valleys / Math.max(0.001, params.valleyHeight * 1.9) + phaseInfluence.amount * 0.18,
+    0,
+    1
+  );
   const ridgeStrength = clamp(Math.max(heightParts.hills, heightParts.wall * 0.42) / Math.max(0.001, params.hillHeight * 1.8 + params.wallHeight * 0.35), 0, 1);
-  const flowAccumulation = clamp(gutterBand * 0.66 + valleyStrength * 0.52 + uphill * 0.18, 0, 1);
-  const routePressure = clamp(centerRoute * 0.58 + crownPull * 0.24 + flowAccumulation * 0.26 - slope * 0.12, 0, 1);
-  const ditchPotential = clamp(gutterBand * 0.72 + valleyStrength * 0.48 + (region === 'gutter' ? 0.18 : 0), 0, 1);
-  const growthPotential = clamp(ridgeStrength * 0.46 + slope * 0.2 + crownPull * 0.12 - ditchPotential * 0.16, 0, 1);
+  const flowAccumulation = clamp(gutterBand * 0.66 + valleyStrength * 0.52 + uphill * 0.18 + phaseInfluence.amount * 0.28, 0, 1);
+  const routePressure = clamp(centerRoute * 0.58 + crownPull * 0.24 + flowAccumulation * 0.26 + phaseInfluence.amount * 0.16 - slope * 0.12, 0, 1);
+  const ditchPotential = clamp(gutterBand * 0.72 + valleyStrength * 0.48 + phaseInfluence.amount * 0.52 + (region === 'gutter' ? 0.18 : 0), 0, 1);
+  const growthPotential = clamp(ridgeStrength * 0.46 + slope * 0.2 + crownPull * 0.12 - ditchPotential * 0.2, 0, 1);
   const flowDirection = normalize([dx, 0.18 + flowAccumulation * 0.22, dz + 0.28]);
 
   return {
@@ -464,7 +619,7 @@ function blendedProxyColor(blends: HillOfHillsProxyMaterial['blends']): Vec3 {
   return [r / divisor, g / divisor, b / divisor];
 }
 
-function heightAt(params: HillOfHillsTerrainParams, x: number, z: number): HeightParts {
+function heightAt(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhaseState, x: number, z: number): HeightParts {
   const halfFloor = params.floorWidth * 0.5;
   const lateral = Math.abs(x);
   const uphill = (z + params.length * 0.5) / params.length;
@@ -487,9 +642,11 @@ function heightAt(params: HillOfHillsTerrainParams, x: number, z: number): Heigh
   const detail =
     textureAmplitude * Math.sin((x * 1.55 + z * 0.42 + params.seed * 0.001) * params.textureScale) +
     detailAmplitude * Math.cos((x * 3.6 - z * 2.1 + params.seed * 0.002) * params.textureScale);
-  const openFloor = base + wall + gutter + hills * macroDamping - valleys * valleyFloorDamping + detail;
+  const phaseInfluence = phaseInfluenceAt(phaseState, x, z);
+  const phaseDitch = phaseInfluence.amount * (0.18 + params.valleyHeight * 0.24 + params.wallHeight * 0.035);
+  const openFloor = base + wall + gutter + hills * macroDamping - valleys * valleyFloorDamping + detail - phaseDitch;
   const floorMinimum = base - 0.12 - Math.max(0, params.valleyHeight - 1.2) * 0.08;
-  const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum) : openFloor;
+  const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum - phaseDitch * 0.86) : openFloor;
 
   return {
     base,
@@ -498,14 +655,22 @@ function heightAt(params: HillOfHillsTerrainParams, x: number, z: number): Heigh
     hills,
     valleys,
     detail,
+    phaseDitch,
     height
   };
 }
 
-function classifyRegion(params: HillOfHillsTerrainParams, x: number, z: number, height: number, slope: number): TerrainRegion {
+function classifyRegion(
+  params: HillOfHillsTerrainParams,
+  phaseState: HillOfHillsPhaseState,
+  x: number,
+  z: number,
+  height: number,
+  slope: number
+): TerrainRegion {
   const lateral = Math.abs(x);
   const halfFloor = params.floorWidth * 0.5;
-  const heightParts = heightAt(params, x, z);
+  const heightParts = heightAt(params, phaseState, x, z);
 
   if (Math.abs(z - params.crownZ) < params.length * 0.075 && lateral < params.floorWidth * 0.72) {
     return 'crown';
@@ -577,12 +742,15 @@ function featureContribution(features: readonly TerrainFeature[], x: number, z: 
 function createWitness(
   params: HillOfHillsTerrainParams,
   source: SourceTruth,
+  phaseState: HillOfHillsPhaseState,
   samples: readonly HillOfHillsTerrainSample[],
   fallbackStatus: TerrainFallbackStatus
 ): HillOfHillsWitness {
   const regionCounts: Partial<Record<TerrainRegion, number>> = {};
   const proxyMaterialCounts: Partial<Record<HillOfHillsProxyMaterialKind, number>> = {};
+  const phaseInfluenceKinds: Partial<Record<HillOfHillsPhaseInfluenceKind, number>> = {};
   const topologyRanges = createTopologyRanges();
+  const phaseInfluenceRange = createRange();
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
 
@@ -591,6 +759,8 @@ function createWitness(
     max = Math.max(max, sample.height);
     regionCounts[sample.region] = (regionCounts[sample.region] ?? 0) + 1;
     proxyMaterialCounts[sample.proxyMaterial.kind] = (proxyMaterialCounts[sample.proxyMaterial.kind] ?? 0) + 1;
+    phaseInfluenceKinds[sample.phaseInfluence.kind] = (phaseInfluenceKinds[sample.phaseInfluence.kind] ?? 0) + 1;
+    includeInRange(phaseInfluenceRange, sample.phaseInfluence.amount);
     includeInRange(topologyRanges.flowAccumulation, sample.topology.flowAccumulation);
     includeInRange(topologyRanges.ridgeStrength, sample.topology.ridgeStrength);
     includeInRange(topologyRanges.valleyStrength, sample.topology.valleyStrength);
@@ -623,9 +793,25 @@ function createWitness(
     regionCounts,
     topologyChecksum: checksum(samples.map((sample) => topologySignature(sample)).join('|')),
     proxyMaterialChecksum: checksum(samples.map((sample) => `${sample.id}:${sample.proxyMaterial.kind}`).join('|')),
+    phaseMode: phaseState.mode,
+    terrainEpoch: phaseState.terrainEpoch,
+    activePhaseCount: phaseState.activeEpisodes.length,
+    phaseChecksum: phaseState.checksum,
+    phaseInfluenceChecksum: checksum(samples.map((sample) => phaseInfluenceSignature(sample)).join('|')),
+    phaseInfluenceRange,
+    phaseInfluenceKinds,
     topologyRanges,
     proxyMaterialCounts
   };
+}
+
+function phaseInfluenceSignature(sample: HillOfHillsTerrainSample): string {
+  return [
+    sample.id,
+    sample.phaseInfluence.kind,
+    sample.phaseInfluence.episodeId ?? 'none',
+    sample.phaseInfluence.amount.toFixed(3)
+  ].join(':');
 }
 
 function topologySignature(sample: HillOfHillsTerrainSample): string {

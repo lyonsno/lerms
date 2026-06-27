@@ -230,12 +230,22 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
         'approach-clay': 0.2,
         'growth-lip': 0.08
       }
+    },
+    phaseInfluence: {
+      kind: 'none',
+      amount: 0
     }
   };
 
   return {
     source,
     params,
+    phaseState: {
+      mode: 'stable',
+      terrainEpoch: 0,
+      activeEpisodes: [],
+      checksum: 'inline-terrain-socket-stable-phase-fixture-checksum'
+    },
     samples: [sample],
     witness: {
       schema: 'lerms.hill-of-hills-witness.v0',
@@ -252,6 +262,13 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       regionCounts: { crown: 1 },
       topologyChecksum: 'inline-terrain-socket-topology-fixture-checksum',
       proxyMaterialChecksum: 'inline-terrain-socket-material-fixture-checksum',
+      phaseMode: 'stable',
+      terrainEpoch: 0,
+      activePhaseCount: 0,
+      phaseChecksum: 'inline-terrain-socket-stable-phase-fixture-checksum',
+      phaseInfluenceChecksum: 'inline-terrain-socket-stable-phase-influence-fixture-checksum',
+      phaseInfluenceRange: { min: 0, max: 0 },
+      phaseInfluenceKinds: { none: 1 },
       topologyRanges: {
         flowAccumulation: { min: 0.42, max: 0.42 },
         ridgeStrength: { min: 0.5, max: 0.5 },
@@ -288,6 +305,12 @@ function buildTerrainParams(): HillOfHillsTerrainParams {
     textureScale: 1,
     textureDamping: 0.5,
     detailDamping: 0.5,
+    ditchPhaseSeed: 7301,
+    ditchPhaseIntensity: 0,
+    ditchPhaseLimit: 0,
+    ditchPhaseRadius: 1.25,
+    ditchPhaseTimeMs: 0,
+    ditchPhaseDurationMs: 1800,
     gridResolutionX: 1,
     gridResolutionZ: 1,
     crownZ: 3.4
