@@ -120,6 +120,35 @@ npm run witness:composer -- --out /tmp/lerms-first-vertical-composer-witness.jso
 
 That route writes an integrated fixture receipt for chamber/bootstrap consumers. It is useful as a source-honest handoff, not proof of a live vertical: the terrain socket and red-lerm data are fixture-backed, live finger-juice packets, live goin physics, live crowd AI, and generated lerm motion are intentionally absent.
 
+## Source Truth Upgrade Boundary
+
+The TypeScript source of truth is [`src/contracts/first-vertical-source-truth-upgrade.ts`](../src/contracts/first-vertical-source-truth-upgrade.ts).
+
+`lerms.first-vertical-source-truth-upgrade.v0` is the narrow gate that says when a first-vertical receipt may honestly exceed `synthetic_fixture` authority. Kaminos, Spoke, or any other chamber host may render fixture receipts, but they must not present those receipts as live evidence until this evaluator accepts the frame.
+
+A frame upgrades to `live_simulation` only when all of these predicates are true:
+
+- the frame envelope source is `live_simulation`;
+- every terrain, lerm, goin, juice-hit, and carrier-drop evidence packet is `live_simulation`;
+- the frame and evidence packet sample ages are inside the configured freshness budget;
+- terrain, at least one lerm, at least one goin, at least one juice hit, and at least one carrier-drop event are present;
+- a carrier-drop event caused by a juice hit links to an actual hit against that carrier lerm;
+- the linked goin exists and is in `dropped` or `rolling` state;
+- no route component declares itself intentionally empty.
+
+Any failed predicate downgrades the effective authority. This is deliberately strict: a beautiful renderer, visual-only witness, stale hold, fallback route, terrain-only route, or partial integrated fixture remains source-honest but cannot claim the first vertical proved live theft into ecology.
+
+Current downgrade cases that consumers must preserve:
+
+- `source-authority-not-live`: the frame envelope is still fixture/fallback/visual/stale/invalid.
+- `non-live-evidence-source`: at least one evidence packet is not live.
+- `stale-frame-source` or `stale-evidence-source`: the receipt is too old for live authority.
+- `missing-terrain-evidence`, `missing-lerm-evidence`, `missing-goin-evidence`, `missing-juice-hit-evidence`, or `missing-carrier-drop-evidence`: the vertical is incomplete.
+- `missing-hit-to-drop-chain`: a drop exists but cannot be traced to a live juice hit against the carrier.
+- `intentionally-empty-*`: the route itself admits that a live subsystem is absent.
+
+The current composer witness must therefore continue to report `synthetic_fixture`. Its intentionally empty live finger-juice, goin physics, crowd AI, and generated-motion routes are useful placeholders for integration, but they are also explicit blockers until the real subsystems are connected.
+
 ## Non-Goals
 
 These contracts do not choose:
