@@ -25,9 +25,13 @@ import {
   evaluateFirstVerticalSourceTruthUpgrade,
   type FirstVerticalSourceTruthUpgradeEvaluation,
 } from './contracts/first-vertical-source-truth-upgrade.ts';
+import {
+  SCHNOZ_SIM_ROUTE,
+  buildSchnozSimulationSnapshot,
+} from './schnoz-lerm-simulation-core.ts';
 
 const WITNESS_SCHEMA = 'lerms.schnoz-lerm-simulation-witness.v0' as const;
-const ROUTE = 'lerms/schnoz-lerm-simulation/witness-file' as const;
+const ROUTE = SCHNOZ_SIM_ROUTE;
 const WIDTH = 1280;
 const HEIGHT = 720;
 const FRAME_COUNT = 6;
@@ -140,10 +144,8 @@ function writePpm(path: string, pixels: Uint8Array): void {
 }
 
 export function buildSchnozLermSimulationWitness(reportPath: string, imagePath: string): SchnozSimulationWitness {
-  const timeline = buildTimeline();
-  const frame = buildFirstVerticalFrameFromSchnozSimulation();
-  const sourceTruthUpgrade = evaluateFirstVerticalSourceTruthUpgrade(frame);
-  const { pixels, metrics } = renderTimeline(timeline, sourceTruthUpgrade);
+  const snapshot = buildSchnozSimulationSnapshot();
+  const { pixels, metrics } = renderTimeline(snapshot.timeline, snapshot.sourceTruthUpgrade);
 
   writePpm(imagePath, pixels);
 
@@ -153,21 +155,11 @@ export function buildSchnozLermSimulationWitness(reportPath: string, imagePath: 
     route: ROUTE,
     reportPath,
     imagePath,
-    proxyBody: {
-      identity: 'proxy_schnoz_sphere',
-      visualConceptStatus: 'blocked_waiting_for_wake_and_bake',
-      claimsFinalRedLermBody: false,
-      orientationCue: 'schnoz_nub',
-      allowedBecause: [
-        'simulation-spine-before-final-body',
-        'source-truth-can-be-live-with-proxy-visuals',
-        'wake-and-bake-owns-final-asset-conditioning',
-      ],
-    },
-    frame,
-    summary: summarizeFirstVerticalFrame(frame),
-    sourceTruthUpgrade,
-    timeline,
+    proxyBody: snapshot.proxyBody,
+    frame: snapshot.frame,
+    summary: snapshot.summary,
+    sourceTruthUpgrade: snapshot.sourceTruthUpgrade,
+    timeline: snapshot.timeline,
     renderMetrics: metrics,
   };
 }
