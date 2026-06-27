@@ -12,6 +12,7 @@ import {
   type SchnozSimulationSnapshot,
   type SchnozTimelineFrame
 } from './schnoz-lerm-simulation-core.js';
+import { initSchnoz3dSmoke } from './schnoz-3d-smoke.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -28,9 +29,10 @@ if (!context) {
 const appCanvas = canvas;
 const ctx = context;
 const viewerQuery = new URLSearchParams(window.location.search);
+const schnoz3dEnabled = viewerQuery.get('schnoz_3d') === '1' || viewerQuery.get('schnoz_sim') === '3d';
 const schnozSmokeEnabled = viewerQuery.get('schnoz_sim') === '1';
-const terrainControlsEnabled = !schnozSmokeEnabled;
-const schnozSnapshot = schnozSmokeEnabled ? buildSchnozSimulationSnapshot() : null;
+const terrainControlsEnabled = !schnozSmokeEnabled && !schnoz3dEnabled;
+const schnozSnapshot = schnozSmokeEnabled || schnoz3dEnabled ? buildSchnozSimulationSnapshot() : null;
 let params: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
   gridResolutionX: 116,
@@ -74,6 +76,16 @@ if (terrainControlsEnabled) {
   installSchnozSmokeStyles();
 }
 
+if (schnoz3dEnabled) {
+  if (!schnozSnapshot) throw new Error('schnoz 3D smoke snapshot unavailable');
+  initSchnoz3dSmoke({
+    snapshot: schnozSnapshot,
+    host: document.body,
+    witnessPanel,
+    hiddenCanvas: appCanvas
+  });
+}
+
 function resize(): void {
   const dpr = window.devicePixelRatio || 1;
   appCanvas.width = Math.max(1, Math.floor(window.innerWidth * dpr));
@@ -86,6 +98,11 @@ function resize(): void {
 function render(timestampMs: number): void {
   const width = window.innerWidth;
   const height = window.innerHeight;
+
+  if (schnoz3dEnabled) {
+    window.requestAnimationFrame(render);
+    return;
+  }
 
   if (schnozSmokeEnabled) {
     if (!schnozSnapshot) throw new Error('schnoz smoke snapshot unavailable');

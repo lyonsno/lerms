@@ -16,6 +16,7 @@
     "test:schnoz-sim": "node tests/schnoz-lerm-simulation-witness-contracts.mjs",
     "test:schnoz-live": "node tests/schnoz-lerm-live-smoke-route-contracts.mjs",
     "test:schnoz-motion-adapter": "node --experimental-strip-types tests/schnoz-motion-adapter-contracts.ts",
+    "test:schnoz-3d": "node tests/schnoz-3d-smoke-route-contracts.mjs",
     "test:red-lerm": "node --experimental-strip-types tests/red-lerm-body-motion-contracts.mjs && node tests/red-lerm-body-motion-witness-contracts.mjs && node tests/red-lerm-visual-witness-contracts.mjs",
     "witness:lerm-horde-successor": "node --experimental-strip-types src/lerm-horde-successor-witness.ts",
     "witness:schnoz-sim": "node --experimental-strip-types src/schnoz-lerm-simulation-witness.ts",
@@ -26,10 +27,12 @@
     "witness:red-lerm-visual": "node --experimental-strip-types src/red-lerm-visual-witness.ts"
   },
   "dependencies": {
+    "three": "^0.185.0",
     "vite": "^8.1.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
+    "@types/three": "^0.185.0",
     "typescript": "^5.5.0"
   }
 }
