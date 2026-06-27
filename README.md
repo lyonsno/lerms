@@ -33,6 +33,8 @@ This repo exists so design, gameplay, renderer, asset, and integration work can 
 
 The playable architecture lives in [docs/campaign-map.md](docs/campaign-map.md). The short version: the first real vertical is not a prettier particle effect. It is the steal/drop/reroute spine where lerms climb toward glove wealth, steal goins, get interrupted by finger juice, drop goins, and redirect the swarm.
 
+The first subsystem sockets live in [docs/first-vertical-interfaces.md](docs/first-vertical-interfaces.md) and [`src/contracts/first-vertical.ts`](src/contracts/first-vertical.ts). They name the shared frame contract for terrain samples, lerm states, goin states, juice hits, and carrier-drop events.
+
 ## First Extraction Targets
 
 - Input contract: bottom-anchored caster hand, fingertip direction, finger identity, fist/charge, and live route latency truth.

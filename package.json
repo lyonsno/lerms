@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:contracts": "rm -rf /tmp/lerms-contract-tests && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir /tmp/lerms-contract-tests --noEmit false src/contracts/first-vertical.ts tests/first-vertical-contracts.ts && node /tmp/lerms-contract-tests/tests/first-vertical-contracts.js"
   },
   "dependencies": {
     "vite": "^8.1.0"

@@ -32,6 +32,8 @@ The first complete smoke should be crude, but conceptually complete:
 
 The first vertical can use placeholder bodies, placeholder wealth, and simplified physics. It cannot substitute "hit particles near targets" for the steal/drop/reroute loop.
 
+The first shared interface pass is captured in [first-vertical-interfaces.md](first-vertical-interfaces.md). Implementations can be crude or ambitious, but their witnesses should converge on that frame envelope before claiming the first vertical spine is proven.
+
 ## Subsystem Contracts
 
 ### Glove Input
