@@ -101,6 +101,8 @@ Lerm actors need:
 - goin-desire reroute state;
 - hooks for species-specific juice response.
 
+The current red-lerm body thesis is captured in [red-lerm-art-direction.md](red-lerm-art-direction.md). Red-lerm visual exploration should begin with neutral eyeless, nose-led body concepts before polished state sheets or generated/sculpted asset routes.
+
 ### Goins And Glove Wealth
 
 Goins are the first playable unit of glove wealth. They must read as thick, physical, desirable, and funny.

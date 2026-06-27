@@ -35,6 +35,8 @@ The playable architecture lives in [docs/campaign-map.md](docs/campaign-map.md).
 
 The first subsystem sockets live in [docs/first-vertical-interfaces.md](docs/first-vertical-interfaces.md) and [`src/contracts/first-vertical.ts`](src/contracts/first-vertical.ts). They name the shared frame contract for terrain samples, lerm states, goin states, juice hits, and carrier-drop events.
 
+The current red-lerm visual thesis lives in [docs/red-lerm-art-direction.md](docs/red-lerm-art-direction.md). Red lerms are being developed as eyeless, nose-led, squash-bodied thieves before any final procedural, generated, sculpted, or rigged body route is chosen.
+
 ## First Extraction Targets
 
 - Input contract: bottom-anchored caster hand, fingertip direction, finger identity, fist/charge, and live route latency truth.
