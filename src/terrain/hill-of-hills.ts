@@ -37,6 +37,7 @@ export interface HillOfHillsProxyMaterial {
   color: Vec3;
   wetness: number;
   growthTint: number;
+  blends: Partial<Record<HillOfHillsProxyMaterialKind, number>>;
 }
 
 export interface HillOfHillsTerrainParams {
@@ -48,12 +49,17 @@ export interface HillOfHillsTerrainParams {
   wallHeight: number;
   floorWidth: number;
   hillRadius: number;
+  hillCount: number;
   hillHeight: number;
   hillVariance: number;
   valleyRadius: number;
+  valleyCount: number;
   valleyHeight: number;
   valleyVariance: number;
   distanceScale: number;
+  worldScale: number;
+  featureSpacing: number;
+  textureScale: number;
   textureDamping: number;
   detailDamping: number;
   gridResolutionX: number;
@@ -150,12 +156,17 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   wallHeight: 2.7,
   floorWidth: 3.8,
   hillRadius: 1.55,
+  hillCount: 14,
   hillHeight: 1.05,
   hillVariance: 0.55,
   valleyRadius: 1.7,
+  valleyCount: 12,
   valleyHeight: 0.82,
   valleyVariance: 0.5,
   distanceScale: 1.1,
+  worldScale: 1,
+  featureSpacing: 1,
+  textureScale: 1,
   textureDamping: 0.5,
   detailDamping: 0.42,
   gridResolutionX: 72,
@@ -198,29 +209,36 @@ export function createHillOfHillsFrame(terrain: HillOfHillsTerrain): FirstVertic
 }
 
 function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainParams {
-  const channelRadius = finiteAtLeast(params.channelRadius, 1.2);
-  const floorWidth = clamp(finiteAtLeast(params.floorWidth, 0.8), 0.8, channelRadius * 1.55);
+  const worldScale = clamp(finiteOr(params.worldScale, 1), 0.55, 1.85);
+  const channelRadius = finiteAtLeast(params.channelRadius, 1.2) * worldScale;
+  const floorWidth = clamp(finiteAtLeast(params.floorWidth, 0.8) * worldScale, 0.8 * worldScale, channelRadius * 1.55);
+  const length = finiteAtLeast(params.length, 4) * worldScale;
 
   return {
     seed: Math.floor(finiteOr(params.seed, defaultHillOfHillsParams.seed)),
-    width: finiteAtLeast(params.width, channelRadius * 2.05),
-    length: finiteAtLeast(params.length, 4),
+    width: finiteAtLeast(params.width * worldScale, channelRadius * 2.05),
+    length,
     channelRadius,
     channelCurvature: clamp(finiteOr(params.channelCurvature, 1), 0.25, 3),
     wallHeight: finiteAtLeast(params.wallHeight, 0.1),
     floorWidth,
-    hillRadius: finiteAtLeast(params.hillRadius, 0.35),
+    hillRadius: finiteAtLeast(params.hillRadius, 0.35) * worldScale,
+    hillCount: Math.round(clamp(finiteOr(params.hillCount, 14), 1, 64)),
     hillHeight: finiteAtLeast(params.hillHeight, 0),
     hillVariance: clamp(finiteOr(params.hillVariance, 0.5), 0, 1.5),
-    valleyRadius: finiteAtLeast(params.valleyRadius, 0.35),
+    valleyRadius: finiteAtLeast(params.valleyRadius, 0.35) * worldScale,
+    valleyCount: Math.round(clamp(finiteOr(params.valleyCount, 12), 1, 64)),
     valleyHeight: finiteAtLeast(params.valleyHeight, 0),
     valleyVariance: clamp(finiteOr(params.valleyVariance, 0.5), 0, 1.5),
-    distanceScale: finiteAtLeast(params.distanceScale, 0.25),
+    distanceScale: clamp(finiteOr(params.distanceScale, 1.1), 0.25, 3),
+    worldScale,
+    featureSpacing: clamp(finiteOr(params.featureSpacing, 1), 0.35, 2.5),
+    textureScale: clamp(finiteOr(params.textureScale, 1), 0.25, 3.5),
     textureDamping: clamp(finiteOr(params.textureDamping, 0.5), 0, 1),
     detailDamping: clamp(finiteOr(params.detailDamping, 0.5), 0, 1),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
     gridResolutionZ: Math.max(8, Math.round(finiteOr(params.gridResolutionZ, 96))),
-    crownZ: clamp(finiteOr(params.crownZ, defaultHillOfHillsParams.crownZ), -params.length * 0.5, params.length * 0.5)
+    crownZ: clamp(finiteOr(params.crownZ, defaultHillOfHillsParams.crownZ) * worldScale, -length * 0.5, length * 0.5)
   };
 }
 
@@ -357,7 +375,8 @@ function topologyAt(
 
 function proxyMaterialFor(region: TerrainRegion, topology: HillOfHillsTopology): HillOfHillsProxyMaterial {
   const kind = proxyMaterialKindFor(region, topology);
-  const color = proxyColorFor(kind);
+  const blends = proxyMaterialBlendsFor(region, topology, kind);
+  const color = blendedProxyColor(blends);
   const wetness = clamp(topology.flowAccumulation * 0.5 + topology.ditchPotential * 0.42 + topology.valleyStrength * 0.26, 0, 1);
   const growthTint = clamp(topology.growthPotential * 0.86 + (kind === 'growth-lip' ? 0.14 : 0), 0, 1);
 
@@ -365,7 +384,8 @@ function proxyMaterialFor(region: TerrainRegion, topology: HillOfHillsTopology):
     kind,
     color,
     wetness,
-    growthTint
+    growthTint,
+    blends
   };
 }
 
@@ -398,6 +418,52 @@ function proxyColorFor(kind: HillOfHillsProxyMaterialKind): Vec3 {
   }
 }
 
+function proxyMaterialBlendsFor(
+  region: TerrainRegion,
+  topology: HillOfHillsTopology,
+  dominantKind: HillOfHillsProxyMaterialKind
+): HillOfHillsProxyMaterial['blends'] {
+  const raw: Partial<Record<HillOfHillsProxyMaterialKind, number>> = {
+    [dominantKind]: 1,
+    'ditch-shadow': topology.ditchPotential * 0.72,
+    'basin-pool': topology.valleyStrength * 0.56,
+    'growth-lip': topology.growthPotential * 0.62,
+    'approach-clay': topology.routePressure * 0.48,
+    'slope-moss': topology.ridgeStrength * 0.32,
+    'rim-crust': region === 'rim' ? 0.52 : topology.ridgeStrength * 0.16,
+    'crown-warmth': region === 'crown' ? 0.82 : 0
+  };
+  raw[dominantKind] = Math.max(raw[dominantKind] ?? 0, 1);
+
+  const total = Object.values(raw).reduce((sum, value) => sum + Math.max(0, value ?? 0), 0) || 1;
+  const normalized: Partial<Record<HillOfHillsProxyMaterialKind, number>> = {};
+  for (const [kind, value] of Object.entries(raw) as [HillOfHillsProxyMaterialKind, number][]) {
+    const weight = clamp(value / total, 0, 1);
+    if (weight > 0.015) {
+      normalized[kind] = weight;
+    }
+  }
+  return normalized;
+}
+
+function blendedProxyColor(blends: HillOfHillsProxyMaterial['blends']): Vec3 {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let total = 0;
+
+  for (const [kind, weight] of Object.entries(blends) as [HillOfHillsProxyMaterialKind, number][]) {
+    const color = proxyColorFor(kind);
+    r += color[0] * weight;
+    g += color[1] * weight;
+    b += color[2] * weight;
+    total += weight;
+  }
+
+  const divisor = total || 1;
+  return [r / divisor, g / divisor, b / divisor];
+}
+
 function heightAt(params: HillOfHillsTerrainParams, x: number, z: number): HeightParts {
   const halfFloor = params.floorWidth * 0.5;
   const lateral = Math.abs(x);
@@ -411,15 +477,16 @@ function heightAt(params: HillOfHillsTerrainParams, x: number, z: number): Heigh
   const floorProtection = 1 - smoothstep(halfFloor * 0.45, halfFloor * 0.95, lateral);
   const hillFeatures = terrainFeatures(params, 'hill');
   const valleyFeatures = terrainFeatures(params, 'valley');
-  const hills = featureContribution(hillFeatures, x, z, params.distanceScale);
-  const valleys = featureContribution(valleyFeatures, x, z, params.distanceScale);
+  const featureDistanceScale = params.distanceScale / params.featureSpacing;
+  const hills = featureContribution(hillFeatures, x, z, featureDistanceScale);
+  const valleys = featureContribution(valleyFeatures, x, z, featureDistanceScale);
   const macroDamping = 1 - floorProtection * 0.58;
   const valleyFloorDamping = 1 - floorProtection * 0.82;
   const textureAmplitude = 0.18 * (1 - params.textureDamping);
   const detailAmplitude = 0.1 * (1 - params.detailDamping);
   const detail =
-    textureAmplitude * Math.sin((x * 1.55 + z * 0.42 + params.seed * 0.001) * params.distanceScale) +
-    detailAmplitude * Math.cos((x * 3.6 - z * 2.1 + params.seed * 0.002) * params.distanceScale);
+    textureAmplitude * Math.sin((x * 1.55 + z * 0.42 + params.seed * 0.001) * params.textureScale) +
+    detailAmplitude * Math.cos((x * 3.6 - z * 2.1 + params.seed * 0.002) * params.textureScale);
   const openFloor = base + wall + gutter + hills * macroDamping - valleys * valleyFloorDamping + detail;
   const floorMinimum = base - 0.12 - Math.max(0, params.valleyHeight - 1.2) * 0.08;
   const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum) : openFloor;
@@ -465,7 +532,7 @@ function classifyRegion(params: HillOfHillsTerrainParams, x: number, z: number, 
 
 function terrainFeatures(params: HillOfHillsTerrainParams, kind: 'hill' | 'valley'): TerrainFeature[] {
   const rng = mulberry32(params.seed + (kind === 'hill' ? 9176 : 44107));
-  const count = kind === 'hill' ? 14 : 12;
+  const count = kind === 'hill' ? params.hillCount : params.valleyCount;
   const features: TerrainFeature[] = [];
   const radiusBase = kind === 'hill' ? params.hillRadius : params.valleyRadius;
   const heightBase = kind === 'hill' ? params.hillHeight : params.valleyHeight;

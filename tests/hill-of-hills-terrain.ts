@@ -61,6 +61,11 @@ assert(typeof centerMaterial.kind === 'string' && centerMaterial.kind.length > 0
 assert(Array.isArray(centerMaterial.color) && centerMaterial.color.length === 3, 'proxy material color is rgb Vec3');
 assertUnit(centerMaterial.wetness, 'proxy material wetness');
 assertUnit(centerMaterial.growthTint, 'proxy material growth tint');
+assert(centerMaterial.blends, 'proxy material exposes blend weights');
+for (const [kind, weight] of Object.entries(centerMaterial.blends)) {
+  assert(typeof kind === 'string' && kind.length > 0, 'blend kind is named');
+  assertUnit(weight as number, `blend weight ${kind}`);
+}
 
 const pushed = createHillOfHillsTerrain({
   channelRadius: 4.2,
@@ -68,12 +73,17 @@ const pushed = createHillOfHillsTerrain({
   wallHeight: 4.4,
   floorWidth: 3.2,
   hillRadius: 1.1,
+  hillCount: 22,
   hillHeight: 1.45,
   hillVariance: 0.95,
   valleyRadius: 1.25,
+  valleyCount: 20,
   valleyHeight: 1.05,
   valleyVariance: 0.9,
   distanceScale: 1.65,
+  worldScale: 1.18,
+  featureSpacing: 0.72,
+  textureScale: 1.9,
   textureDamping: 0.28,
   detailDamping: 0.24,
   gridResolutionX: 48,
@@ -106,6 +116,40 @@ assert(
 assert(
   baseline.samples.some((terrainSample) => (terrainSample as any).proxyMaterial?.kind === 'growth-lip'),
   'proxy materials include growth-lip shader band'
+);
+
+const sparseHills = createHillOfHillsTerrain({ seed: 1234, hillRadius: 1.35, hillCount: 6, valleyCount: 12 });
+const denseHills = createHillOfHillsTerrain({ seed: 1234, hillRadius: 1.35, hillCount: 24, valleyCount: 12 });
+assert(sparseHills.params.hillRadius === denseHills.params.hillRadius, 'hill density does not mutate hill radius');
+assert(sparseHills.params.hillCount === 6, 'hill count is preserved in effective params');
+assert(denseHills.params.hillCount === 24, 'dense hill count is preserved in effective params');
+assert(
+  sparseHills.witness.topologyChecksum !== denseHills.witness.topologyChecksum,
+  'hill count changes topology independently from radius'
+);
+
+const sparseValleys = createHillOfHillsTerrain({ seed: 4321, valleyRadius: 1.25, hillCount: 14, valleyCount: 5 });
+const denseValleys = createHillOfHillsTerrain({ seed: 4321, valleyRadius: 1.25, hillCount: 14, valleyCount: 22 });
+assert(sparseValleys.params.valleyRadius === denseValleys.params.valleyRadius, 'valley density does not mutate valley radius');
+assert(
+  sparseValleys.witness.topologyChecksum !== denseValleys.witness.topologyChecksum,
+  'valley count changes topology independently from radius'
+);
+
+const scaleGrid = { gridResolutionX: 42, gridResolutionZ: 58 };
+const widerWorld = createHillOfHillsTerrain({ ...scaleGrid, seed: 2718, worldScale: 1.45, featureSpacing: 1, textureScale: 1 });
+const tighterFeatures = createHillOfHillsTerrain({ ...scaleGrid, seed: 2718, worldScale: 1, featureSpacing: 0.62, textureScale: 1 });
+const sharperTexture = createHillOfHillsTerrain({ ...scaleGrid, seed: 2718, worldScale: 1, featureSpacing: 1, textureScale: 2.15 });
+assert(widerWorld.params.worldScale === 1.45, 'world scale is preserved in effective params');
+assert(tighterFeatures.params.featureSpacing === 0.62, 'feature spacing is preserved in effective params');
+assert(sharperTexture.params.textureScale === 2.15, 'texture scale is preserved in effective params');
+assert(
+  widerWorld.witness.sampleSpacing.x > baseline.witness.sampleSpacing.x,
+  'world scale expands sampled world spacing'
+);
+assert(
+  tighterFeatures.witness.topologyChecksum !== sharperTexture.witness.topologyChecksum,
+  'feature spacing and texture scale are independent topology controls'
 );
 
 for (const terrainSample of baseline.samples) {

@@ -41,12 +41,17 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'wallHeight', label: 'Wall height', min: 0.4, max: 5.2, step: 0.1 },
   { key: 'floorWidth', label: 'Floor width', min: 1.2, max: 6.2, step: 0.1 },
   { key: 'hillRadius', label: 'Hill radius', min: 0.5, max: 3.2, step: 0.05 },
+  { key: 'hillCount', label: 'Hill count', min: 4, max: 36, step: 1 },
   { key: 'hillHeight', label: 'Hill height', min: 0, max: 2.4, step: 0.05 },
   { key: 'hillVariance', label: 'Hill variance', min: 0, max: 1.35, step: 0.05 },
   { key: 'valleyRadius', label: 'Valley radius', min: 0.5, max: 3.2, step: 0.05 },
+  { key: 'valleyCount', label: 'Valley count', min: 4, max: 34, step: 1 },
   { key: 'valleyHeight', label: 'Valley height', min: 0, max: 2.2, step: 0.05 },
   { key: 'valleyVariance', label: 'Valley variance', min: 0, max: 1.35, step: 0.05 },
-  { key: 'distanceScale', label: 'Distance scale', min: 0.45, max: 2.4, step: 0.05 },
+  { key: 'worldScale', label: 'World scale', min: 0.65, max: 1.65, step: 0.05 },
+  { key: 'distanceScale', label: 'Distance shift', min: 0.45, max: 2.4, step: 0.05 },
+  { key: 'featureSpacing', label: 'Feature spacing', min: 0.45, max: 2.1, step: 0.05 },
+  { key: 'textureScale', label: 'Texture scale', min: 0.4, max: 3, step: 0.05 },
   { key: 'textureDamping', label: 'Texture damping', min: 0, max: 1, step: 0.05 },
   { key: 'detailDamping', label: 'Detail damping', min: 0, max: 1, step: 0.05 }
 ];

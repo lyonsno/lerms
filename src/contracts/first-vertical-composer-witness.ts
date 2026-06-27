@@ -224,7 +224,12 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       kind: 'crown-warmth',
       color: [205, 165, 72],
       wetness: 0.18,
-      growthTint: 0.26
+      growthTint: 0.26,
+      blends: {
+        'crown-warmth': 0.72,
+        'approach-clay': 0.2,
+        'growth-lip': 0.08
+      }
     }
   };
 
@@ -270,12 +275,17 @@ function buildTerrainParams(): HillOfHillsTerrainParams {
     wallHeight: 2,
     floorWidth: 3,
     hillRadius: 1,
+    hillCount: 1,
     hillHeight: 1,
     hillVariance: 0.3,
     valleyRadius: 1,
+    valleyCount: 1,
     valleyHeight: 0.8,
     valleyVariance: 0.3,
     distanceScale: 1,
+    worldScale: 1,
+    featureSpacing: 1,
+    textureScale: 1,
     textureDamping: 0.5,
     detailDamping: 0.5,
     gridResolutionX: 1,
