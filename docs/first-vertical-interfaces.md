@@ -112,6 +112,14 @@ The composer owns:
 
 The first vertical should route new subsystem outputs through the composer unless a lane has a specific reason to test a subsystem in isolation. A composed frame with fixture-backed red lerms must remain `synthetic_fixture` until the red-lerm source is live; a live terrain packet alone is not enough to claim a live composed vertical.
 
+The current file-producing fixture route is:
+
+```sh
+npm run witness:composer -- --out /tmp/lerms-first-vertical-composer-witness.json
+```
+
+That route writes an integrated fixture receipt for chamber/bootstrap consumers. It is useful as a source-honest handoff, not proof of a live vertical: the terrain socket and red-lerm data are fixture-backed, live finger-juice packets, live goin physics, live crowd AI, and generated lerm motion are intentionally absent.
+
 ## Non-Goals
 
 These contracts do not choose:
