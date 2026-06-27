@@ -233,7 +233,9 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
     },
     phaseInfluence: {
       kind: 'none',
-      amount: 0
+      amount: 0,
+      trailAmount: 0,
+      sideDitchAmount: 0
     }
   };
 
@@ -244,7 +246,9 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       mode: 'stable',
       terrainEpoch: 0,
       activeEpisodes: [],
-      checksum: 'inline-terrain-socket-stable-phase-fixture-checksum'
+      checksum: 'inline-terrain-socket-stable-phase-fixture-checksum',
+      phaseClock: 0,
+      phaseProgress: 0
     },
     samples: [sample],
     witness: {
@@ -265,9 +269,14 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       phaseMode: 'stable',
       terrainEpoch: 0,
       activePhaseCount: 0,
+      activePhaseKinds: {},
+      phaseClock: 0,
+      phaseProgress: 0,
       phaseChecksum: 'inline-terrain-socket-stable-phase-fixture-checksum',
       phaseInfluenceChecksum: 'inline-terrain-socket-stable-phase-influence-fixture-checksum',
       phaseInfluenceRange: { min: 0, max: 0 },
+      trailInfluenceRange: { min: 0, max: 0 },
+      sideDitchInfluenceRange: { min: 0, max: 0 },
       phaseInfluenceKinds: { none: 1 },
       topologyRanges: {
         flowAccumulation: { min: 0.42, max: 0.42 },
@@ -311,6 +320,12 @@ function buildTerrainParams(): HillOfHillsTerrainParams {
     ditchPhaseRadius: 1.25,
     ditchPhaseTimeMs: 0,
     ditchPhaseDurationMs: 1800,
+    trailPhaseSeed: 9109,
+    trailPhaseIntensity: 0,
+    trailPhaseLimit: 0,
+    trailPhaseRadius: 1.4,
+    trailPhaseTimeMs: 0,
+    trailPhaseDurationMs: 1900,
     gridResolutionX: 1,
     gridResolutionZ: 1,
     crownZ: 3.4

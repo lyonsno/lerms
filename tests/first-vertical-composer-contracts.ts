@@ -69,7 +69,9 @@ const terrainSample: HillOfHillsTerrainSample = {
   },
   phaseInfluence: {
     kind: 'none',
-    amount: 0
+    amount: 0,
+    trailAmount: 0,
+    sideDitchAmount: 0
   }
 };
 
@@ -103,6 +105,12 @@ const terrain: HillOfHillsTerrain = {
     ditchPhaseRadius: 1.25,
     ditchPhaseTimeMs: 0,
     ditchPhaseDurationMs: 1800,
+    trailPhaseSeed: 9109,
+    trailPhaseIntensity: 0,
+    trailPhaseLimit: 0,
+    trailPhaseRadius: 1.4,
+    trailPhaseTimeMs: 0,
+    trailPhaseDurationMs: 1900,
     gridResolutionX: 1,
     gridResolutionZ: 1,
     crownZ: 3.4
@@ -111,7 +119,9 @@ const terrain: HillOfHillsTerrain = {
     mode: 'stable',
     terrainEpoch: 0,
     activeEpisodes: [],
-    checksum: 'composer-stable-phase-fixture-checksum'
+    checksum: 'composer-stable-phase-fixture-checksum',
+    phaseClock: 0,
+    phaseProgress: 0
   },
   samples: [terrainSample],
   witness: {
@@ -148,6 +158,12 @@ const terrain: HillOfHillsTerrain = {
       ditchPhaseRadius: 1.25,
       ditchPhaseTimeMs: 0,
       ditchPhaseDurationMs: 1800,
+      trailPhaseSeed: 9109,
+      trailPhaseIntensity: 0,
+      trailPhaseLimit: 0,
+      trailPhaseRadius: 1.4,
+      trailPhaseTimeMs: 0,
+      trailPhaseDurationMs: 1900,
       gridResolutionX: 1,
       gridResolutionZ: 1,
       crownZ: 3.4
@@ -163,9 +179,14 @@ const terrain: HillOfHillsTerrain = {
     phaseMode: 'stable',
     terrainEpoch: 0,
     activePhaseCount: 0,
+    activePhaseKinds: {},
+    phaseClock: 0,
+    phaseProgress: 0,
     phaseChecksum: 'composer-stable-phase-fixture-checksum',
     phaseInfluenceChecksum: 'composer-stable-phase-influence-fixture-checksum',
     phaseInfluenceRange: { min: 0, max: 0 },
+    trailInfluenceRange: { min: 0, max: 0 },
+    sideDitchInfluenceRange: { min: 0, max: 0 },
     phaseInfluenceKinds: { none: 1 },
     topologyRanges: {
       flowAccumulation: { min: 0.42, max: 0.42 },

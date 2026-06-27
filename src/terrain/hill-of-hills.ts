@@ -13,8 +13,9 @@ import {
 export const HILL_OF_HILLS_WITNESS_SCHEMA = 'lerms.hill-of-hills-witness.v0' as const;
 
 export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 'invalid';
-export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming';
-export type HillOfHillsPhaseInfluenceKind = 'none' | 'ditch_forming';
+export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming' | 'trail_forming' | 'mixed_forming';
+export type HillOfHillsPhaseKind = 'ditch_forming' | 'trail_forming';
+export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
 export type HillOfHillsProxyMaterialKind =
   | 'crown-warmth'
   | 'approach-clay'
@@ -44,11 +45,14 @@ export interface HillOfHillsProxyMaterial {
 
 export interface HillOfHillsPhaseEpisode {
   id: string;
-  kind: 'ditch_forming';
+  kind: HillOfHillsPhaseKind;
   center: Vec3;
   radius: number;
   progress: number;
   intensity: number;
+  direction: Vec3;
+  trailWidth: number;
+  sideDitchOffset: number;
 }
 
 export interface HillOfHillsPhaseState {
@@ -56,11 +60,15 @@ export interface HillOfHillsPhaseState {
   terrainEpoch: number;
   activeEpisodes: readonly HillOfHillsPhaseEpisode[];
   checksum: string;
+  phaseClock: number;
+  phaseProgress: number;
 }
 
 export interface HillOfHillsPhaseInfluence {
   kind: HillOfHillsPhaseInfluenceKind;
   amount: number;
+  trailAmount: number;
+  sideDitchAmount: number;
   episodeId?: string;
 }
 
@@ -92,6 +100,12 @@ export interface HillOfHillsTerrainParams {
   ditchPhaseRadius: number;
   ditchPhaseTimeMs: number;
   ditchPhaseDurationMs: number;
+  trailPhaseSeed: number;
+  trailPhaseIntensity: number;
+  trailPhaseLimit: number;
+  trailPhaseRadius: number;
+  trailPhaseTimeMs: number;
+  trailPhaseDurationMs: number;
   gridResolutionX: number;
   gridResolutionZ: number;
   crownZ: number;
@@ -138,9 +152,14 @@ export interface HillOfHillsWitness {
   phaseMode: HillOfHillsPhaseMode;
   terrainEpoch: number;
   activePhaseCount: number;
+  activePhaseKinds: Partial<Record<HillOfHillsPhaseKind, number>>;
+  phaseClock: number;
+  phaseProgress: number;
   phaseChecksum: string;
   phaseInfluenceChecksum: string;
   phaseInfluenceRange: Range;
+  trailInfluenceRange: Range;
+  sideDitchInfluenceRange: Range;
   phaseInfluenceKinds: Partial<Record<HillOfHillsPhaseInfluenceKind, number>>;
   topologyRanges: {
     flowAccumulation: Range;
@@ -215,6 +234,12 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   ditchPhaseRadius: 1.25,
   ditchPhaseTimeMs: 0,
   ditchPhaseDurationMs: 1800,
+  trailPhaseSeed: 9109,
+  trailPhaseIntensity: 0,
+  trailPhaseLimit: 0,
+  trailPhaseRadius: 1.4,
+  trailPhaseTimeMs: 0,
+  trailPhaseDurationMs: 1900,
   gridResolutionX: 72,
   gridResolutionZ: 96,
   crownZ: 5.2
@@ -290,6 +315,12 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     ditchPhaseRadius: clamp(finiteAtLeast(params.ditchPhaseRadius, 0.35) * worldScale, 0.35 * worldScale, 3.2 * worldScale),
     ditchPhaseTimeMs: Math.max(0, finiteOr(params.ditchPhaseTimeMs, 0)),
     ditchPhaseDurationMs: finiteAtLeast(params.ditchPhaseDurationMs, 240),
+    trailPhaseSeed: Math.floor(finiteOr(params.trailPhaseSeed, defaultHillOfHillsParams.trailPhaseSeed)),
+    trailPhaseIntensity: clamp(finiteOr(params.trailPhaseIntensity, 0), 0, 1),
+    trailPhaseLimit: Math.round(clamp(finiteOr(params.trailPhaseLimit, 0), 0, 8)),
+    trailPhaseRadius: clamp(finiteAtLeast(params.trailPhaseRadius, 0.35) * worldScale, 0.35 * worldScale, 3.4 * worldScale),
+    trailPhaseTimeMs: Math.max(0, finiteOr(params.trailPhaseTimeMs, 0)),
+    trailPhaseDurationMs: finiteAtLeast(params.trailPhaseDurationMs, 240),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
     gridResolutionZ: Math.max(8, Math.round(finiteOr(params.gridResolutionZ, 96))),
     crownZ: clamp(finiteOr(params.crownZ, defaultHillOfHillsParams.crownZ) * worldScale, -length * 0.5, length * 0.5)
@@ -338,49 +369,192 @@ function authorityForFallbackStatus(
 }
 
 function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseState {
-  const duration = Math.max(1, params.ditchPhaseDurationMs);
-  const terrainEpoch = Math.floor(params.ditchPhaseTimeMs / duration);
-  const phaseClock = (params.ditchPhaseTimeMs % duration) / duration;
-  const cycleProgress = smoothstep(0.04, 0.46, phaseClock) * (1 - smoothstep(0.9, 1, phaseClock));
-  const intensity = clamp(params.ditchPhaseIntensity * cycleProgress, 0, 1);
+  const episodes: HillOfHillsPhaseEpisode[] = [];
+  const ditchTiming = phaseTiming(params.ditchPhaseTimeMs, params.ditchPhaseDurationMs);
+  const trailTiming = phaseTiming(params.trailPhaseTimeMs, params.trailPhaseDurationMs);
+  const ditchIntensity = clamp(params.ditchPhaseIntensity * ditchTiming.progress, 0, 1);
+  const trailIntensity = clamp(params.trailPhaseIntensity * trailTiming.progress, 0, 1);
+  const terrainEpoch = Math.max(ditchTiming.epoch, trailTiming.epoch);
+  const halfFloor = params.floorWidth * 0.5;
 
-  if (intensity <= 0 || params.ditchPhaseLimit <= 0) {
-    const checksumInput = `stable:${terrainEpoch}:${params.ditchPhaseSeed}:${params.ditchPhaseIntensity.toFixed(3)}`;
+  if (ditchIntensity > 0 && params.ditchPhaseLimit > 0) {
+    const rng = mulberry32(params.ditchPhaseSeed + ditchTiming.epoch * 131071 + params.seed * 17);
+    for (let i = 0; i < params.ditchPhaseLimit; i += 1) {
+      const side = rng() < 0.5 ? -1 : 1;
+      const gutterBias = halfFloor * (0.86 + rng() * 0.86);
+      const x = side * clamp(gutterBias, halfFloor * 0.66, params.channelRadius * 0.72);
+      const z = -params.length * 0.42 + rng() * params.length * 0.84;
+      const radius = params.ditchPhaseRadius * (0.72 + rng() * 0.46);
+      const localProgress = clamp(ditchTiming.progress * (0.82 + rng() * 0.2), 0, 1);
+      const localIntensity = ditchIntensity * (0.72 + rng() * 0.3);
+      episodes.push({
+        id: `ditch-${ditchTiming.epoch}-${i}-${roundId(x)}-${roundId(z)}`,
+        kind: 'ditch_forming',
+        center: [x, 0, z],
+        radius,
+        progress: localProgress,
+        intensity: localIntensity,
+        direction: [0, 0, 1],
+        trailWidth: radius * 0.38,
+        sideDitchOffset: radius * 0.42
+      });
+    }
+  }
+
+  if (trailIntensity > 0 && params.trailPhaseLimit > 0) {
+    const rng = mulberry32(params.trailPhaseSeed + trailTiming.epoch * 91757 + params.seed * 23);
+    for (let i = 0; i < params.trailPhaseLimit; i += 1) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const x = side * halfFloor * (0.1 + rng() * 0.34);
+      const z = -params.length * 0.34 + rng() * params.length * 0.7;
+      const angle = (rng() - 0.5) * 0.52;
+      const direction = normalize([Math.sin(angle), 0, Math.cos(angle)]);
+      const radius = params.trailPhaseRadius * (0.86 + rng() * 0.42);
+      const trailWidth = Math.max(0.16, radius * (0.2 + rng() * 0.08));
+      const sideDitchOffset = Math.max(trailWidth * 1.55, radius * (0.36 + rng() * 0.08));
+      const localProgress = clamp(trailTiming.progress * (0.84 + rng() * 0.18), 0, 1);
+      const localIntensity = trailIntensity * (0.76 + rng() * 0.24);
+      episodes.push({
+        id: `trail-${trailTiming.epoch}-${i}-${roundId(x)}-${roundId(z)}`,
+        kind: 'trail_forming',
+        center: [x, 0, z],
+        radius,
+        progress: localProgress,
+        intensity: localIntensity,
+        direction,
+        trailWidth,
+        sideDitchOffset
+      });
+    }
+  }
+
+  const mode = phaseModeFor(episodes);
+  const phaseClock = episodes.length === 0 ? 0 : Math.max(ditchIntensity > 0 ? ditchTiming.clock : 0, trailIntensity > 0 ? trailTiming.clock : 0);
+  const phaseProgress = episodes.length === 0 ? 0 : Math.max(ditchIntensity > 0 ? ditchTiming.progress : 0, trailIntensity > 0 ? trailTiming.progress : 0);
+
+  if (episodes.length === 0) {
+    const checksumInput = [
+      'stable',
+      terrainEpoch,
+      params.ditchPhaseSeed,
+      params.ditchPhaseIntensity.toFixed(3),
+      params.trailPhaseSeed,
+      params.trailPhaseIntensity.toFixed(3)
+    ].join(':');
     return {
-      mode: 'stable',
+      mode,
       terrainEpoch,
       activeEpisodes: [],
-      checksum: checksum(checksumInput)
+      checksum: checksum(checksumInput),
+      phaseClock,
+      phaseProgress
     };
   }
 
-  const rng = mulberry32(params.ditchPhaseSeed + terrainEpoch * 131071 + params.seed * 17);
-  const episodes: HillOfHillsPhaseEpisode[] = [];
-  const halfFloor = params.floorWidth * 0.5;
+  return {
+    mode,
+    terrainEpoch,
+    activeEpisodes: episodes,
+    checksum: checksum(episodes.map((episode) => phaseEpisodeSignature(episode)).join('|')),
+    phaseClock,
+    phaseProgress
+  };
+}
 
-  for (let i = 0; i < params.ditchPhaseLimit; i += 1) {
-    const side = rng() < 0.5 ? -1 : 1;
-    const gutterBias = halfFloor * (0.86 + rng() * 0.86);
-    const x = side * clamp(gutterBias, halfFloor * 0.66, params.channelRadius * 0.72);
-    const z = -params.length * 0.42 + rng() * params.length * 0.84;
-    const radius = params.ditchPhaseRadius * (0.72 + rng() * 0.46);
-    const localProgress = clamp(cycleProgress * (0.82 + rng() * 0.2), 0, 1);
-    const localIntensity = intensity * (0.72 + rng() * 0.3);
-    episodes.push({
-      id: `ditch-${terrainEpoch}-${i}-${roundId(x)}-${roundId(z)}`,
-      kind: 'ditch_forming',
-      center: [x, 0, z],
-      radius,
-      progress: localProgress,
-      intensity: localIntensity
-    });
+function phaseTiming(timeMs: number, durationMs: number): { epoch: number; clock: number; progress: number } {
+  const duration = Math.max(1, durationMs);
+  const epoch = Math.floor(timeMs / duration);
+  const clock = (timeMs % duration) / duration;
+  const progress = smoothstep(0.04, 0.46, clock) * (1 - smoothstep(0.9, 1, clock));
+  return { epoch, clock, progress };
+}
+
+function phaseModeFor(episodes: readonly HillOfHillsPhaseEpisode[]): HillOfHillsPhaseMode {
+  const hasDitch = episodes.some((episode) => episode.kind === 'ditch_forming');
+  const hasTrail = episodes.some((episode) => episode.kind === 'trail_forming');
+  if (hasDitch && hasTrail) return 'mixed_forming';
+  if (hasTrail) return 'trail_forming';
+  if (hasDitch) return 'ditch_forming';
+  return 'stable';
+}
+
+function activePhaseKinds(episodes: readonly HillOfHillsPhaseEpisode[]): Partial<Record<HillOfHillsPhaseKind, number>> {
+  const counts: Partial<Record<HillOfHillsPhaseKind, number>> = {};
+  for (const episode of episodes) {
+    counts[episode.kind] = (counts[episode.kind] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: number): HillOfHillsPhaseInfluence {
+  let bestKind: HillOfHillsPhaseInfluenceKind = 'none';
+  let bestAmount = 0;
+  let bestTrailAmount = 0;
+  let bestSideDitchAmount = 0;
+  let bestEpisodeId: string | undefined;
+
+  for (const episode of phaseState.activeEpisodes) {
+    if (episode.kind === 'trail_forming') {
+      const influence = trailInfluenceAtEpisode(episode, x, z);
+      const amount = Math.max(influence.trailAmount * 0.92, influence.sideDitchAmount);
+      if (amount > bestAmount) {
+        bestKind = 'trail_forming';
+        bestAmount = amount;
+        bestTrailAmount = influence.trailAmount;
+        bestSideDitchAmount = influence.sideDitchAmount;
+        bestEpisodeId = episode.id;
+      }
+      continue;
+    }
+
+    const dx = (x - episode.center[0]) / Math.max(0.001, episode.radius * 0.48);
+    const dz = (z - episode.center[2]) / Math.max(0.001, episode.radius * 1.9);
+    const ellipticalDistance = Math.hypot(dx, dz);
+    const band = 1 - smoothstep(0.12, 1, ellipticalDistance);
+    const amount = clamp(band * episode.intensity, 0, 1);
+    if (amount > bestAmount) {
+      bestKind = 'ditch_forming';
+      bestAmount = amount;
+      bestTrailAmount = 0;
+      bestSideDitchAmount = amount;
+      bestEpisodeId = episode.id;
+    }
+  }
+
+  if (bestAmount <= 0) {
+    return {
+      kind: 'none',
+      amount: 0,
+      trailAmount: 0,
+      sideDitchAmount: 0
+    };
   }
 
   return {
-    mode: 'ditch_forming',
-    terrainEpoch,
-    activeEpisodes: episodes,
-    checksum: checksum(episodes.map((episode) => phaseEpisodeSignature(episode)).join('|'))
+    kind: bestKind,
+    amount: bestAmount,
+    trailAmount: bestTrailAmount,
+    sideDitchAmount: bestSideDitchAmount,
+    episodeId: bestEpisodeId
+  };
+}
+
+function trailInfluenceAtEpisode(
+  episode: HillOfHillsPhaseEpisode,
+  x: number,
+  z: number
+): { trailAmount: number; sideDitchAmount: number } {
+  const px = x - episode.center[0];
+  const pz = z - episode.center[2];
+  const along = px * episode.direction[0] + pz * episode.direction[2];
+  const lateral = px * episode.direction[2] - pz * episode.direction[0];
+  const longBand = 1 - smoothstep(episode.radius * 0.18, episode.radius * 1.95, Math.abs(along));
+  const trailBand = 1 - smoothstep(episode.trailWidth * 0.45, episode.trailWidth, Math.abs(lateral));
+  const leftDitch = 1 - smoothstep(episode.trailWidth * 0.32, episode.trailWidth * 1.2, Math.abs(lateral - episode.sideDitchOffset));
+  const rightDitch = 1 - smoothstep(episode.trailWidth * 0.32, episode.trailWidth * 1.2, Math.abs(lateral + episode.sideDitchOffset));
+  return {
+    trailAmount: clamp(trailBand * longBand * episode.intensity, 0, 1),
+    sideDitchAmount: clamp(Math.max(leftDitch, rightDitch) * longBand * episode.intensity, 0, 1)
   };
 }
 
@@ -392,38 +566,12 @@ function phaseEpisodeSignature(episode: HillOfHillsPhaseEpisode): string {
     episode.center[2].toFixed(3),
     episode.radius.toFixed(3),
     episode.progress.toFixed(3),
-    episode.intensity.toFixed(3)
+    episode.intensity.toFixed(3),
+    episode.direction[0].toFixed(3),
+    episode.direction[2].toFixed(3),
+    episode.trailWidth.toFixed(3),
+    episode.sideDitchOffset.toFixed(3)
   ].join(':');
-}
-
-function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: number): HillOfHillsPhaseInfluence {
-  let bestAmount = 0;
-  let bestEpisodeId: string | undefined;
-
-  for (const episode of phaseState.activeEpisodes) {
-    const dx = (x - episode.center[0]) / Math.max(0.001, episode.radius * 0.48);
-    const dz = (z - episode.center[2]) / Math.max(0.001, episode.radius * 1.9);
-    const ellipticalDistance = Math.hypot(dx, dz);
-    const band = 1 - smoothstep(0.12, 1, ellipticalDistance);
-    const amount = clamp(band * episode.intensity, 0, 1);
-    if (amount > bestAmount) {
-      bestAmount = amount;
-      bestEpisodeId = episode.id;
-    }
-  }
-
-  if (bestAmount <= 0) {
-    return {
-      kind: 'none',
-      amount: 0
-    };
-  }
-
-  return {
-    kind: 'ditch_forming',
-    amount: bestAmount,
-    episodeId: bestEpisodeId
-  };
 }
 
 function generateSamples(
@@ -506,14 +654,20 @@ function topologyAt(
   const crownPull = 1 - clamp(Math.abs(z - params.crownZ) / Math.max(0.001, params.length * 0.48), 0, 1);
   const gutterBand = Math.exp(-Math.pow((lateral - halfFloor * 1.28) / Math.max(0.35, halfFloor * 0.33), 2));
   const valleyStrength = clamp(
-    heightParts.valleys / Math.max(0.001, params.valleyHeight * 1.9) + phaseInfluence.amount * 0.18,
+    heightParts.valleys / Math.max(0.001, params.valleyHeight * 1.9) +
+      phaseInfluence.sideDitchAmount * 0.2 +
+      phaseInfluence.trailAmount * 0.08,
     0,
     1
   );
   const ridgeStrength = clamp(Math.max(heightParts.hills, heightParts.wall * 0.42) / Math.max(0.001, params.hillHeight * 1.8 + params.wallHeight * 0.35), 0, 1);
-  const flowAccumulation = clamp(gutterBand * 0.66 + valleyStrength * 0.52 + uphill * 0.18 + phaseInfluence.amount * 0.28, 0, 1);
-  const routePressure = clamp(centerRoute * 0.58 + crownPull * 0.24 + flowAccumulation * 0.26 + phaseInfluence.amount * 0.16 - slope * 0.12, 0, 1);
-  const ditchPotential = clamp(gutterBand * 0.72 + valleyStrength * 0.48 + phaseInfluence.amount * 0.52 + (region === 'gutter' ? 0.18 : 0), 0, 1);
+  const flowAccumulation = clamp(gutterBand * 0.66 + valleyStrength * 0.52 + uphill * 0.18 + phaseInfluence.sideDitchAmount * 0.32, 0, 1);
+  const routePressure = clamp(
+    centerRoute * 0.58 + crownPull * 0.24 + flowAccumulation * 0.2 + phaseInfluence.trailAmount * 0.42 + phaseInfluence.sideDitchAmount * 0.08 - slope * 0.12,
+    0,
+    1
+  );
+  const ditchPotential = clamp(gutterBand * 0.72 + valleyStrength * 0.48 + phaseInfluence.sideDitchAmount * 0.58 + (region === 'gutter' ? 0.18 : 0), 0, 1);
   const growthPotential = clamp(ridgeStrength * 0.46 + slope * 0.2 + crownPull * 0.12 - ditchPotential * 0.2, 0, 1);
   const flowDirection = normalize([dx, 0.18 + flowAccumulation * 0.22, dz + 0.28]);
 
@@ -643,7 +797,9 @@ function heightAt(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhase
     textureAmplitude * Math.sin((x * 1.55 + z * 0.42 + params.seed * 0.001) * params.textureScale) +
     detailAmplitude * Math.cos((x * 3.6 - z * 2.1 + params.seed * 0.002) * params.textureScale);
   const phaseInfluence = phaseInfluenceAt(phaseState, x, z);
-  const phaseDitch = phaseInfluence.amount * (0.18 + params.valleyHeight * 0.24 + params.wallHeight * 0.035);
+  const phaseDitch =
+    phaseInfluence.sideDitchAmount * (0.18 + params.valleyHeight * 0.24 + params.wallHeight * 0.035) +
+    phaseInfluence.trailAmount * (0.06 + params.valleyHeight * 0.05);
   const openFloor = base + wall + gutter + hills * macroDamping - valleys * valleyFloorDamping + detail - phaseDitch;
   const floorMinimum = base - 0.12 - Math.max(0, params.valleyHeight - 1.2) * 0.08;
   const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum - phaseDitch * 0.86) : openFloor;
@@ -751,6 +907,8 @@ function createWitness(
   const phaseInfluenceKinds: Partial<Record<HillOfHillsPhaseInfluenceKind, number>> = {};
   const topologyRanges = createTopologyRanges();
   const phaseInfluenceRange = createRange();
+  const trailInfluenceRange = createRange();
+  const sideDitchInfluenceRange = createRange();
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
 
@@ -761,6 +919,8 @@ function createWitness(
     proxyMaterialCounts[sample.proxyMaterial.kind] = (proxyMaterialCounts[sample.proxyMaterial.kind] ?? 0) + 1;
     phaseInfluenceKinds[sample.phaseInfluence.kind] = (phaseInfluenceKinds[sample.phaseInfluence.kind] ?? 0) + 1;
     includeInRange(phaseInfluenceRange, sample.phaseInfluence.amount);
+    includeInRange(trailInfluenceRange, sample.phaseInfluence.trailAmount);
+    includeInRange(sideDitchInfluenceRange, sample.phaseInfluence.sideDitchAmount);
     includeInRange(topologyRanges.flowAccumulation, sample.topology.flowAccumulation);
     includeInRange(topologyRanges.ridgeStrength, sample.topology.ridgeStrength);
     includeInRange(topologyRanges.valleyStrength, sample.topology.valleyStrength);
@@ -796,9 +956,14 @@ function createWitness(
     phaseMode: phaseState.mode,
     terrainEpoch: phaseState.terrainEpoch,
     activePhaseCount: phaseState.activeEpisodes.length,
+    activePhaseKinds: activePhaseKinds(phaseState.activeEpisodes),
+    phaseClock: phaseState.phaseClock,
+    phaseProgress: phaseState.phaseProgress,
     phaseChecksum: phaseState.checksum,
     phaseInfluenceChecksum: checksum(samples.map((sample) => phaseInfluenceSignature(sample)).join('|')),
     phaseInfluenceRange,
+    trailInfluenceRange,
+    sideDitchInfluenceRange,
     phaseInfluenceKinds,
     topologyRanges,
     proxyMaterialCounts
@@ -810,7 +975,9 @@ function phaseInfluenceSignature(sample: HillOfHillsTerrainSample): string {
     sample.id,
     sample.phaseInfluence.kind,
     sample.phaseInfluence.episodeId ?? 'none',
-    sample.phaseInfluence.amount.toFixed(3)
+    sample.phaseInfluence.amount.toFixed(3),
+    sample.phaseInfluence.trailAmount.toFixed(3),
+    sample.phaseInfluence.sideDitchAmount.toFixed(3)
   ].join(':');
 }
 

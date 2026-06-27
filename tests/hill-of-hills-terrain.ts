@@ -71,6 +71,8 @@ const centerPhase = (center as any).phaseInfluence;
 assert(centerPhase, 'terrain sample exposes phase influence for terrain decisions');
 assert(centerPhase.kind === 'none', 'default center sample has no active phase influence');
 assert(centerPhase.amount === 0, 'default center phase influence is zero');
+assert(centerPhase.trailAmount === 0, 'default center trail phase influence is zero');
+assert(centerPhase.sideDitchAmount === 0, 'default center side-ditch phase influence is zero');
 
 const pushed = createHillOfHillsTerrain({
   channelRadius: 4.2,
@@ -169,9 +171,16 @@ assert(stablePhase.phaseState.mode === 'stable', 'zero ditch phase intensity kee
 assert(stablePhase.phaseState.activeEpisodes.length === 0, 'stable terrain has no active phase episodes');
 assert(stablePhase.witness.phaseMode === 'stable', 'stable witness records stable phase mode');
 assert(stablePhase.witness.activePhaseCount === 0, 'stable witness records no active phase episodes');
+assert(stablePhase.witness.phaseProgress === 0, 'stable witness phase progress is zero');
 assert(stablePhase.witness.phaseInfluenceRange.max === 0, 'stable witness phase influence max is zero');
 assert(
-  stablePhase.samples.every((terrainSample) => terrainSample.phaseInfluence.kind === 'none' && terrainSample.phaseInfluence.amount === 0),
+  stablePhase.samples.every(
+    (terrainSample) =>
+      terrainSample.phaseInfluence.kind === 'none' &&
+      terrainSample.phaseInfluence.amount === 0 &&
+      terrainSample.phaseInfluence.trailAmount === 0 &&
+      terrainSample.phaseInfluence.sideDitchAmount === 0
+  ),
   'stable samples carry explicit empty phase influence'
 );
 
@@ -216,6 +225,49 @@ assert(loweredInfluenced.length > 0, 'ditch phase locally deepens selected sampl
 assert(
   ditchPhaseA.witness.topologyChecksum !== stablePhase.witness.topologyChecksum,
   'ditch phase changes topology checksum without changing feature density'
+);
+
+const trailPhaseParams: Partial<HillOfHillsTerrainParams> = {
+  seed: 9876,
+  gridResolutionX: 42,
+  gridResolutionZ: 58,
+  ditchPhaseIntensity: 0,
+  trailPhaseSeed: 4040,
+  trailPhaseIntensity: 0.88,
+  trailPhaseLimit: 2,
+  trailPhaseRadius: 1.55,
+  trailPhaseTimeMs: 940,
+  trailPhaseDurationMs: 1900
+};
+const trailPhaseA = createHillOfHillsTerrain(trailPhaseParams);
+const trailPhaseB = createHillOfHillsTerrain(trailPhaseParams);
+assert(trailPhaseA.phaseState.mode === 'trail_forming', 'trail phase activates trail-forming terrain phase state');
+assert(trailPhaseA.witness.phaseMode === 'trail_forming', 'trail phase witness records trail-forming mode');
+assert(trailPhaseA.witness.phaseChecksum === trailPhaseB.witness.phaseChecksum, 'trail phase checksum is deterministic');
+assert(
+  trailPhaseA.witness.phaseInfluenceChecksum === trailPhaseB.witness.phaseInfluenceChecksum,
+  'trail phase influence checksum is deterministic'
+);
+assert(trailPhaseA.witness.phaseProgress > 0.35, 'trail phase witness exposes active phase progress');
+assert((trailPhaseA.witness.activePhaseKinds.trail_forming ?? 0) > 0, 'witness counts active trail-forming episodes');
+assert((trailPhaseA.witness.phaseInfluenceKinds.trail_forming ?? 0) > 0, 'witness counts trail-forming influenced samples');
+assert(trailPhaseA.witness.trailInfluenceRange.max > 0.35, 'trail phase creates route scar influence');
+assert(trailPhaseA.witness.sideDitchInfluenceRange.max > 0.28, 'trail phase creates side-ditch influence');
+const trailSamples = trailPhaseA.samples.filter((terrainSample) => terrainSample.phaseInfluence.trailAmount > 0.32);
+const sideDitchSamples = trailPhaseA.samples.filter((terrainSample) => terrainSample.phaseInfluence.sideDitchAmount > 0.25);
+assert(trailSamples.length > 0, 'trail phase marks pathlike route samples');
+assert(sideDitchSamples.length > 0, 'trail phase marks side-ditch samples');
+assert(
+  sideDitchSamples.some((terrainSample) => Math.abs(terrainSample.world[0]) < trailPhaseA.params.floorWidth * 0.72),
+  'trail side ditches are not locked to the two wall gutter tracks'
+);
+assert(
+  trailSamples.some((terrainSample) => terrainSample.topology.routePressure > 0.68),
+  'trail phase raises route pressure along the trail scar'
+);
+assert(
+  sideDitchSamples.some((terrainSample) => terrainSample.topology.ditchPotential > 0.66 || terrainSample.proxyMaterial.wetness > 0.55),
+  'trail side ditches locally raise ditch potential or wetness'
 );
 
 for (const terrainSample of baseline.samples) {

@@ -22,18 +22,47 @@ const appCanvas = canvas;
 const ctx = context;
 let params: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
-  ditchPhaseIntensity: 0.72,
-  ditchPhaseLimit: 3,
-  ditchPhaseRadius: 1.35,
+  ditchPhaseIntensity: 0.18,
+  ditchPhaseLimit: 1,
+  ditchPhaseRadius: 1.2,
   ditchPhaseTimeMs: 760,
   ditchPhaseDurationMs: 2400,
+  trailPhaseIntensity: 0.78,
+  trailPhaseLimit: 2,
+  trailPhaseRadius: 1.45,
+  trailPhaseTimeMs: 880,
+  trailPhaseDurationMs: 2600,
   gridResolutionX: 116,
   gridResolutionZ: 148
 };
 let terrain = createHillOfHillsTerrain(params);
 
+interface ViewState {
+  yaw: number;
+  tilt: number;
+  zoom: number;
+  panX: number;
+  panY: number;
+}
+
+let viewState: ViewState = {
+  yaw: 0,
+  tilt: 0.72,
+  zoom: 1,
+  panX: 0,
+  panY: 0
+};
+
 interface ControlSpec {
   key: keyof HillOfHillsTerrainParams;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+}
+
+interface ViewControlSpec {
+  key: keyof ViewState;
   label: string;
   min: number;
   max: number;
@@ -62,13 +91,27 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'ditchPhaseIntensity', label: 'Ditch forming', min: 0, max: 1, step: 0.05 },
   { key: 'ditchPhaseLimit', label: 'Ditch count', min: 0, max: 8, step: 1 },
   { key: 'ditchPhaseRadius', label: 'Ditch radius', min: 0.5, max: 2.4, step: 0.05 },
-  { key: 'ditchPhaseTimeMs', label: 'Ditch phase', min: 0, max: 2400, step: 40 }
+  { key: 'ditchPhaseTimeMs', label: 'Ditch phase', min: 0, max: 2400, step: 40 },
+  { key: 'trailPhaseIntensity', label: 'Trail forming', min: 0, max: 1, step: 0.05 },
+  { key: 'trailPhaseLimit', label: 'Trail count', min: 0, max: 6, step: 1 },
+  { key: 'trailPhaseRadius', label: 'Trail radius', min: 0.5, max: 2.8, step: 0.05 },
+  { key: 'trailPhaseTimeMs', label: 'Trail phase', min: 0, max: 2600, step: 40 }
+];
+
+const viewControlSpecs: readonly ViewControlSpec[] = [
+  { key: 'yaw', label: 'Camera yaw', min: -0.9, max: 0.9, step: 0.01 },
+  { key: 'tilt', label: 'Camera tilt', min: 0.32, max: 1.25, step: 0.01 },
+  { key: 'zoom', label: 'Camera zoom', min: 0.55, max: 1.75, step: 0.01 },
+  { key: 'panX', label: 'Camera pan X', min: -0.35, max: 0.35, step: 0.01 },
+  { key: 'panY', label: 'Camera pan Y', min: -0.32, max: 0.24, step: 0.01 }
 ];
 
 const controls = createControls();
+const viewControls = createViewControls();
 const witnessPanel = createWitnessPanel();
 
-document.body.append(controls.element, witnessPanel);
+document.body.append(controls.element, viewControls.element, witnessPanel);
+installCameraDrag();
 
 function resize(): void {
   const dpr = window.devicePixelRatio || 1;
@@ -87,10 +130,15 @@ function render(timestampMs: number): void {
     params.ditchPhaseIntensity > 0
       ? (params.ditchPhaseTimeMs + timestampMs * 0.42) % params.ditchPhaseDurationMs
       : params.ditchPhaseTimeMs;
+  const trailPhaseTimeMs =
+    params.trailPhaseIntensity > 0
+      ? (params.trailPhaseTimeMs + timestampMs * 0.38) % params.trailPhaseDurationMs
+      : params.trailPhaseTimeMs;
   terrain = createHillOfHillsTerrain(
     {
       ...params,
       ditchPhaseTimeMs,
+      trailPhaseTimeMs,
       crownZ: defaultHillOfHillsParams.crownZ + motion
     },
     {
@@ -211,8 +259,34 @@ function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number,
       }
     }
     if (strength > 0) {
-      ctx.strokeStyle = `rgba(24, 18, 46, ${0.34 + strength * 0.38})`;
+      ctx.strokeStyle = `rgba(24, 18, 46, ${0.3 + strength * 0.36})`;
       ctx.lineWidth = 4.2 + strength * 4.4;
+      ctx.stroke();
+    }
+  }
+
+  for (let zi = 2; zi < gridResolutionZ - 2; zi += 3) {
+    ctx.beginPath();
+    let drawing = false;
+    let strength = 0;
+    for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
+      const sample = samples[zi * gridResolutionX + xi];
+      if (sample.phaseInfluence.trailAmount < 0.18) {
+        drawing = false;
+        continue;
+      }
+      strength = Math.max(strength, sample.phaseInfluence.trailAmount);
+      const point = project(sample.world[0], sample.world[1] + 0.075, sample.world[2], currentTerrain, width, height);
+      if (!drawing) {
+        ctx.moveTo(point.x, point.y);
+        drawing = true;
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
+    }
+    if (strength > 0) {
+      ctx.strokeStyle = `rgba(220, 196, 117, ${0.24 + strength * 0.32})`;
+      ctx.lineWidth = 2.4 + strength * 3.2;
       ctx.stroke();
     }
   }
@@ -260,11 +334,15 @@ function project(
   width: number,
   height: number
 ): { x: number; y: number } {
-  const zn = (z + currentTerrain.params.length * 0.5) / currentTerrain.params.length;
-  const perspective = 0.42 + (1 - zn) * 0.5;
+  const yawCos = Math.cos(viewState.yaw);
+  const yawSin = Math.sin(viewState.yaw);
+  const rotatedX = x * yawCos - z * yawSin;
+  const rotatedZ = x * yawSin + z * yawCos;
+  const zn = (rotatedZ + currentTerrain.params.length * 0.5) / currentTerrain.params.length;
+  const perspective = (0.42 + (1 - zn) * 0.5) * viewState.zoom;
   const scaleX = Math.min(width / 16, height / 11) * perspective;
-  const screenX = width * 0.5 + x * scaleX;
-  const screenY = height * 0.9 - zn * height * 0.68 - y * 42 * perspective;
+  const screenX = width * (0.5 + viewState.panX) + rotatedX * scaleX;
+  const screenY = height * (0.9 + viewState.panY) - zn * height * 0.68 * viewState.tilt - y * 42 * perspective;
   return { x: screenX, y: screenY };
 }
 
@@ -276,7 +354,7 @@ function colorForSample(
 ): string {
   const t = (heightValue - range.min) / Math.max(0.001, range.max - range.min);
   const sideLight = normal[0] * -0.32 + normal[1] * 0.72 + normal[2] * -0.2;
-  const phaseShadow = sample.phaseInfluence.amount * 0.22;
+  const phaseShadow = sample.phaseInfluence.sideDitchAmount * 0.22 + sample.phaseInfluence.trailAmount * 0.06;
   const wetShadow = sample.proxyMaterial.wetness * 0.16 + sample.topology.ditchPotential * 0.1 + phaseShadow;
   const growthLift = sample.proxyMaterial.growthTint * 0.14;
   const routeLift = sample.topology.routePressure * 0.1;
@@ -300,10 +378,13 @@ function drawWitness(currentTerrain: HillOfHillsTerrain): void {
     `checksum: ${witness.sampleChecksum}`,
     `topology: ${witness.topologyChecksum} / material: ${witness.proxyMaterialChecksum}`,
     `phase: ${witness.phaseMode} epoch ${witness.terrainEpoch} active ${witness.activePhaseCount}`,
+    `phase clock: ${witness.phaseClock.toFixed(2)} progress ${witness.phaseProgress.toFixed(2)}`,
     `phase checksum: ${witness.phaseChecksum} / influence ${witness.phaseInfluenceChecksum}`,
     `phase influence: ${witness.phaseInfluenceRange.min.toFixed(2)} .. ${witness.phaseInfluenceRange.max.toFixed(2)}`,
+    `trail ${witness.trailInfluenceRange.max.toFixed(2)} side-ditch ${witness.sideDitchInfluenceRange.max.toFixed(2)}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
-    `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`
+    `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
+    `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)}`
   ].join('\n');
 }
 
@@ -339,12 +420,11 @@ function createControls(): { element: HTMLElement } {
 
   const style = document.createElement('style');
   style.textContent = `
-    .terrain-controls {
+    .terrain-controls,
+    .view-controls {
       position: fixed;
       right: 16px;
-      top: 16px;
       width: min(330px, calc(100vw - 32px));
-      max-height: calc(100vh - 32px);
       overflow: auto;
       padding: 12px;
       box-sizing: border-box;
@@ -354,21 +434,40 @@ function createControls(): { element: HTMLElement } {
       font: 12px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
       backdrop-filter: blur(8px);
     }
-    .terrain-controls label {
+    .terrain-controls {
+      top: 16px;
+      max-height: calc(100vh - 200px);
+    }
+    .view-controls {
+      bottom: 16px;
+    }
+    .terrain-controls label,
+    .view-controls label {
       display: grid;
       grid-template-columns: minmax(96px, 1fr) minmax(0, 1.3fr) 44px;
       gap: 8px;
       align-items: center;
       min-height: 26px;
     }
-    .terrain-controls input {
+    .terrain-controls input,
+    .view-controls input {
       width: 100%;
       min-width: 0;
       accent-color: #d5b64f;
     }
-    .terrain-controls output {
+    .terrain-controls output,
+    .view-controls output {
       color: #88e0ba;
       text-align: right;
+    }
+    .view-controls button {
+      width: 100%;
+      margin-top: 8px;
+      min-height: 28px;
+      border: 1px solid rgba(136, 224, 186, 0.28);
+      background: rgba(12, 31, 25, 0.88);
+      color: #d7f7e8;
+      font: inherit;
     }
     .terrain-witness {
       position: fixed;
@@ -386,10 +485,15 @@ function createControls(): { element: HTMLElement } {
     @media (max-width: 780px) {
       .terrain-controls {
         top: auto;
-        bottom: 12px;
+        bottom: 180px;
         right: 12px;
         width: calc(100vw - 24px);
-        max-height: 38vh;
+        max-height: 30vh;
+      }
+      .view-controls {
+        right: 12px;
+        bottom: 12px;
+        width: calc(100vw - 24px);
       }
       .terrain-witness {
         left: 12px;
@@ -403,8 +507,117 @@ function createControls(): { element: HTMLElement } {
   return { element };
 }
 
+function createViewControls(): { element: HTMLElement; refresh: () => void } {
+  const element = document.createElement('section');
+  element.className = 'view-controls';
+  const outputs = new Map<keyof ViewState, HTMLOutputElement>();
+  const inputs = new Map<keyof ViewState, HTMLInputElement>();
+
+  for (const spec of viewControlSpecs) {
+    const row = document.createElement('label');
+    const name = document.createElement('span');
+    const value = document.createElement('output');
+    const input = document.createElement('input');
+
+    name.textContent = spec.label;
+    input.type = 'range';
+    input.min = String(spec.min);
+    input.max = String(spec.max);
+    input.step = String(spec.step);
+    input.value = String(viewState[spec.key]);
+    value.value = viewState[spec.key].toFixed(2);
+    input.addEventListener('input', () => {
+      viewState = {
+        ...viewState,
+        [spec.key]: Number(input.value)
+      };
+      value.value = viewState[spec.key].toFixed(2);
+    });
+
+    outputs.set(spec.key, value);
+    inputs.set(spec.key, input);
+    row.append(name, input, value);
+    element.append(row);
+  }
+
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.textContent = 'Reset view';
+  reset.addEventListener('click', () => {
+    viewState = {
+      yaw: 0,
+      tilt: 0.72,
+      zoom: 1,
+      panX: 0,
+      panY: 0
+    };
+    refresh();
+  });
+  element.append(reset);
+
+  function refresh(): void {
+    for (const spec of viewControlSpecs) {
+      const input = inputs.get(spec.key);
+      const output = outputs.get(spec.key);
+      if (input) input.value = String(viewState[spec.key]);
+      if (output) output.value = viewState[spec.key].toFixed(2);
+    }
+  }
+
+  return { element, refresh };
+}
+
+function installCameraDrag(): void {
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  appCanvas.addEventListener('pointerdown', (event) => {
+    dragging = true;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    appCanvas.setPointerCapture(event.pointerId);
+  });
+
+  appCanvas.addEventListener('pointermove', (event) => {
+    if (!dragging) return;
+    const dx = event.clientX - lastX;
+    const dy = event.clientY - lastY;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    viewState = {
+      ...viewState,
+      yaw: clamp(viewState.yaw + dx * 0.0035, -0.9, 0.9),
+      tilt: clamp(viewState.tilt - dy * 0.0025, 0.32, 1.25)
+    };
+    viewControls.refresh();
+  });
+
+  appCanvas.addEventListener('pointerup', (event) => {
+    dragging = false;
+    appCanvas.releasePointerCapture(event.pointerId);
+  });
+
+  appCanvas.addEventListener(
+    'wheel',
+    (event) => {
+      event.preventDefault();
+      viewState = {
+        ...viewState,
+        zoom: clamp(viewState.zoom - event.deltaY * 0.001, 0.55, 1.75)
+      };
+      viewControls.refresh();
+    },
+    { passive: false }
+  );
+}
+
 function createWitnessPanel(): HTMLElement {
   const element = document.createElement('pre');
   element.className = 'terrain-witness';
   return element;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
