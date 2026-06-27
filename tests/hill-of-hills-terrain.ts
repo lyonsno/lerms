@@ -92,6 +92,24 @@ assert(baseline.witness.gridResolution.x === 42, 'terrain witness exposes grid r
 assert(baseline.witness.gridResolution.z === 58, 'terrain witness exposes grid resolution z');
 assert(baseline.witness.effectiveParams.floorWidth === baseline.params.floorWidth, 'terrain witness exposes effective params');
 
+const fallbackTerrain = createHillOfHillsTerrain(
+  { gridResolutionX: 12, gridResolutionZ: 12 },
+  { authority: 'live_simulation', fallbackStatus: 'fallback', route: 'hill-of-hills/fallback-smoke' }
+);
+assert(fallbackTerrain.source.authority === 'fallback', 'fallback terrain cannot claim live source authority');
+assert(fallbackTerrain.witness.sourceAuthority === 'fallback', 'fallback witness source authority downgrades with source');
+assert(
+  fallbackTerrain.samples.every((terrainSample) => terrainSample.source.authority === 'fallback'),
+  'fallback terrain samples carry fallback source truth'
+);
+
+const fixtureTerrain = createHillOfHillsTerrain(
+  { gridResolutionX: 12, gridResolutionZ: 12 },
+  { authority: 'live_simulation', fallbackStatus: 'synthetic_fixture', route: 'hill-of-hills/fixture-smoke' }
+);
+assert(fixtureTerrain.source.authority === 'synthetic_fixture', 'fixture terrain cannot claim live source authority');
+assert(fixtureTerrain.witness.sourceAuthority === 'synthetic_fixture', 'fixture witness source authority downgrades with source');
+
 const frame = createHillOfHillsFrame(baseline);
 assertFirstVerticalFrame(frame);
 assert(frame.terrainSamples.length === baseline.samples.length, 'first vertical frame includes generated terrain samples');

@@ -122,9 +122,10 @@ export function createHillOfHillsTerrain(
   sourceOptions: HillOfHillsSourceOptions = {}
 ): HillOfHillsTerrain {
   const effectiveParams = normalizeParams({ ...defaultHillOfHillsParams, ...params });
-  const source = createTerrainSource(effectiveParams, sourceOptions);
+  const fallbackStatus = normalizeFallbackStatus(sourceOptions);
+  const source = createTerrainSource(effectiveParams, sourceOptions, fallbackStatus);
   const samples = generateSamples(effectiveParams, source);
-  const witness = createWitness(effectiveParams, source, samples, sourceOptions.fallbackStatus ?? 'none');
+  const witness = createWitness(effectiveParams, source, samples, fallbackStatus);
 
   return {
     params: effectiveParams,
@@ -177,13 +178,17 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
   };
 }
 
-function createTerrainSource(params: HillOfHillsTerrainParams, options: HillOfHillsSourceOptions): SourceTruth {
+function createTerrainSource(
+  params: HillOfHillsTerrainParams,
+  options: HillOfHillsSourceOptions,
+  fallbackStatus: TerrainFallbackStatus
+): SourceTruth {
   const route = options.route ?? 'hill-of-hills-terrain';
   const configId = options.configId ?? `hill-of-hills:${checksum(JSON.stringify(params)).slice(0, 10)}`;
 
   return {
     schema: SOURCE_TRUTH_SCHEMA,
-    authority: options.authority ?? 'live_simulation',
+    authority: authorityForFallbackStatus(fallbackStatus, options.authority),
     route,
     frameId: options.frameId ?? `${route}:${configId}`,
     timestampMs: options.timestampMs ?? 0,
@@ -191,6 +196,27 @@ function createTerrainSource(params: HillOfHillsTerrainParams, options: HillOfHi
     backend: options.backend ?? 'deterministic-cpu-heightfield',
     configId
   };
+}
+
+function normalizeFallbackStatus(options: HillOfHillsSourceOptions): TerrainFallbackStatus {
+  if (options.fallbackStatus) {
+    return options.fallbackStatus;
+  }
+
+  if (options.authority === 'fallback') return 'fallback';
+  if (options.authority === 'invalid') return 'invalid';
+  if (options.authority === 'synthetic_fixture') return 'synthetic_fixture';
+  return 'none';
+}
+
+function authorityForFallbackStatus(
+  fallbackStatus: TerrainFallbackStatus,
+  requestedAuthority: SimulationAuthority | undefined
+): SimulationAuthority {
+  if (fallbackStatus === 'fallback') return 'fallback';
+  if (fallbackStatus === 'invalid') return 'invalid';
+  if (fallbackStatus === 'synthetic_fixture') return 'synthetic_fixture';
+  return requestedAuthority ?? 'live_simulation';
 }
 
 function generateSamples(params: HillOfHillsTerrainParams, source: SourceTruth): TerrainSample[] {
