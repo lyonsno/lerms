@@ -17,6 +17,11 @@ function closeEnough(actual: number, expected: number, epsilon: number, message:
   assert(Math.abs(actual - expected) <= epsilon, `${message}: expected ${expected}, got ${actual}`);
 }
 
+function assertUnit(value: number, message: string): void {
+  assert(Number.isFinite(value), `${message} is finite`);
+  assert(value >= 0 && value <= 1, `${message} is normalized`);
+}
+
 function sample(params: Partial<HillOfHillsTerrainParams>, x: number, z: number) {
   return sampleHillOfHillsTerrain(createHillOfHillsTerrain(params), x, z);
 }
@@ -38,6 +43,24 @@ assert(center.source.route === 'hill-of-hills-terrain', 'terrain source route id
 assert(center.height > Math.min(leftFloor.height, rightFloor.height) - 0.08, 'center floor does not collapse into a divot');
 assert(center.region === 'approach', 'center floor remains an approach lane');
 closeEnough(center.normal[1], 1, 0.25, 'center floor normal stays traversable');
+
+const centerTopology = (center as any).topology;
+assert(centerTopology, 'terrain sample exposes topology fields for shader/route consumers');
+assertUnit(centerTopology.routePressure, 'center route pressure');
+assertUnit(centerTopology.flowAccumulation, 'center flow accumulation');
+assertUnit(centerTopology.ridgeStrength, 'center ridge strength');
+assertUnit(centerTopology.valleyStrength, 'center valley strength');
+assertUnit(centerTopology.ditchPotential, 'center ditch potential');
+assertUnit(centerTopology.growthPotential, 'center growth potential');
+assert(Array.isArray(centerTopology.flowDirection) && centerTopology.flowDirection.length === 3, 'flow direction is Vec3');
+assert(centerTopology.routePressure > 0.45, 'center approach lane advertises route pressure');
+
+const centerMaterial = (center as any).proxyMaterial;
+assert(centerMaterial, 'terrain sample exposes proxy material for visible topology shaders');
+assert(typeof centerMaterial.kind === 'string' && centerMaterial.kind.length > 0, 'proxy material kind is named');
+assert(Array.isArray(centerMaterial.color) && centerMaterial.color.length === 3, 'proxy material color is rgb Vec3');
+assertUnit(centerMaterial.wetness, 'proxy material wetness');
+assertUnit(centerMaterial.growthTint, 'proxy material growth tint');
 
 const pushed = createHillOfHillsTerrain({
   channelRadius: 4.2,
@@ -70,6 +93,21 @@ for (const region of ['approach', 'slope', 'basin', 'gutter', 'rim', 'crown'] as
   assert(regions.has(region), `terrain grid classifies ${region} samples`);
 }
 
+const gutterSamples = baseline.samples.filter((terrainSample) => terrainSample.region === 'gutter');
+assert(gutterSamples.some((terrainSample) => (terrainSample as any).topology?.ditchPotential > 0.55), 'gutters advertise ditch potential');
+assert(
+  baseline.samples.some((terrainSample) => (terrainSample as any).topology?.growthPotential > 0.5),
+  'terrain exposes growth/tree candidate zones'
+);
+assert(
+  baseline.samples.some((terrainSample) => (terrainSample as any).proxyMaterial?.kind === 'ditch-shadow'),
+  'proxy materials include ditch-shadow shader band'
+);
+assert(
+  baseline.samples.some((terrainSample) => (terrainSample as any).proxyMaterial?.kind === 'growth-lip'),
+  'proxy materials include growth-lip shader band'
+);
+
 for (const terrainSample of baseline.samples) {
   assert(Number.isFinite(terrainSample.height), `sample ${terrainSample.id} height is finite`);
   assert(Number.isFinite(terrainSample.slope), `sample ${terrainSample.id} slope is finite`);
@@ -91,6 +129,11 @@ assert(baseline.witness.fallbackStatus === 'none', 'terrain witness reports no f
 assert(baseline.witness.gridResolution.x === 42, 'terrain witness exposes grid resolution x');
 assert(baseline.witness.gridResolution.z === 58, 'terrain witness exposes grid resolution z');
 assert(baseline.witness.effectiveParams.floorWidth === baseline.params.floorWidth, 'terrain witness exposes effective params');
+assert(typeof (baseline.witness as any).topologyChecksum === 'string', 'terrain witness exposes topology checksum');
+assert(typeof (baseline.witness as any).proxyMaterialChecksum === 'string', 'terrain witness exposes proxy material checksum');
+assert((baseline.witness as any).topologyRanges.routePressure.max > 0.45, 'witness records route pressure range');
+assert((baseline.witness as any).topologyRanges.growthPotential.max > 0.5, 'witness records growth candidate range');
+assert((baseline.witness as any).proxyMaterialCounts['ditch-shadow'] > 0, 'witness counts ditch-shadow proxy material');
 
 const fallbackTerrain = createHillOfHillsTerrain(
   { gridResolutionX: 12, gridResolutionZ: 12 },

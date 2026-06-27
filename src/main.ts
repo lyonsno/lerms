@@ -2,7 +2,8 @@ import {
   createHillOfHillsTerrain,
   defaultHillOfHillsParams,
   type HillOfHillsTerrain,
-  type HillOfHillsTerrainParams
+  type HillOfHillsTerrainParams,
+  type HillOfHillsTerrainSample
 } from './terrain/hill-of-hills.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
@@ -120,10 +121,12 @@ function drawTerrain(currentTerrain: HillOfHillsTerrain, width: number, height: 
       ctx.lineTo(pc.x, pc.y);
       ctx.lineTo(pd.x, pd.y);
       ctx.closePath();
-      ctx.fillStyle = colorForRegion(a.region, averageHeight, averageNormal, currentTerrain.witness.heightRange);
+      ctx.fillStyle = colorForSample(a, averageHeight, averageNormal, currentTerrain.witness.heightRange);
       ctx.fill();
     }
   }
+
+  drawTopologyOverlays(currentTerrain, width, height);
 
   ctx.strokeStyle = 'rgba(248, 233, 166, 0.1)';
   ctx.lineWidth = 1;
@@ -137,6 +140,54 @@ function drawTerrain(currentTerrain: HillOfHillsTerrain, width: number, height: 
     }
     ctx.stroke();
   }
+}
+
+function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number, height: number): void {
+  const { gridResolutionX, gridResolutionZ } = currentTerrain.params;
+  const samples = currentTerrain.samples;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (let zi = 2; zi < gridResolutionZ - 2; zi += 4) {
+    ctx.beginPath();
+    let drawing = false;
+    for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
+      const sample = samples[zi * gridResolutionX + xi];
+      if (sample.topology.ditchPotential < 0.62) {
+        drawing = false;
+        continue;
+      }
+      const point = project(sample.world[0], sample.world[1] + 0.035, sample.world[2], currentTerrain, width, height);
+      if (!drawing) {
+        ctx.moveTo(point.x, point.y);
+        drawing = true;
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
+    }
+    ctx.strokeStyle = 'rgba(30, 22, 54, 0.48)';
+    ctx.lineWidth = 3.2;
+    ctx.stroke();
+  }
+
+  for (let zi = 4; zi < gridResolutionZ - 4; zi += 7) {
+    for (let xi = 4; xi < gridResolutionX - 4; xi += 7) {
+      const sample = samples[zi * gridResolutionX + xi];
+      if (sample.topology.growthPotential < 0.62) {
+        continue;
+      }
+      const point = project(sample.world[0], sample.world[1] + 0.12, sample.world[2], currentTerrain, width, height);
+      const radius = 1.8 + sample.topology.growthPotential * 3.2;
+      ctx.fillStyle = `rgba(42, 111, 63, ${0.2 + sample.topology.growthPotential * 0.34})`;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
 }
 
 function drawRouteMarkers(width: number, height: number): void {
@@ -172,39 +223,20 @@ function project(
   return { x: screenX, y: screenY };
 }
 
-function colorForRegion(
-  region: string,
+function colorForSample(
+  sample: HillOfHillsTerrainSample,
   heightValue: number,
   normal: readonly [number, number, number],
   range: { min: number; max: number }
 ): string {
   const t = (heightValue - range.min) / Math.max(0.001, range.max - range.min);
   const sideLight = normal[0] * -0.32 + normal[1] * 0.72 + normal[2] * -0.2;
-  const light = Math.max(0.42, Math.min(1.12, 0.62 + sideLight * 0.34 + t * 0.18));
-  let base: readonly [number, number, number];
-
-  switch (region) {
-    case 'crown':
-      base = [178, 143, 64];
-      break;
-    case 'basin':
-      base = [39, 111, 126];
-      break;
-    case 'gutter':
-      base = [82, 63, 111];
-      break;
-    case 'rim':
-      base = [162, 143, 72];
-      break;
-    case 'slope':
-      base = [101, 134, 68];
-      break;
-    default:
-      base = [82, 147, 112];
-      break;
-  }
-
-  const lift = 16 + t * 28;
+  const wetShadow = sample.proxyMaterial.wetness * 0.16 + sample.topology.ditchPotential * 0.1;
+  const growthLift = sample.proxyMaterial.growthTint * 0.14;
+  const routeLift = sample.topology.routePressure * 0.1;
+  const light = Math.max(0.36, Math.min(1.18, 0.6 + sideLight * 0.32 + t * 0.16 + routeLift + growthLift - wetShadow));
+  const base = sample.proxyMaterial.color;
+  const lift = 12 + t * 24 + sample.topology.routePressure * 14;
   const r = Math.round(Math.min(245, base[0] * light + lift));
   const g = Math.round(Math.min(245, base[1] * light + lift));
   const b = Math.round(Math.min(245, base[2] * light + lift));
@@ -220,6 +252,8 @@ function drawWitness(currentTerrain: HillOfHillsTerrain): void {
     `grid: ${witness.gridResolution.x} x ${witness.gridResolution.z} / samples: ${witness.sampleCount}`,
     `height: ${witness.heightRange.min.toFixed(2)} .. ${witness.heightRange.max.toFixed(2)}`,
     `checksum: ${witness.sampleChecksum}`,
+    `topology: ${witness.topologyChecksum} / material: ${witness.proxyMaterialChecksum}`,
+    `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`
   ].join('\n');
 }
@@ -273,13 +307,14 @@ function createControls(): { element: HTMLElement } {
     }
     .terrain-controls label {
       display: grid;
-      grid-template-columns: minmax(96px, 1fr) minmax(96px, 1.3fr) 44px;
+      grid-template-columns: minmax(96px, 1fr) minmax(0, 1.3fr) 44px;
       gap: 8px;
       align-items: center;
       min-height: 26px;
     }
     .terrain-controls input {
       width: 100%;
+      min-width: 0;
       accent-color: #d5b64f;
     }
     .terrain-controls output {

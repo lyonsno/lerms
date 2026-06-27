@@ -6,12 +6,11 @@ import {
   summarizeFirstVerticalFrame,
   type FirstVerticalFrame,
   type FirstVerticalSummary,
-  type SourceTruth,
-  type TerrainSample
+  type SourceTruth
 } from './first-vertical.ts';
 import { buildRedLermBodyMotionWitness } from '../red-lerm-body-motion.ts';
 import { composeFirstVerticalFrame } from './first-vertical-composer.ts';
-import type { HillOfHillsTerrain, HillOfHillsTerrainParams } from '../terrain/hill-of-hills.ts';
+import type { HillOfHillsTerrain, HillOfHillsTerrainParams, HillOfHillsTerrainSample } from '../terrain/hill-of-hills.ts';
 
 export const FIRST_VERTICAL_COMPOSER_WITNESS_ROUTE = 'first-vertical-composer/witness-file' as const;
 
@@ -203,7 +202,7 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
     configId: 'inline-terrain-socket-fixture-v0'
   };
   const params = buildTerrainParams();
-  const sample: TerrainSample = {
+  const sample: HillOfHillsTerrainSample = {
     schema: 'lerms.terrain-sample.v0',
     id: 'terrain-fixture-crown',
     source,
@@ -211,7 +210,22 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
     normal: [0, 1, 0],
     height: 1.8,
     slope: 0.05,
-    region: 'crown'
+    region: 'crown',
+    topology: {
+      flowDirection: [0, 0.28, 1],
+      flowAccumulation: 0.42,
+      ridgeStrength: 0.5,
+      valleyStrength: 0.1,
+      routePressure: 0.72,
+      ditchPotential: 0.08,
+      growthPotential: 0.36
+    },
+    proxyMaterial: {
+      kind: 'crown-warmth',
+      color: [205, 165, 72],
+      wetness: 0.18,
+      growthTint: 0.26
+    }
   };
 
   return {
@@ -230,7 +244,18 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       sampleCount: 1,
       sampleChecksum: 'inline-terrain-socket-fixture-checksum',
       heightRange: { min: 1.8, max: 1.8 },
-      regionCounts: { crown: 1 }
+      regionCounts: { crown: 1 },
+      topologyChecksum: 'inline-terrain-socket-topology-fixture-checksum',
+      proxyMaterialChecksum: 'inline-terrain-socket-material-fixture-checksum',
+      topologyRanges: {
+        flowAccumulation: { min: 0.42, max: 0.42 },
+        ridgeStrength: { min: 0.5, max: 0.5 },
+        valleyStrength: { min: 0.1, max: 0.1 },
+        routePressure: { min: 0.72, max: 0.72 },
+        ditchPotential: { min: 0.08, max: 0.08 },
+        growthPotential: { min: 0.36, max: 0.36 }
+      },
+      proxyMaterialCounts: { 'crown-warmth': 1 }
     }
   };
 }

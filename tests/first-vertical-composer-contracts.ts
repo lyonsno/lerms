@@ -1,10 +1,9 @@
 import {
   assertFirstVerticalFrame,
   summarizeFirstVerticalFrame,
-  type FirstVerticalFrame,
-  type TerrainSample
+  type FirstVerticalFrame
 } from '../src/contracts/first-vertical.ts';
-import type { HillOfHillsTerrain } from '../src/terrain/hill-of-hills.ts';
+import type { HillOfHillsTerrain, HillOfHillsTerrainSample } from '../src/terrain/hill-of-hills.ts';
 import { buildRedLermBodyMotionWitness } from '../src/red-lerm-body-motion.ts';
 import { composeFirstVerticalFrame } from '../src/contracts/first-vertical-composer.ts';
 
@@ -39,7 +38,7 @@ const terrainSource = {
   configId: 'composer-terrain-fixture-v0'
 };
 
-const terrainSample: TerrainSample = {
+const terrainSample: HillOfHillsTerrainSample = {
   schema: 'lerms.terrain-sample.v0',
   id: 'terrain-crown-fixture',
   source: terrainSource,
@@ -47,7 +46,22 @@ const terrainSample: TerrainSample = {
   normal: [0, 1, 0],
   height: 1.8,
   slope: 0.05,
-  region: 'crown'
+  region: 'crown',
+  topology: {
+    flowDirection: [0, 0.28, 1],
+    flowAccumulation: 0.42,
+    ridgeStrength: 0.5,
+    valleyStrength: 0.1,
+    routePressure: 0.72,
+    ditchPotential: 0.08,
+    growthPotential: 0.36
+  },
+  proxyMaterial: {
+    kind: 'crown-warmth',
+    color: [205, 165, 72],
+    wetness: 0.18,
+    growthTint: 0.26
+  }
 };
 
 const terrain: HillOfHillsTerrain = {
@@ -106,7 +120,18 @@ const terrain: HillOfHillsTerrain = {
     sampleCount: 1,
     sampleChecksum: 'composer-terrain-fixture-checksum',
     heightRange: { min: 1.8, max: 1.8 },
-    regionCounts: { crown: 1 }
+    regionCounts: { crown: 1 },
+    topologyChecksum: 'composer-terrain-topology-fixture-checksum',
+    proxyMaterialChecksum: 'composer-terrain-material-fixture-checksum',
+    topologyRanges: {
+      flowAccumulation: { min: 0.42, max: 0.42 },
+      ridgeStrength: { min: 0.5, max: 0.5 },
+      valleyStrength: { min: 0.1, max: 0.1 },
+      routePressure: { min: 0.72, max: 0.72 },
+      ditchPotential: { min: 0.08, max: 0.08 },
+      growthPotential: { min: 0.36, max: 0.36 }
+    },
+    proxyMaterialCounts: { 'crown-warmth': 1 }
   }
 };
 

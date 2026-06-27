@@ -13,6 +13,31 @@ import {
 export const HILL_OF_HILLS_WITNESS_SCHEMA = 'lerms.hill-of-hills-witness.v0' as const;
 
 export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 'invalid';
+export type HillOfHillsProxyMaterialKind =
+  | 'crown-warmth'
+  | 'approach-clay'
+  | 'slope-moss'
+  | 'basin-pool'
+  | 'ditch-shadow'
+  | 'rim-crust'
+  | 'growth-lip';
+
+export interface HillOfHillsTopology {
+  flowDirection: Vec3;
+  flowAccumulation: number;
+  ridgeStrength: number;
+  valleyStrength: number;
+  routePressure: number;
+  ditchPotential: number;
+  growthPotential: number;
+}
+
+export interface HillOfHillsProxyMaterial {
+  kind: HillOfHillsProxyMaterialKind;
+  color: Vec3;
+  wetness: number;
+  growthTint: number;
+}
 
 export interface HillOfHillsTerrainParams {
   seed: number;
@@ -39,8 +64,13 @@ export interface HillOfHillsTerrainParams {
 export interface HillOfHillsTerrain {
   params: HillOfHillsTerrainParams;
   source: SourceTruth;
-  samples: readonly TerrainSample[];
+  samples: readonly HillOfHillsTerrainSample[];
   witness: HillOfHillsWitness;
+}
+
+export interface HillOfHillsTerrainSample extends TerrainSample {
+  topology: HillOfHillsTopology;
+  proxyMaterial: HillOfHillsProxyMaterial;
 }
 
 export interface HillOfHillsWitness {
@@ -65,6 +95,17 @@ export interface HillOfHillsWitness {
     max: number;
   };
   regionCounts: Partial<Record<TerrainRegion, number>>;
+  topologyChecksum: string;
+  proxyMaterialChecksum: string;
+  topologyRanges: {
+    flowAccumulation: Range;
+    ridgeStrength: Range;
+    valleyStrength: Range;
+    routePressure: Range;
+    ditchPotential: Range;
+    growthPotential: Range;
+  };
+  proxyMaterialCounts: Partial<Record<HillOfHillsProxyMaterialKind, number>>;
 }
 
 export interface HillOfHillsSourceOptions {
@@ -93,6 +134,11 @@ interface HeightParts {
   valleys: number;
   detail: number;
   height: number;
+}
+
+interface Range {
+  min: number;
+  max: number;
 }
 
 export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
@@ -135,7 +181,7 @@ export function createHillOfHillsTerrain(
   };
 }
 
-export function sampleHillOfHillsTerrain(terrain: HillOfHillsTerrain, x: number, z: number): TerrainSample {
+export function sampleHillOfHillsTerrain(terrain: HillOfHillsTerrain, x: number, z: number): HillOfHillsTerrainSample {
   return sampleTerrain(terrain.params, terrain.source, x, z);
 }
 
@@ -219,8 +265,8 @@ function authorityForFallbackStatus(
   return requestedAuthority ?? 'live_simulation';
 }
 
-function generateSamples(params: HillOfHillsTerrainParams, source: SourceTruth): TerrainSample[] {
-  const samples: TerrainSample[] = [];
+function generateSamples(params: HillOfHillsTerrainParams, source: SourceTruth): HillOfHillsTerrainSample[] {
+  const samples: HillOfHillsTerrainSample[] = [];
   const dx = params.width / (params.gridResolutionX - 1);
   const dz = params.length / (params.gridResolutionZ - 1);
 
@@ -235,10 +281,17 @@ function generateSamples(params: HillOfHillsTerrainParams, source: SourceTruth):
   return samples;
 }
 
-function sampleTerrain(params: HillOfHillsTerrainParams, source: SourceTruth, x: number, z: number, id?: string): TerrainSample {
+function sampleTerrain(
+  params: HillOfHillsTerrainParams,
+  source: SourceTruth,
+  x: number,
+  z: number,
+  id?: string
+): HillOfHillsTerrainSample {
   const clampedX = clamp(x, -params.width * 0.5, params.width * 0.5);
   const clampedZ = clamp(z, -params.length * 0.5, params.length * 0.5);
-  const height = heightAt(params, clampedX, clampedZ).height;
+  const heightParts = heightAt(params, clampedX, clampedZ);
+  const height = heightParts.height;
   const epsX = Math.max(0.02, params.width / (params.gridResolutionX * 2));
   const epsZ = Math.max(0.02, params.length / (params.gridResolutionZ * 2));
   const heightLeft = heightAt(params, clampedX - epsX, clampedZ).height;
@@ -249,6 +302,9 @@ function sampleTerrain(params: HillOfHillsTerrainParams, source: SourceTruth, x:
   const dz = (heightForward - heightBack) / (epsZ * 2);
   const normal = normalize([-dx, 1, -dz]);
   const slope = Math.hypot(dx, dz);
+  const region = classifyRegion(params, clampedX, clampedZ, height, slope);
+  const topology = topologyAt(params, clampedX, clampedZ, heightParts, dx, dz, slope, region);
+  const proxyMaterial = proxyMaterialFor(region, topology);
 
   return {
     schema: TERRAIN_SAMPLE_SCHEMA,
@@ -258,8 +314,88 @@ function sampleTerrain(params: HillOfHillsTerrainParams, source: SourceTruth, x:
     normal,
     height,
     slope,
-    region: classifyRegion(params, clampedX, clampedZ, height, slope)
+    region,
+    topology,
+    proxyMaterial
   };
+}
+
+function topologyAt(
+  params: HillOfHillsTerrainParams,
+  x: number,
+  z: number,
+  heightParts: HeightParts,
+  dx: number,
+  dz: number,
+  slope: number,
+  region: TerrainRegion
+): HillOfHillsTopology {
+  const lateral = Math.abs(x);
+  const halfFloor = params.floorWidth * 0.5;
+  const uphill = (z + params.length * 0.5) / params.length;
+  const centerRoute = 1 - smoothstep(halfFloor * 0.42, halfFloor * 1.08, lateral);
+  const crownPull = 1 - clamp(Math.abs(z - params.crownZ) / Math.max(0.001, params.length * 0.48), 0, 1);
+  const gutterBand = Math.exp(-Math.pow((lateral - halfFloor * 1.28) / Math.max(0.35, halfFloor * 0.33), 2));
+  const valleyStrength = clamp(heightParts.valleys / Math.max(0.001, params.valleyHeight * 1.9), 0, 1);
+  const ridgeStrength = clamp(Math.max(heightParts.hills, heightParts.wall * 0.42) / Math.max(0.001, params.hillHeight * 1.8 + params.wallHeight * 0.35), 0, 1);
+  const flowAccumulation = clamp(gutterBand * 0.66 + valleyStrength * 0.52 + uphill * 0.18, 0, 1);
+  const routePressure = clamp(centerRoute * 0.58 + crownPull * 0.24 + flowAccumulation * 0.26 - slope * 0.12, 0, 1);
+  const ditchPotential = clamp(gutterBand * 0.72 + valleyStrength * 0.48 + (region === 'gutter' ? 0.18 : 0), 0, 1);
+  const growthPotential = clamp(ridgeStrength * 0.46 + slope * 0.2 + crownPull * 0.12 - ditchPotential * 0.16, 0, 1);
+  const flowDirection = normalize([dx, 0.18 + flowAccumulation * 0.22, dz + 0.28]);
+
+  return {
+    flowDirection,
+    flowAccumulation,
+    ridgeStrength,
+    valleyStrength,
+    routePressure,
+    ditchPotential,
+    growthPotential
+  };
+}
+
+function proxyMaterialFor(region: TerrainRegion, topology: HillOfHillsTopology): HillOfHillsProxyMaterial {
+  const kind = proxyMaterialKindFor(region, topology);
+  const color = proxyColorFor(kind);
+  const wetness = clamp(topology.flowAccumulation * 0.5 + topology.ditchPotential * 0.42 + topology.valleyStrength * 0.26, 0, 1);
+  const growthTint = clamp(topology.growthPotential * 0.86 + (kind === 'growth-lip' ? 0.14 : 0), 0, 1);
+
+  return {
+    kind,
+    color,
+    wetness,
+    growthTint
+  };
+}
+
+function proxyMaterialKindFor(region: TerrainRegion, topology: HillOfHillsTopology): HillOfHillsProxyMaterialKind {
+  if (region === 'crown') return 'crown-warmth';
+  if (topology.growthPotential > 0.54 && (region === 'slope' || region === 'rim')) return 'growth-lip';
+  if (region === 'gutter' || topology.ditchPotential > 0.58) return 'ditch-shadow';
+  if (region === 'basin') return 'basin-pool';
+  if (region === 'rim') return 'rim-crust';
+  if (region === 'slope') return 'slope-moss';
+  return 'approach-clay';
+}
+
+function proxyColorFor(kind: HillOfHillsProxyMaterialKind): Vec3 {
+  switch (kind) {
+    case 'crown-warmth':
+      return [205, 165, 72];
+    case 'basin-pool':
+      return [43, 123, 137];
+    case 'ditch-shadow':
+      return [67, 58, 104];
+    case 'growth-lip':
+      return [78, 146, 84];
+    case 'rim-crust':
+      return [160, 137, 79];
+    case 'slope-moss':
+      return [104, 139, 73];
+    case 'approach-clay':
+      return [123, 126, 92];
+  }
 }
 
 function heightAt(params: HillOfHillsTerrainParams, x: number, z: number): HeightParts {
@@ -374,10 +510,12 @@ function featureContribution(features: readonly TerrainFeature[], x: number, z: 
 function createWitness(
   params: HillOfHillsTerrainParams,
   source: SourceTruth,
-  samples: readonly TerrainSample[],
+  samples: readonly HillOfHillsTerrainSample[],
   fallbackStatus: TerrainFallbackStatus
 ): HillOfHillsWitness {
   const regionCounts: Partial<Record<TerrainRegion, number>> = {};
+  const proxyMaterialCounts: Partial<Record<HillOfHillsProxyMaterialKind, number>> = {};
+  const topologyRanges = createTopologyRanges();
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
 
@@ -385,6 +523,13 @@ function createWitness(
     min = Math.min(min, sample.height);
     max = Math.max(max, sample.height);
     regionCounts[sample.region] = (regionCounts[sample.region] ?? 0) + 1;
+    proxyMaterialCounts[sample.proxyMaterial.kind] = (proxyMaterialCounts[sample.proxyMaterial.kind] ?? 0) + 1;
+    includeInRange(topologyRanges.flowAccumulation, sample.topology.flowAccumulation);
+    includeInRange(topologyRanges.ridgeStrength, sample.topology.ridgeStrength);
+    includeInRange(topologyRanges.valleyStrength, sample.topology.valleyStrength);
+    includeInRange(topologyRanges.routePressure, sample.topology.routePressure);
+    includeInRange(topologyRanges.ditchPotential, sample.topology.ditchPotential);
+    includeInRange(topologyRanges.growthPotential, sample.topology.growthPotential);
   }
 
   return {
@@ -408,8 +553,47 @@ function createWitness(
       min,
       max
     },
-    regionCounts
+    regionCounts,
+    topologyChecksum: checksum(samples.map((sample) => topologySignature(sample)).join('|')),
+    proxyMaterialChecksum: checksum(samples.map((sample) => `${sample.id}:${sample.proxyMaterial.kind}`).join('|')),
+    topologyRanges,
+    proxyMaterialCounts
   };
+}
+
+function topologySignature(sample: HillOfHillsTerrainSample): string {
+  return [
+    sample.id,
+    sample.topology.flowAccumulation.toFixed(3),
+    sample.topology.ridgeStrength.toFixed(3),
+    sample.topology.valleyStrength.toFixed(3),
+    sample.topology.routePressure.toFixed(3),
+    sample.topology.ditchPotential.toFixed(3),
+    sample.topology.growthPotential.toFixed(3)
+  ].join(':');
+}
+
+function createTopologyRanges(): HillOfHillsWitness['topologyRanges'] {
+  return {
+    flowAccumulation: createRange(),
+    ridgeStrength: createRange(),
+    valleyStrength: createRange(),
+    routePressure: createRange(),
+    ditchPotential: createRange(),
+    growthPotential: createRange()
+  };
+}
+
+function createRange(): Range {
+  return {
+    min: Number.POSITIVE_INFINITY,
+    max: Number.NEGATIVE_INFINITY
+  };
+}
+
+function includeInRange(range: Range, value: number): void {
+  range.min = Math.min(range.min, value);
+  range.max = Math.max(range.max, value);
 }
 
 function finiteOr(value: number, fallback: number): number {
