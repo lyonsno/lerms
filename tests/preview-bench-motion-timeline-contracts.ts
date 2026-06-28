@@ -51,6 +51,37 @@ assert.ok(states.has('hit_reacting'));
 assert.ok(states.has('tumbling'));
 assert.ok(states.has('rerouting_to_goin'));
 
+assert.equal(timeline.goinCustody.schema, 'lerms.preview-bench-goin-custody.v0');
+assert.equal(timeline.goinCustody.visibleGoinPlayback, true);
+assert.deepEqual(timeline.goinCustody.primaryCustodyChain, [
+  'goin-hoard-001:hoarded',
+  'goin-hoard-001:carried_by:red-lerm-001',
+  'goin-hoard-001:carried_by:red-lerm-001',
+  'goin-hoard-001:dropped_by:red-lerm-001',
+  'goin-hoard-001:rolling',
+  'goin-dropped-001:reroute_target_for:red-lerm-001',
+]);
+assert.ok(timeline.goinCustody.attachments.some((attachment) =>
+  attachment.frameIndex === 1 &&
+  attachment.goinId === 'goin-hoard-001' &&
+  attachment.carrierActorId === 'red-lerm-001' &&
+  attachment.visibleAttachment === true));
+assert.ok(timeline.goinCustody.attachments.some((attachment) =>
+  attachment.frameIndex === 2 &&
+  attachment.goinId === 'goin-hoard-001' &&
+  attachment.carrierActorId === 'red-lerm-001' &&
+  attachment.visibleAttachment === true));
+assert.ok(timeline.goinCustody.drops.some((drop) =>
+  drop.frameIndex === 3 &&
+  drop.goinId === 'goin-hoard-001' &&
+  drop.droppedByActorId === 'red-lerm-001' &&
+  drop.visibleDropMarker === true));
+assert.ok(timeline.goinCustody.rerouteTargets.some((target) =>
+  target.frameIndex === 5 &&
+  target.goinId === 'goin-dropped-001' &&
+  target.actorId === 'red-lerm-001' &&
+  target.visibleTargetPull === true));
+
 const carrierPositions = timeline.timeline
   .flatMap((frame) => frame.actorMotion)
   .filter((actor) => actor.actorId === 'red-lerm-001')
@@ -70,9 +101,13 @@ assert.deepEqual(carrierStates, [
 const hitFrame = timeline.timeline.find((frame) => frame.label === 'hit');
 assert.ok(hitFrame?.hitFlash);
 assert.equal(hitFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.state, 'hit_reacting');
+assert.equal(hitFrame.goins.find((goin) => goin.id === 'goin-hoard-001')?.droppedByActorId, 'red-lerm-001');
+assert.equal(hitFrame.goins.find((goin) => goin.id === 'goin-hoard-001')?.custodyRole, 'dropped_marker');
 const rerouteFrame = timeline.timeline.find((frame) => frame.label === 'reroute');
 assert.ok(rerouteFrame?.reroute);
 assert.equal(rerouteFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.targetGoinId, 'goin-dropped-001');
+assert.equal(rerouteFrame.goins.find((goin) => goin.id === 'goin-dropped-001')?.custodyRole, 'reroute_target');
+assert.deepEqual(rerouteFrame.goins.find((goin) => goin.id === 'goin-dropped-001')?.targetedByActorIds, ['red-lerm-001']);
 
 const everyActor = timeline.timeline.flatMap((frame) => frame.actorMotion);
 assert.ok(everyActor.every((actor) => actor.motionAdapter.schema === 'lerms.schnoz-motion-adapter.v0'));

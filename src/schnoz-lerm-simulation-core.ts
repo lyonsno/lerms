@@ -58,6 +58,10 @@ export type SchnozRenderGoin = {
   id: string;
   world: Vec3;
   state: GoinState['state'];
+  custodyRole?: 'hoard_source' | 'carried_attachment' | 'dropped_marker' | 'rolling_drop' | 'reroute_target';
+  carrierLermId?: string;
+  droppedByActorId?: string;
+  targetedByActorIds?: string[];
 };
 
 export type SchnozMotionEvidence = {
@@ -117,8 +121,8 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
       lerm('red-lerm-005', [-1.65, 0.38, -0.52], [1, 0, 0.12], 'approaching_hoard'),
       lerm('red-lerm-006', [-2.75, 0.32, -0.65], [1, 0, 0.22], 'approaching_hoard'),
     ], [
-      goin('goin-hoard-001', [1.95, 0.58, 0.05], 'hoarded'),
-      goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
+      goin('goin-hoard-001', [1.95, 0.58, 0.05], 'hoarded', { custodyRole: 'hoard_source' }),
+      goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded', { custodyRole: 'hoard_source' }),
     ], evidence(0, 0, 'approach / commit', 'uphill approach')),
     frame(1, 'steal', 240, ['goin-stolen'], [
       lerm('red-lerm-001', [0.95, 0.58, 0.02], [1, 0, 0], 'stealing_goin', 'goin-hoard-001'),
@@ -128,8 +132,11 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
       lerm('red-lerm-005', [-1.28, 0.42, -0.46], [1, 0, 0.12], 'approaching_hoard'),
       lerm('red-lerm-006', [-2.18, 0.35, -0.56], [1, 0, 0.18], 'approaching_hoard'),
     ], [
-      goin('goin-hoard-001', [1.05, 0.61, 0.03], 'carried'),
-      goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
+      goin('goin-hoard-001', [1.05, 0.61, 0.03], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-001',
+      }),
+      goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded', { custodyRole: 'hoard_source' }),
     ], evidence(1, 240, 'reach / steal', 'grab lunge')),
     frame(2, 'flee', 480, ['carrier-fleeing'], [
       lerm('red-lerm-001', [0.25, 0.55, -0.15], [-1, 0, -0.2], 'fleeing_with_goin', 'goin-hoard-001'),
@@ -139,8 +146,14 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
       lerm('red-lerm-005', [-0.72, 0.49, -0.38], [1, 0, 0.08], 'approaching_hoard'),
       lerm('red-lerm-006', [-1.56, 0.39, -0.42], [1, 0, 0.14], 'approaching_hoard'),
     ], [
-      goin('goin-hoard-001', [0.12, 0.58, -0.15], 'carried'),
-      goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
+      goin('goin-hoard-001', [0.12, 0.58, -0.15], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-001',
+      }),
+      goin('goin-loose-001', [0.3, 0.58, 0.38], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-003',
+      }),
     ], evidence(2, 480, 'turn / flee', 'panic carry')),
     frame(3, 'hit', 720, ['juice-hit-carrier'], [
       lerm('red-lerm-001', [-0.15, 0.56, -0.2], [-1, 0, -0.1], 'hit_reacting', undefined, undefined, 180),
@@ -150,8 +163,14 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
       lerm('red-lerm-005', [-0.42, 0.54, -0.32], [-1, 0, -0.18], 'hit_reacting', undefined, undefined, 140),
       lerm('red-lerm-006', [-1.05, 0.42, -0.28], [1, 0, 0.08], 'approaching_hoard'),
     ], [
-      goin('goin-hoard-001', [-0.04, 0.57, -0.18], 'dropped'),
-      goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
+      goin('goin-hoard-001', [-0.04, 0.57, -0.18], 'dropped', {
+        custodyRole: 'dropped_marker',
+        droppedByActorId: 'red-lerm-001',
+      }),
+      goin('goin-loose-001', [0.22, 0.56, 0.37], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-003',
+      }),
     ], evidence(3, 720, 'brake / compress', 'hit reaction'), { world: [-0.15, 0.72, -0.2], radius: 0.38 }),
     frame(4, 'drop', 960, ['drop-started'], [
       lerm('red-lerm-001', [-0.55, 0.62, -0.3], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
@@ -161,8 +180,14 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
       lerm('red-lerm-005', [-0.64, 0.62, -0.35], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
       lerm('red-lerm-006', [-1.22, 0.44, -0.18], [1, 0, -0.05], 'approaching_hoard'),
     ], [
-      goin('goin-hoard-001', [-0.55, 0.42, -0.42], 'rolling'),
-      goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
+      goin('goin-hoard-001', [-0.55, 0.42, -0.42], 'rolling', {
+        custodyRole: 'rolling_drop',
+        droppedByActorId: 'red-lerm-001',
+      }),
+      goin('goin-loose-001', [0.1, 0.55, 0.42], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-003',
+      }),
     ], evidence(4, 960, 'drop / recover', 'tumble drop')),
     frame(5, 'reroute', 1200, ['loose-goin-reroute'], [
       lerm('red-lerm-001', [-1.35, 0.42, -0.12], [1, 0, -0.2], 'rerouting_to_goin', undefined, 'goin-dropped-001'),
@@ -172,9 +197,19 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
       lerm('red-lerm-005', [-0.64, 0.62, -0.35], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
       lerm('red-lerm-006', [-1.95, 0.4, 0.2], [1, 0, -0.05], 'approaching_hoard'),
     ], [
-      goin('goin-carried-001', [0.85, 0.57, 0.25], 'carried'),
-      goin('goin-flee-001', [0.22, 0.56, 0.37], 'carried'),
-      goin('goin-dropped-001', [-0.88, 0.38, -0.54], 'rolling'),
+      goin('goin-carried-001', [0.85, 0.57, 0.25], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-002',
+      }),
+      goin('goin-flee-001', [0.22, 0.56, 0.37], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-003',
+      }),
+      goin('goin-dropped-001', [-0.88, 0.38, -0.54], 'rolling', {
+        custodyRole: 'reroute_target',
+        droppedByActorId: 'red-lerm-001',
+        targetedByActorIds: ['red-lerm-001'],
+      }),
     ], evidence(5, 1200, 'recover / chase', 'loose goin reroute'), { world: [-0.22, 0.74, -0.25], radius: 0.36 }, {
       from: [-1.35, 0.42, -0.12],
       to: [-0.88, 0.38, -0.54],
@@ -365,8 +400,13 @@ function lerm(
   return { id, world, heading, state, carryingGoinId, targetGoinId, hitStunMs };
 }
 
-function goin(id: string, world: Vec3, state: GoinState['state']): SchnozRenderGoin {
-  return { id, world, state };
+function goin(
+  id: string,
+  world: Vec3,
+  state: GoinState['state'],
+  custody: Omit<SchnozRenderGoin, 'id' | 'world' | 'state'> = {},
+): SchnozRenderGoin {
+  return { id, world, state, ...custody };
 }
 
 function mushfingerPlaybackSampleForFrame(

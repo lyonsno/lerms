@@ -20,6 +20,7 @@ export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_FRAME_SCHEMA = 'lerms.preview-b
 export const PREVIEW_BENCH_ACTOR_MOTION_PLAYBACK_SCHEMA = 'lerms.preview-bench-actor-motion-playback.v0' as const;
 export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_STATE_SCHEMA = 'lerms.preview-bench-actor-motion-timeline-state.v0' as const;
 export const PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA = 'lerms.preview-bench-actor-continuity.v0' as const;
+export const PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA = 'lerms.preview-bench-goin-custody.v0' as const;
 export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE = 'lerms/preview-bench/actor-motion-timeline-file' as const;
 
 type PreviewBenchTimelineDowngrade =
@@ -68,6 +69,38 @@ type PreviewBenchTimelineFrame = {
   motionEvidence: SchnozTimelineFrame['motionEvidence'];
 };
 
+type PreviewBenchGoinCustody = {
+  schema: typeof PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA;
+  visibleGoinPlayback: true;
+  authorityBoundary: {
+    lermsOwns: 'red_lerm_timeline_goin_custody_readability';
+    greedyOwns: 'glove_well_throw_physics_and_goin_law';
+  };
+  primaryCustodyChain: string[];
+  goinIds: string[];
+  attachments: {
+    frameIndex: number;
+    goinId: string;
+    carrierActorId: string;
+    world: Vec3;
+    visibleAttachment: true;
+  }[];
+  drops: {
+    frameIndex: number;
+    goinId: string;
+    droppedByActorId: string;
+    world: Vec3;
+    visibleDropMarker: true;
+  }[];
+  rerouteTargets: {
+    frameIndex: number;
+    goinId: string;
+    actorId: string;
+    world: Vec3;
+    visibleTargetPull: true;
+  }[];
+};
+
 export type PreviewBenchActorMotionTimeline = {
   schema: typeof PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_SCHEMA;
   route: typeof PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE;
@@ -83,6 +116,7 @@ export type PreviewBenchActorMotionTimeline = {
   proxyBody: SchnozSimulationSnapshot['proxyBody'];
   durationMs: number;
   timeline: PreviewBenchTimelineFrame[];
+  goinCustody: PreviewBenchGoinCustody;
   continuity: {
     schema: typeof PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA;
     stableActorIdentities: boolean;
@@ -156,6 +190,7 @@ export function buildPreviewBenchActorMotionTimeline(
     const frameActorIds = frame.actorMotion.map((actor) => actor.actorId);
     return frameActorIds.length === actorIds.length && frameActorIds.every((actorId, index) => actorId === actorIds[index]);
   }).length;
+  const goinCustody = buildGoinCustody(timeline);
 
   return {
     schema: PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_SCHEMA,
@@ -175,6 +210,7 @@ export function buildPreviewBenchActorMotionTimeline(
     },
     durationMs: timeline[timeline.length - 1]?.timeMs ?? 0,
     timeline,
+    goinCustody,
     continuity: {
       schema: PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA,
       stableActorIdentities: framesWithCompleteActorSet === timeline.length,
@@ -217,6 +253,7 @@ export function buildPreviewBenchActorMotionTimeline(
         'timelineBehaviorTruth',
         'actor state transitions',
         'goin carry/drop/reroute sequencing',
+        'red-lerm timeline goin custody readability',
       ],
       mushfingerOwns: basePayload.custody.mushfingerOwns,
       gutterglassOwns: [
@@ -240,6 +277,66 @@ export function writePreviewBenchActorMotionTimelineReport(path: string): Previe
   };
   writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`);
   return report;
+}
+
+function buildGoinCustody(timeline: PreviewBenchTimelineFrame[]): PreviewBenchGoinCustody {
+  const goinIds = [...new Set(timeline.flatMap((frame) => frame.goins.map((goin) => goin.id)))];
+  const attachments = timeline.flatMap((frame) => frame.goins
+    .filter((goin) => goin.carrierLermId)
+    .map((goin) => ({
+      frameIndex: frame.frameIndex,
+      goinId: goin.id,
+      carrierActorId: goin.carrierLermId ?? '',
+      world: goin.world,
+      visibleAttachment: true as const,
+    })));
+  const drops = timeline.flatMap((frame) => frame.goins
+    .filter((goin) => goin.droppedByActorId && (goin.state === 'dropped' || goin.custodyRole === 'dropped_marker'))
+    .map((goin) => ({
+      frameIndex: frame.frameIndex,
+      goinId: goin.id,
+      droppedByActorId: goin.droppedByActorId ?? '',
+      world: goin.world,
+      visibleDropMarker: true as const,
+    })));
+  const rerouteTargets = timeline.flatMap((frame) => frame.goins.flatMap((goin) =>
+    (goin.targetedByActorIds ?? []).map((actorId) => ({
+      frameIndex: frame.frameIndex,
+      goinId: goin.id,
+      actorId,
+      world: goin.world,
+      visibleTargetPull: true as const,
+    }))));
+  return {
+    schema: PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA,
+    visibleGoinPlayback: true,
+    authorityBoundary: {
+      lermsOwns: 'red_lerm_timeline_goin_custody_readability',
+      greedyOwns: 'glove_well_throw_physics_and_goin_law',
+    },
+    primaryCustodyChain: timeline.map(primaryGoinCustodyFrameLabel),
+    goinIds,
+    attachments,
+    drops,
+    rerouteTargets,
+  };
+}
+
+function primaryGoinCustodyFrameLabel(frame: PreviewBenchTimelineFrame): string {
+  const primary = frame.goins.find((goin) => goin.id === 'goin-hoard-001')
+    ?? frame.goins.find((goin) => goin.id === 'goin-dropped-001')
+    ?? frame.goins[0];
+  if (!primary) return `${frame.label}:no_goin`;
+  if (primary.targetedByActorIds?.length) {
+    return `${primary.id}:reroute_target_for:${primary.targetedByActorIds[0]}`;
+  }
+  if (primary.carrierLermId) {
+    return `${primary.id}:carried_by:${primary.carrierLermId}`;
+  }
+  if (primary.droppedByActorId && primary.state === 'dropped') {
+    return `${primary.id}:dropped_by:${primary.droppedByActorId}`;
+  }
+  return `${primary.id}:${primary.state}`;
 }
 
 function actorMotionForTimelineLerm(lerm: SchnozRenderLerm): PreviewBenchTimelineActorMotion {
