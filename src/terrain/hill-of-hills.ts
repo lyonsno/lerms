@@ -70,6 +70,10 @@ export interface HillOfHillsPhaseState {
   checksum: string;
   phaseClock: number;
   phaseProgress: number;
+  ditchPhaseClock: number;
+  ditchPhaseProgress: number;
+  trailPhaseClock: number;
+  trailPhaseProgress: number;
   trailSeedMethod: HillOfHillsTrailSeedMethod;
   trailCandidateChecksum: string;
   trailCandidateScoreRange: Range;
@@ -167,6 +171,10 @@ export interface HillOfHillsWitness {
   activePhaseKinds: Partial<Record<HillOfHillsPhaseKind, number>>;
   phaseClock: number;
   phaseProgress: number;
+  ditchPhaseClock: number;
+  ditchPhaseProgress: number;
+  trailPhaseClock: number;
+  trailPhaseProgress: number;
   phaseChecksum: string;
   phaseInfluenceChecksum: string;
   phaseInfluenceRange: Range;
@@ -490,6 +498,10 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
   const mode = phaseModeFor(episodes);
   const phaseClock = episodes.length === 0 ? 0 : Math.max(ditchIntensity > 0 ? ditchTiming.clock : 0, trailIntensity > 0 ? trailTiming.clock : 0);
   const phaseProgress = episodes.length === 0 ? 0 : Math.max(ditchIntensity > 0 ? ditchTiming.progress : 0, trailIntensity > 0 ? trailTiming.progress : 0);
+  const ditchPhaseClock = ditchIntensity > 0 ? ditchTiming.clock : 0;
+  const ditchPhaseProgress = ditchIntensity > 0 ? ditchTiming.progress : 0;
+  const trailPhaseClock = trailIntensity > 0 ? trailTiming.clock : 0;
+  const trailPhaseProgress = trailIntensity > 0 ? trailTiming.progress : 0;
 
   if (episodes.length === 0) {
     const checksumInput = [
@@ -507,6 +519,10 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
       checksum: checksum(checksumInput),
       phaseClock,
       phaseProgress,
+      ditchPhaseClock,
+      ditchPhaseProgress,
+      trailPhaseClock,
+      trailPhaseProgress,
       trailSeedMethod,
       trailCandidateChecksum: trailCandidateSummary.checksum,
       trailCandidateScoreRange: trailCandidateSummary.scoreRange,
@@ -521,6 +537,10 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
     checksum: checksum(episodes.map((episode) => phaseEpisodeSignature(episode)).join('|')),
     phaseClock,
     phaseProgress,
+    ditchPhaseClock,
+    ditchPhaseProgress,
+    trailPhaseClock,
+    trailPhaseProgress,
     trailSeedMethod,
     trailCandidateChecksum: trailCandidateSummary.checksum,
     trailCandidateScoreRange: trailCandidateSummary.scoreRange,
@@ -692,6 +712,10 @@ function stablePhaseStateForTopologyScoring(): HillOfHillsPhaseState {
     checksum: 'stable-topology-scoring',
     phaseClock: 0,
     phaseProgress: 0,
+    ditchPhaseClock: 0,
+    ditchPhaseProgress: 0,
+    trailPhaseClock: 0,
+    trailPhaseProgress: 0,
     trailSeedMethod: 'none',
     trailCandidateChecksum: 'none',
     trailCandidateScoreRange: zeroRange(),
@@ -1204,6 +1228,10 @@ function createWitness(
     activePhaseKinds: activePhaseKinds(phaseState.activeEpisodes),
     phaseClock: phaseState.phaseClock,
     phaseProgress: phaseState.phaseProgress,
+    ditchPhaseClock: phaseState.ditchPhaseClock,
+    ditchPhaseProgress: phaseState.ditchPhaseProgress,
+    trailPhaseClock: phaseState.trailPhaseClock,
+    trailPhaseProgress: phaseState.trailPhaseProgress,
     phaseChecksum: phaseState.checksum,
     phaseInfluenceChecksum: checksum(samples.map((sample) => phaseInfluenceSignature(sample)).join('|')),
     phaseInfluenceRange,

@@ -308,6 +308,59 @@ assert(
   'terrain topology changes move at least one selected trail episode'
 );
 
+const trailPhaseEarlier = createHillOfHillsTerrain({
+  ...trailPhaseParams,
+  trailPhaseTimeMs: 620
+});
+const trailPhaseLater = createHillOfHillsTerrain({
+  ...trailPhaseParams,
+  trailPhaseTimeMs: 1320
+});
+const trailPhaseFadeout = createHillOfHillsTerrain({
+  ...trailPhaseParams,
+  trailPhaseTimeMs: 1885
+});
+const trailPhaseNextCycle = createHillOfHillsTerrain({
+  ...trailPhaseParams,
+  trailPhaseTimeMs: 1900
+});
+assert(
+  trailPhaseEarlier.witness.trailCandidateChecksum === trailPhaseLater.witness.trailCandidateChecksum,
+  'trail topology candidate checksum stays stable across phase motion ticks'
+);
+assert(
+  trailPhaseEarlier.witness.phaseClock !== trailPhaseLater.witness.phaseClock,
+  'trail phase witness clock moves across phase motion ticks'
+);
+assert(
+  trailPhaseEarlier.witness.trailPhaseClock < trailPhaseLater.witness.trailPhaseClock,
+  'trail phase witness exposes trail-specific clock motion'
+);
+assert(
+  trailPhaseEarlier.witness.trailPhaseProgress > 0 && trailPhaseLater.witness.trailPhaseProgress > 0,
+  'trail phase witness exposes trail-specific active progress'
+);
+assert(trailPhaseEarlier.witness.ditchPhaseProgress === 0, 'trail-only motion witness keeps ditch progress separate');
+assert(
+  trailPhaseEarlier.witness.phaseChecksum !== trailPhaseLater.witness.phaseChecksum,
+  'trail phase checksum moves when phase time changes'
+);
+assert(
+  trailPhaseEarlier.witness.phaseInfluenceChecksum !== trailPhaseLater.witness.phaseInfluenceChecksum,
+  'trail influence checksum moves when phase time changes'
+);
+assert(
+  trailPhaseFadeout.witness.phaseProgress < trailPhaseLater.witness.phaseProgress,
+  'trail phase progress fades late in the motion cycle'
+);
+assert(
+  trailPhaseFadeout.witness.trailInfluenceRange.max < trailPhaseLater.witness.trailInfluenceRange.max,
+  'trail phase influence fades late in the motion cycle'
+);
+assert(trailPhaseNextCycle.phaseState.mode === 'stable', 'trail phase can fully fade instead of leaving permanent stamped bands');
+assert(trailPhaseNextCycle.witness.trailSeedMethod === 'none', 'fully faded trail phase stops claiming topology-seeded active trails');
+assert(trailPhaseNextCycle.witness.trailPhaseProgress === 0, 'fully faded trail phase witness exposes zero trail progress');
+
 for (const terrainSample of baseline.samples) {
   assert(Number.isFinite(terrainSample.height), `sample ${terrainSample.id} height is finite`);
   assert(Number.isFinite(terrainSample.slope), `sample ${terrainSample.id} slope is finite`);

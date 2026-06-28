@@ -43,6 +43,7 @@ interface ViewState {
   zoom: number;
   panX: number;
   panY: number;
+  motionSpeed: number;
 }
 
 let viewState: ViewState = {
@@ -50,7 +51,8 @@ let viewState: ViewState = {
   tilt: 0.72,
   zoom: 1,
   panX: 0,
-  panY: 0
+  panY: 0,
+  motionSpeed: 1
 };
 
 interface ControlSpec {
@@ -103,7 +105,8 @@ const viewControlSpecs: readonly ViewControlSpec[] = [
   { key: 'tilt', label: 'Camera tilt', min: 0.32, max: 1.25, step: 0.01 },
   { key: 'zoom', label: 'Camera zoom', min: 0.55, max: 1.75, step: 0.01 },
   { key: 'panX', label: 'Camera pan X', min: -0.35, max: 0.35, step: 0.01 },
-  { key: 'panY', label: 'Camera pan Y', min: -0.32, max: 0.24, step: 0.01 }
+  { key: 'panY', label: 'Camera pan Y', min: -0.32, max: 0.24, step: 0.01 },
+  { key: 'motionSpeed', label: 'Motion speed', min: 0, max: 2, step: 0.05 }
 ];
 
 const controls = createControls();
@@ -125,14 +128,15 @@ function resize(): void {
 function render(timestampMs: number): void {
   const width = window.innerWidth;
   const height = window.innerHeight;
-  const motion = Math.sin(timestampMs * 0.00008) * 0.18;
+  const motionTimestampMs = timestampMs * viewState.motionSpeed;
+  const motion = Math.sin(motionTimestampMs * 0.00008) * 0.18;
   const ditchPhaseTimeMs =
     params.ditchPhaseIntensity > 0
-      ? (params.ditchPhaseTimeMs + timestampMs * 0.42) % params.ditchPhaseDurationMs
+      ? (params.ditchPhaseTimeMs + motionTimestampMs * 0.42) % params.ditchPhaseDurationMs
       : params.ditchPhaseTimeMs;
   const trailPhaseTimeMs =
     params.trailPhaseIntensity > 0
-      ? (params.trailPhaseTimeMs + timestampMs * 0.38) % params.trailPhaseDurationMs
+      ? (params.trailPhaseTimeMs + motionTimestampMs * 0.38) % params.trailPhaseDurationMs
       : params.trailPhaseTimeMs;
   terrain = createHillOfHillsTerrain(
     {
@@ -379,6 +383,8 @@ function drawWitness(currentTerrain: HillOfHillsTerrain): void {
     `topology: ${witness.topologyChecksum} / material: ${witness.proxyMaterialChecksum}`,
     `phase: ${witness.phaseMode} epoch ${witness.terrainEpoch} active ${witness.activePhaseCount}`,
     `phase clock: ${witness.phaseClock.toFixed(2)} progress ${witness.phaseProgress.toFixed(2)}`,
+    `ditch phase: ${witness.effectiveParams.ditchPhaseTimeMs.toFixed(0)}ms clock ${witness.ditchPhaseClock.toFixed(2)} progress ${witness.ditchPhaseProgress.toFixed(2)}`,
+    `trail phase: ${witness.effectiveParams.trailPhaseTimeMs.toFixed(0)}ms clock ${witness.trailPhaseClock.toFixed(2)} progress ${witness.trailPhaseProgress.toFixed(2)}`,
     `phase checksum: ${witness.phaseChecksum} / influence ${witness.phaseInfluenceChecksum}`,
     `trail seed: ${witness.trailSeedMethod} / candidates ${witness.trailCandidateChecksum}`,
     `trail score: ${witness.trailCandidateScoreRange.min.toFixed(2)} .. ${witness.trailCandidateScoreRange.max.toFixed(2)} / selected ${witness.selectedTrailScoreRange.min.toFixed(2)} .. ${witness.selectedTrailScoreRange.max.toFixed(2)}`,
@@ -386,7 +392,7 @@ function drawWitness(currentTerrain: HillOfHillsTerrain): void {
     `trail ${witness.trailInfluenceRange.max.toFixed(2)} side-ditch ${witness.sideDitchInfluenceRange.max.toFixed(2)}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
-    `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)}`
+    `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
 }
 
@@ -551,7 +557,8 @@ function createViewControls(): { element: HTMLElement; refresh: () => void } {
       tilt: 0.72,
       zoom: 1,
       panX: 0,
-      panY: 0
+      panY: 0,
+      motionSpeed: 1
     };
     refresh();
   });
