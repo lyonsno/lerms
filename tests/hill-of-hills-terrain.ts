@@ -248,6 +248,16 @@ assert(
   trailPhaseA.witness.phaseInfluenceChecksum === trailPhaseB.witness.phaseInfluenceChecksum,
   'trail phase influence checksum is deterministic'
 );
+assert(trailPhaseA.witness.recomputeMode === 'full_grid_with_dirty_tiles', 'trail phase witness records dirty-tile scaffold mode');
+assert(trailPhaseA.witness.recomputeTileCount > 0, 'trail phase witness records recompute tile count');
+assert(trailPhaseA.witness.dirtyTileCount > 0, 'trail phase marks localized dirty tiles');
+assert(trailPhaseA.witness.dirtyTileCount < trailPhaseA.witness.recomputeTileCount, 'trail phase dirty tiles are a localized subset');
+assert(trailPhaseA.witness.dirtySampleCount > 0, 'trail phase marks localized dirty samples');
+assert(trailPhaseA.witness.dirtySampleCount < trailPhaseA.witness.sampleCount, 'trail phase dirty samples are less than the full grid');
+assert(trailPhaseA.witness.dirtyLayerKinds.includes('phase_overlay'), 'dirty layer witness includes phase overlay');
+assert(trailPhaseA.witness.dirtyLayerKinds.includes('topology_derivatives'), 'dirty layer witness includes topology derivatives');
+assert(typeof trailPhaseA.witness.dirtyRegionChecksum === 'string', 'trail phase witness records dirty region checksum');
+assert(trailPhaseA.witness.dirtyRegionChecksum === trailPhaseB.witness.dirtyRegionChecksum, 'dirty region checksum is deterministic');
 assert(trailPhaseA.witness.phaseProgress > 0.35, 'trail phase witness exposes active phase progress');
 assert((trailPhaseA.witness.activePhaseKinds.trail_forming ?? 0) > 0, 'witness counts active trail-forming episodes');
 assert((trailPhaseA.witness.phaseInfluenceKinds.trail_forming ?? 0) > 0, 'witness counts trail-forming influenced samples');
@@ -387,6 +397,12 @@ assert(typeof (baseline.witness as any).proxyMaterialChecksum === 'string', 'ter
 assert(typeof (baseline.witness as any).featureChecksum === 'string', 'terrain witness exposes cached terrain feature checksum');
 assert(baseline.witness.heightfieldMode === 'grid_heightfield', 'terrain witness records reusable grid heightfield generation');
 assert(typeof baseline.witness.heightfieldChecksum === 'string', 'terrain witness exposes grid heightfield checksum');
+assert(baseline.witness.recomputeMode === 'full_grid_with_dirty_tiles', 'terrain witness exposes dirty-tile scaffold mode');
+assert(baseline.witness.recomputeTileCount > 0, 'terrain witness exposes recompute tile count');
+assert(baseline.witness.dirtyTileCount === 0, 'stable terrain has no localized dirty phase tiles');
+assert(baseline.witness.dirtySampleCount === 0, 'stable terrain has no localized dirty phase samples');
+assert(baseline.witness.dirtyLayerKinds.length === 0, 'stable terrain has no localized dirty layer kinds');
+assert(baseline.witness.dirtyRegionChecksum === 'none', 'stable terrain dirty region checksum is explicitly none');
 assert((baseline.witness as any).topologyRanges.routePressure.max > 0.45, 'witness records route pressure range');
 assert((baseline.witness as any).topologyRanges.growthPotential.max > 0.5, 'witness records growth candidate range');
 assert((baseline.witness as any).proxyMaterialCounts['ditch-shadow'] > 0, 'witness counts ditch-shadow proxy material');

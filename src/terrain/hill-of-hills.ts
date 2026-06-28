@@ -18,6 +18,8 @@ export type HillOfHillsPhaseKind = 'ditch_forming' | 'trail_forming';
 export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
 export type HillOfHillsTrailSeedMethod = 'none' | 'random_band' | 'topology_score';
 export type HillOfHillsHeightfieldMode = 'direct_query' | 'grid_heightfield';
+export type HillOfHillsRecomputeMode = 'full_grid_with_dirty_tiles';
+export type HillOfHillsDirtyLayerKind = 'height' | 'phase_overlay' | 'topology_derivatives' | 'proxy_material';
 export type HillOfHillsProxyMaterialKind =
   | 'crown-warmth'
   | 'approach-clay'
@@ -167,6 +169,17 @@ export interface HillOfHillsWitness {
   featureChecksum: string;
   heightfieldMode: HillOfHillsHeightfieldMode;
   heightfieldChecksum: string;
+  recomputeMode: HillOfHillsRecomputeMode;
+  recomputeTileSize: {
+    x: number;
+    z: number;
+  };
+  recomputeTileCount: number;
+  dirtyTileCount: number;
+  dirtySampleCount: number;
+  dirtyLayerKinds: readonly HillOfHillsDirtyLayerKind[];
+  dirtyRegionChecksum: string;
+  dirtyHaloSamples: number;
   topologyChecksum: string;
   proxyMaterialChecksum: string;
   phaseMode: HillOfHillsPhaseMode;
@@ -253,6 +266,20 @@ interface GridHeightfield {
   dz: number;
   heights: readonly HeightParts[];
   phaseInfluences: readonly HillOfHillsPhaseInfluence[];
+}
+
+interface DirtyRecomputeWitness {
+  mode: HillOfHillsRecomputeMode;
+  tileSize: {
+    x: number;
+    z: number;
+  };
+  tileCount: number;
+  dirtyTileCount: number;
+  dirtySampleCount: number;
+  dirtyLayerKinds: readonly HillOfHillsDirtyLayerKind[];
+  dirtyRegionChecksum: string;
+  dirtyHaloSamples: number;
 }
 
 interface Range {
@@ -1301,6 +1328,7 @@ function createWitness(
   const phaseInfluenceRange = createRange();
   const trailInfluenceRange = createRange();
   const sideDitchInfluenceRange = createRange();
+  const recomputeWitness = dirtyRecomputeWitness(params, phaseState);
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
 
@@ -1346,6 +1374,14 @@ function createWitness(
     featureChecksum: terrainFeatureChecksum(params),
     heightfieldMode: 'grid_heightfield',
     heightfieldChecksum: heightfieldChecksum(samples),
+    recomputeMode: recomputeWitness.mode,
+    recomputeTileSize: recomputeWitness.tileSize,
+    recomputeTileCount: recomputeWitness.tileCount,
+    dirtyTileCount: recomputeWitness.dirtyTileCount,
+    dirtySampleCount: recomputeWitness.dirtySampleCount,
+    dirtyLayerKinds: recomputeWitness.dirtyLayerKinds,
+    dirtyRegionChecksum: recomputeWitness.dirtyRegionChecksum,
+    dirtyHaloSamples: recomputeWitness.dirtyHaloSamples,
     topologyChecksum: checksum(samples.map((sample) => topologySignature(sample)).join('|')),
     proxyMaterialChecksum: checksum(samples.map((sample) => `${sample.id}:${sample.proxyMaterial.kind}`).join('|')),
     phaseMode: phaseState.mode,
@@ -1400,6 +1436,68 @@ function heightfieldChecksum(samples: readonly HillOfHillsTerrainSample[]): stri
   return checksum(samples.map((sample) => `${sample.id}:${sample.height.toFixed(4)}:${sample.slope.toFixed(4)}:${sample.phaseInfluence.amount.toFixed(3)}`).join('|'));
 }
 
+function dirtyRecomputeWitness(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhaseState): DirtyRecomputeWitness {
+  const tileSize = {
+    x: 8,
+    z: 8
+  };
+  const tileColumns = Math.ceil(params.gridResolutionX / tileSize.x);
+  const tileRows = Math.ceil(params.gridResolutionZ / tileSize.z);
+  const tileCount = tileColumns * tileRows;
+  const haloSamples = 2;
+  const dirtyTiles = new Set<string>();
+
+  for (const episode of phaseState.activeEpisodes) {
+    const xRadius = episode.kind === 'trail_forming' ? episode.radius * 0.72 + episode.sideDitchOffset * 1.35 : episode.radius * 0.72;
+    const zRadius = episode.kind === 'trail_forming' ? episode.radius * 2.1 : episode.radius * 2.15;
+    const minXi = worldXToSampleIndex(params, episode.center[0] - xRadius) - haloSamples;
+    const maxXi = worldXToSampleIndex(params, episode.center[0] + xRadius) + haloSamples;
+    const minZi = worldZToSampleIndex(params, episode.center[2] - zRadius) - haloSamples;
+    const maxZi = worldZToSampleIndex(params, episode.center[2] + zRadius) + haloSamples;
+    const minTileX = clampInt(Math.floor(minXi / tileSize.x), 0, tileColumns - 1);
+    const maxTileX = clampInt(Math.floor(maxXi / tileSize.x), 0, tileColumns - 1);
+    const minTileZ = clampInt(Math.floor(minZi / tileSize.z), 0, tileRows - 1);
+    const maxTileZ = clampInt(Math.floor(maxZi / tileSize.z), 0, tileRows - 1);
+
+    for (let tileZ = minTileZ; tileZ <= maxTileZ; tileZ += 1) {
+      for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
+        dirtyTiles.add(`${tileX}:${tileZ}`);
+      }
+    }
+  }
+
+  const sortedTiles = [...dirtyTiles].sort();
+  const dirtySampleCount = sortedTiles.reduce((sum, tile) => {
+    const [tileX, tileZ] = tile.split(':').map((value) => Number(value));
+    const xCount = Math.max(0, Math.min(params.gridResolutionX, (tileX + 1) * tileSize.x) - tileX * tileSize.x);
+    const zCount = Math.max(0, Math.min(params.gridResolutionZ, (tileZ + 1) * tileSize.z) - tileZ * tileSize.z);
+    return sum + xCount * zCount;
+  }, 0);
+  const dirtyLayerKinds: readonly HillOfHillsDirtyLayerKind[] =
+    sortedTiles.length === 0 ? [] : ['phase_overlay', 'height', 'topology_derivatives', 'proxy_material'];
+
+  return {
+    mode: 'full_grid_with_dirty_tiles',
+    tileSize,
+    tileCount,
+    dirtyTileCount: sortedTiles.length,
+    dirtySampleCount,
+    dirtyLayerKinds,
+    dirtyRegionChecksum: sortedTiles.length === 0 ? 'none' : checksum(sortedTiles.join('|')),
+    dirtyHaloSamples: haloSamples
+  };
+}
+
+function worldXToSampleIndex(params: HillOfHillsTerrainParams, x: number): number {
+  const t = (x + params.width * 0.5) / Math.max(0.001, params.width);
+  return Math.round(clamp(t, 0, 1) * (params.gridResolutionX - 1));
+}
+
+function worldZToSampleIndex(params: HillOfHillsTerrainParams, z: number): number {
+  const t = (z + params.length * 0.5) / Math.max(0.001, params.length);
+  return Math.round(clamp(t, 0, 1) * (params.gridResolutionZ - 1));
+}
+
 function createTopologyRanges(): HillOfHillsWitness['topologyRanges'] {
   return {
     flowAccumulation: createRange(),
@@ -1444,6 +1542,10 @@ function finiteAtLeast(value: number, minimum: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.round(clamp(value, min, max));
 }
 
 function smoothstep(edge0: number, edge1: number, value: number): number {
