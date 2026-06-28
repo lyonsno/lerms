@@ -17,6 +17,7 @@ export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming' | 'trail_forming' 
 export type HillOfHillsPhaseKind = 'ditch_forming' | 'trail_forming';
 export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
 export type HillOfHillsTrailSeedMethod = 'none' | 'random_band' | 'topology_score';
+export type HillOfHillsHeightfieldMode = 'direct_query' | 'grid_heightfield';
 export type HillOfHillsProxyMaterialKind =
   | 'crown-warmth'
   | 'approach-clay'
@@ -164,6 +165,8 @@ export interface HillOfHillsWitness {
   };
   regionCounts: Partial<Record<TerrainRegion, number>>;
   featureChecksum: string;
+  heightfieldMode: HillOfHillsHeightfieldMode;
+  heightfieldChecksum: string;
   topologyChecksum: string;
   proxyMaterialChecksum: string;
   phaseMode: HillOfHillsPhaseMode;
@@ -243,6 +246,13 @@ interface TrailCandidateSummary {
   candidates: readonly TrailSeedCandidate[];
   checksum: string;
   scoreRange: Range;
+}
+
+interface GridHeightfield {
+  dx: number;
+  dz: number;
+  heights: readonly HeightParts[];
+  phaseInfluences: readonly HillOfHillsPhaseInfluence[];
 }
 
 interface Range {
@@ -852,18 +862,62 @@ function generateSamples(
   phaseState: HillOfHillsPhaseState
 ): HillOfHillsTerrainSample[] {
   const samples: HillOfHillsTerrainSample[] = [];
+  const heightfield = buildGridHeightfield(params, phaseState);
+
+  for (let zi = 0; zi < params.gridResolutionZ; zi += 1) {
+    for (let xi = 0; xi < params.gridResolutionX; xi += 1) {
+      samples.push(sampleTerrainFromGridHeightfield(params, source, phaseState, heightfield, xi, zi));
+    }
+  }
+
+  return samples;
+}
+
+function buildGridHeightfield(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhaseState): GridHeightfield {
   const dx = params.width / (params.gridResolutionX - 1);
   const dz = params.length / (params.gridResolutionZ - 1);
+  const heights: HeightParts[] = [];
+  const phaseInfluences: HillOfHillsPhaseInfluence[] = [];
 
   for (let zi = 0; zi < params.gridResolutionZ; zi += 1) {
     const z = -params.length * 0.5 + zi * dz;
     for (let xi = 0; xi < params.gridResolutionX; xi += 1) {
       const x = -params.width * 0.5 + xi * dx;
-      samples.push(sampleTerrain(params, source, phaseState, x, z, `terrain-${xi}-${zi}`));
+      heights.push(heightAt(params, phaseState, x, z));
+      phaseInfluences.push(phaseInfluenceAt(phaseState, x, z));
     }
   }
 
-  return samples;
+  return {
+    dx,
+    dz,
+    heights,
+    phaseInfluences
+  };
+}
+
+function sampleTerrainFromGridHeightfield(
+  params: HillOfHillsTerrainParams,
+  source: SourceTruth,
+  phaseState: HillOfHillsPhaseState,
+  heightfield: GridHeightfield,
+  xi: number,
+  zi: number
+): HillOfHillsTerrainSample {
+  const index = gridIndex(params, xi, zi);
+  const x = -params.width * 0.5 + xi * heightfield.dx;
+  const z = -params.length * 0.5 + zi * heightfield.dz;
+  const heightParts = heightfield.heights[index];
+  const phaseInfluence = heightfield.phaseInfluences[index];
+  const leftHeight = heightfield.heights[gridIndex(params, Math.max(0, xi - 1), zi)].height;
+  const rightHeight = heightfield.heights[gridIndex(params, Math.min(params.gridResolutionX - 1, xi + 1), zi)].height;
+  const backHeight = heightfield.heights[gridIndex(params, xi, Math.max(0, zi - 1))].height;
+  const forwardHeight = heightfield.heights[gridIndex(params, xi, Math.min(params.gridResolutionZ - 1, zi + 1))].height;
+  const xDivisor = heightfield.dx * (xi === 0 || xi === params.gridResolutionX - 1 ? 1 : 2);
+  const zDivisor = heightfield.dz * (zi === 0 || zi === params.gridResolutionZ - 1 ? 1 : 2);
+  const terrainDx = (rightHeight - leftHeight) / Math.max(0.001, xDivisor);
+  const terrainDz = (forwardHeight - backHeight) / Math.max(0.001, zDivisor);
+  return sampleTerrainFromParts(params, source, phaseState, x, z, heightParts, phaseInfluence, terrainDx, terrainDz, `terrain-${xi}-${zi}`);
 }
 
 function sampleTerrain(
@@ -887,17 +941,33 @@ function sampleTerrain(
   const heightForward = heightAt(params, phaseState, clampedX, clampedZ + epsZ).height;
   const dx = (heightRight - heightLeft) / (epsX * 2);
   const dz = (heightForward - heightBack) / (epsZ * 2);
+  return sampleTerrainFromParts(params, source, phaseState, clampedX, clampedZ, heightParts, phaseInfluence, dx, dz, id);
+}
+
+function sampleTerrainFromParts(
+  params: HillOfHillsTerrainParams,
+  source: SourceTruth,
+  phaseState: HillOfHillsPhaseState,
+  x: number,
+  z: number,
+  heightParts: HeightParts,
+  phaseInfluence: HillOfHillsPhaseInfluence,
+  dx: number,
+  dz: number,
+  id?: string
+): HillOfHillsTerrainSample {
+  const height = heightParts.height;
   const normal = normalize([-dx, 1, -dz]);
   const slope = Math.hypot(dx, dz);
-  const region = classifyRegion(params, clampedX, clampedZ, heightParts, slope);
-  const topology = topologyAt(params, clampedX, clampedZ, heightParts, dx, dz, slope, region, phaseInfluence);
+  const region = classifyRegion(params, x, z, heightParts, slope);
+  const topology = topologyAt(params, x, z, heightParts, dx, dz, slope, region, phaseInfluence);
   const proxyMaterial = proxyMaterialFor(region, topology);
 
   return {
     schema: TERRAIN_SAMPLE_SCHEMA,
-    id: id ?? `terrain-${roundId(clampedX)}-${roundId(clampedZ)}`,
+    id: id ?? `terrain-${roundId(x)}-${roundId(z)}`,
     source,
-    world: [clampedX, height, clampedZ],
+    world: [x, height, z],
     normal,
     height,
     slope,
@@ -906,6 +976,10 @@ function sampleTerrain(
     proxyMaterial,
     phaseInfluence
   };
+}
+
+function gridIndex(params: HillOfHillsTerrainParams, xi: number, zi: number): number {
+  return zi * params.gridResolutionX + xi;
 }
 
 function topologyAt(
@@ -1270,6 +1344,8 @@ function createWitness(
     },
     regionCounts,
     featureChecksum: terrainFeatureChecksum(params),
+    heightfieldMode: 'grid_heightfield',
+    heightfieldChecksum: heightfieldChecksum(samples),
     topologyChecksum: checksum(samples.map((sample) => topologySignature(sample)).join('|')),
     proxyMaterialChecksum: checksum(samples.map((sample) => `${sample.id}:${sample.proxyMaterial.kind}`).join('|')),
     phaseMode: phaseState.mode,
@@ -1318,6 +1394,10 @@ function topologySignature(sample: HillOfHillsTerrainSample): string {
     sample.topology.ditchPotential.toFixed(3),
     sample.topology.growthPotential.toFixed(3)
   ].join(':');
+}
+
+function heightfieldChecksum(samples: readonly HillOfHillsTerrainSample[]): string {
+  return checksum(samples.map((sample) => `${sample.id}:${sample.height.toFixed(4)}:${sample.slope.toFixed(4)}:${sample.phaseInfluence.amount.toFixed(3)}`).join('|'));
 }
 
 function createTopologyRanges(): HillOfHillsWitness['topologyRanges'] {

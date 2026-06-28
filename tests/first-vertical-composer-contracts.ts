@@ -183,6 +183,8 @@ const terrain: HillOfHillsTerrain = {
     heightRange: { min: 1.8, max: 1.8 },
     regionCounts: { crown: 1 },
     featureChecksum: 'composer-terrain-feature-fixture-checksum',
+    heightfieldMode: 'grid_heightfield',
+    heightfieldChecksum: 'composer-terrain-heightfield-fixture-checksum',
     topologyChecksum: 'composer-terrain-topology-fixture-checksum',
     proxyMaterialChecksum: 'composer-terrain-material-fixture-checksum',
     phaseMode: 'stable',
