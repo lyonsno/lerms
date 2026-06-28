@@ -1,7 +1,9 @@
 import { assertFirstVerticalFrame } from '../src/contracts/first-vertical.js';
 import {
+  createHillOfHillsLayerTileCache,
   createHillOfHillsFrame,
   createHillOfHillsTerrain,
+  createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
   sampleHillOfHillsTerrain,
   type HillOfHillsTerrainParams
@@ -387,6 +389,58 @@ assert(
 assert(trailPhaseNextCycle.phaseState.mode === 'stable', 'trail phase can fully fade instead of leaving permanent stamped bands');
 assert(trailPhaseNextCycle.witness.trailSeedMethod === 'none', 'fully faded trail phase stops claiming topology-seeded active trails');
 assert(trailPhaseNextCycle.witness.trailPhaseProgress === 0, 'fully faded trail phase witness exposes zero trail progress');
+
+const cacheSource = {
+  timestampMs: 11_000,
+  frameId: 'cached-terrain-contract',
+  route: 'hill-of-hills/cache-contract',
+  configId: 'hill-of-hills-cache-contract-v0'
+};
+const layerTileCache = createHillOfHillsLayerTileCache();
+const cachedFirst = createHillOfHillsTerrainWithCache(layerTileCache, trailPhaseEarlier.params, cacheSource);
+const uncachedFirst = createHillOfHillsTerrain(trailPhaseEarlier.params, cacheSource);
+assert(cachedFirst.witness.cacheMode === 'persistent_layer_tile_cache', 'cached terrain witness records persistent layer/tile cache mode');
+assert(cachedFirst.witness.cacheInvalidated === true, 'first cached terrain generation invalidates an empty cache');
+assert(cachedFirst.witness.cacheReusedSampleCount === 0, 'first cached terrain generation cannot reuse samples');
+assert(cachedFirst.witness.cacheRecomputedSampleCount === cachedFirst.samples.length, 'first cached terrain generation computes the full sample set');
+assert(cachedFirst.witness.sampleChecksum === uncachedFirst.witness.sampleChecksum, 'first cached terrain matches uncached sample checksum');
+assert(cachedFirst.witness.heightfieldChecksum === uncachedFirst.witness.heightfieldChecksum, 'first cached terrain matches uncached heightfield checksum');
+
+const cachedLater = createHillOfHillsTerrainWithCache(layerTileCache, trailPhaseLater.params, cacheSource);
+const uncachedLater = createHillOfHillsTerrain(trailPhaseLater.params, cacheSource);
+assert(cachedLater.witness.cacheMode === 'persistent_layer_tile_cache', 'second cached terrain stays on persistent cache path');
+assert(cachedLater.witness.cacheInvalidated === false, 'phase-only tick does not invalidate stable cached layers');
+assert(cachedLater.witness.cacheStableLayerInvalidated === false, 'phase-only tick does not invalidate stable heightfield layers');
+assert(cachedLater.witness.cacheReusedSampleCount > 0, 'phase-only tick reuses untouched cached samples');
+assert(cachedLater.witness.cacheRecomputedSampleCount > 0, 'phase-only tick recomputes dirty phase samples');
+assert(cachedLater.witness.cacheRecomputedSampleCount < cachedLater.samples.length, 'phase-only tick recomputes fewer samples than the full grid');
+assert(
+  cachedLater.witness.cacheRecomputedSampleCount === cachedLater.witness.supportFrame.dirtySubstrateSampleCount,
+  'cached recompute count matches actual dirty substrate sample count'
+);
+assert(cachedLater.witness.sampleChecksum === uncachedLater.witness.sampleChecksum, 'cached phase tick matches uncached sample checksum');
+assert(cachedLater.witness.topologyChecksum === uncachedLater.witness.topologyChecksum, 'cached phase tick matches uncached topology checksum');
+assert(cachedLater.witness.phaseInfluenceChecksum === uncachedLater.witness.phaseInfluenceChecksum, 'cached phase tick matches uncached phase influence checksum');
+assert(cachedLater.witness.supportFrame.supportFrameChecksum === uncachedLater.witness.supportFrame.supportFrameChecksum, 'cached phase tick matches uncached support frame checksum');
+assert(
+  cachedLater.samples.some((terrainSample, index) => terrainSample === cachedFirst.samples[index]),
+  'cached phase tick preserves object identity for at least one untouched sample'
+);
+
+const cachedStableInvalidated = createHillOfHillsTerrainWithCache(
+  layerTileCache,
+  {
+    ...trailPhaseLater.params,
+    hillCount: trailPhaseLater.params.hillCount + 3
+  },
+  cacheSource
+);
+assert(cachedStableInvalidated.witness.cacheInvalidated === true, 'stable topology changes invalidate cached terrain layers');
+assert(cachedStableInvalidated.witness.cacheReusedSampleCount === 0, 'stable topology invalidation reuses no prior samples');
+assert(
+  cachedStableInvalidated.witness.cacheStableLayerChecksum !== cachedLater.witness.cacheStableLayerChecksum,
+  'stable topology invalidation changes the cached stable layer checksum'
+);
 
 for (const terrainSample of baseline.samples) {
   assert(Number.isFinite(terrainSample.height), `sample ${terrainSample.id} height is finite`);

@@ -20,6 +20,7 @@ export type HillOfHillsTrailSeedMethod = 'none' | 'random_band' | 'topology_scor
 export type HillOfHillsHeightfieldMode = 'direct_query' | 'grid_heightfield';
 export type HillOfHillsRecomputeMode = 'full_grid_with_dirty_tiles';
 export type HillOfHillsDirtyLayerKind = 'height' | 'phase_overlay' | 'topology_derivatives' | 'proxy_material' | 'support_frame';
+export type HillOfHillsCacheMode = 'uncached_full_grid' | 'persistent_layer_tile_cache';
 export type HillOfHillsSupportClass = 'single_valued_heightfield';
 export type HillOfHillsSupportMappingMode = 'static_domain_to_world';
 export type HillOfHillsSupportMotionClass = 'stable' | 'phase_morph' | 'shock_reset';
@@ -189,6 +190,16 @@ export interface HillOfHillsTerrain {
   witness: HillOfHillsWitness;
 }
 
+export interface HillOfHillsLayerTileCache {
+  generation: number;
+  stableLayerKey?: string;
+  stableLayerChecksum?: string;
+  sourceKey?: string;
+  stableHeightfield?: StableGridHeightfield;
+  samples?: readonly HillOfHillsTerrainSample[];
+  previousDirtyTiles?: readonly string[];
+}
+
 export interface HillOfHillsTerrainSample extends TerrainSample {
   topology: HillOfHillsTopology;
   proxyMaterial: HillOfHillsProxyMaterial;
@@ -221,6 +232,13 @@ export interface HillOfHillsWitness {
   featureChecksum: string;
   heightfieldMode: HillOfHillsHeightfieldMode;
   heightfieldChecksum: string;
+  cacheMode: HillOfHillsCacheMode;
+  cacheGeneration: number;
+  cacheStableLayerChecksum: string;
+  cacheStableLayerInvalidated: boolean;
+  cacheInvalidated: boolean;
+  cacheReusedSampleCount: number;
+  cacheRecomputedSampleCount: number;
   recomputeMode: HillOfHillsRecomputeMode;
   recomputeTileSize: {
     x: number;
@@ -321,6 +339,12 @@ interface GridHeightfield {
   phaseInfluences: readonly HillOfHillsPhaseInfluence[];
 }
 
+interface StableGridHeightfield {
+  dx: number;
+  dz: number;
+  heights: readonly HeightParts[];
+}
+
 interface DirtyRecomputeWitness {
   mode: HillOfHillsRecomputeMode;
   tileSize: {
@@ -333,6 +357,18 @@ interface DirtyRecomputeWitness {
   dirtyLayerKinds: readonly HillOfHillsDirtyLayerKind[];
   dirtyRegionChecksum: string;
   dirtyHaloSamples: number;
+  dirtyTiles: readonly string[];
+}
+
+interface HillOfHillsCacheStats {
+  mode: HillOfHillsCacheMode;
+  generation: number;
+  stableLayerChecksum: string;
+  stableLayerInvalidated: boolean;
+  invalidated: boolean;
+  reusedSampleCount: number;
+  recomputedSampleCount: number;
+  dirtyTiles?: readonly string[];
 }
 
 interface Range {
@@ -341,6 +377,11 @@ interface Range {
 }
 
 const terrainFeatureCache = new Map<string, readonly TerrainFeature[]>();
+const RECOMPUTE_TILE_SIZE = {
+  x: 4,
+  z: 4
+} as const;
+const RECOMPUTE_HALO_SAMPLES = 1;
 
 export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   seed: 52027,
@@ -391,6 +432,91 @@ export function createHillOfHillsTerrain(
   const phaseState = createPhaseState(effectiveParams);
   const samples = generateSamples(effectiveParams, source, phaseState);
   const witness = createWitness(effectiveParams, source, phaseState, samples, fallbackStatus);
+
+  return {
+    params: effectiveParams,
+    source,
+    phaseState,
+    samples,
+    witness
+  };
+}
+
+export function createHillOfHillsLayerTileCache(): HillOfHillsLayerTileCache {
+  return {
+    generation: 0
+  };
+}
+
+export function createHillOfHillsTerrainWithCache(
+  cache: HillOfHillsLayerTileCache,
+  params: Partial<HillOfHillsTerrainParams> = {},
+  sourceOptions: HillOfHillsSourceOptions = {}
+): HillOfHillsTerrain {
+  const effectiveParams = normalizeParams({ ...defaultHillOfHillsParams, ...params });
+  const fallbackStatus = normalizeFallbackStatus(sourceOptions);
+  const source = createTerrainSource(effectiveParams, sourceOptions, fallbackStatus);
+  const phaseState = createPhaseState(effectiveParams);
+  const stableLayerKey = stableLayerCacheKey(effectiveParams);
+  const stableLayerChecksum = checksum(stableLayerKey);
+  const sourceKey = sourceCacheKey(source);
+  const stableInvalidated =
+    cache.stableLayerKey !== stableLayerKey ||
+    cache.stableHeightfield === undefined ||
+    cache.samples === undefined ||
+    cache.samples.length !== effectiveParams.gridResolutionX * effectiveParams.gridResolutionZ;
+  const sourceInvalidated = cache.sourceKey !== undefined && cache.sourceKey !== sourceKey;
+  const sampleInvalidated = stableInvalidated || sourceInvalidated;
+
+  let stableHeightfield = cache.stableHeightfield;
+  let samples: readonly HillOfHillsTerrainSample[];
+  let reusedSampleCount = 0;
+  let recomputedSampleCount = 0;
+  let actualDirtyTiles: readonly string[];
+
+  if (sampleInvalidated || !stableHeightfield || !cache.samples) {
+    stableHeightfield = stableInvalidated ? buildStableGridHeightfield(effectiveParams) : stableHeightfield;
+    if (!stableHeightfield) {
+      stableHeightfield = buildStableGridHeightfield(effectiveParams);
+    }
+    samples = generateSamplesFromStableHeightfield(effectiveParams, source, phaseState, stableHeightfield);
+    recomputedSampleCount = samples.length;
+    actualDirtyTiles = allTileKeys(effectiveParams);
+  } else {
+    const currentDirty = dirtyRecomputeWitness(effectiveParams, phaseState).dirtyTiles;
+    actualDirtyTiles = unionTileKeys(cache.previousDirtyTiles ?? [], currentDirty);
+    const dirtyIndices = sampleIndicesForTiles(effectiveParams, actualDirtyTiles);
+    const nextSamples = cache.samples.slice();
+
+    for (const index of dirtyIndices) {
+      const xi = index % effectiveParams.gridResolutionX;
+      const zi = Math.floor(index / effectiveParams.gridResolutionX);
+      nextSamples[index] = sampleTerrainFromStableHeightfield(effectiveParams, source, phaseState, stableHeightfield, xi, zi);
+    }
+
+    samples = nextSamples;
+    recomputedSampleCount = dirtyIndices.length;
+    reusedSampleCount = Math.max(0, samples.length - recomputedSampleCount);
+  }
+
+  cache.generation += 1;
+  cache.stableLayerKey = stableLayerKey;
+  cache.stableLayerChecksum = stableLayerChecksum;
+  cache.sourceKey = sourceKey;
+  cache.stableHeightfield = stableHeightfield;
+  cache.samples = samples;
+  cache.previousDirtyTiles = dirtyRecomputeWitness(effectiveParams, phaseState).dirtyTiles;
+
+  const witness = createWitness(effectiveParams, source, phaseState, samples, fallbackStatus, {
+    mode: 'persistent_layer_tile_cache',
+    generation: cache.generation,
+    stableLayerChecksum,
+    stableLayerInvalidated: stableInvalidated,
+    invalidated: sampleInvalidated,
+    reusedSampleCount,
+    recomputedSampleCount,
+    dirtyTiles: actualDirtyTiles
+  });
 
   return {
     params: effectiveParams,
@@ -941,12 +1067,19 @@ function generateSamples(
   source: SourceTruth,
   phaseState: HillOfHillsPhaseState
 ): HillOfHillsTerrainSample[] {
-  const samples: HillOfHillsTerrainSample[] = [];
-  const heightfield = buildGridHeightfield(params, phaseState);
+  return generateSamplesFromStableHeightfield(params, source, phaseState, buildStableGridHeightfield(params));
+}
 
+function generateSamplesFromStableHeightfield(
+  params: HillOfHillsTerrainParams,
+  source: SourceTruth,
+  phaseState: HillOfHillsPhaseState,
+  stableHeightfield: StableGridHeightfield
+): HillOfHillsTerrainSample[] {
+  const samples: HillOfHillsTerrainSample[] = [];
   for (let zi = 0; zi < params.gridResolutionZ; zi += 1) {
     for (let xi = 0; xi < params.gridResolutionX; xi += 1) {
-      samples.push(sampleTerrainFromGridHeightfield(params, source, phaseState, heightfield, xi, zi));
+      samples.push(sampleTerrainFromStableHeightfield(params, source, phaseState, stableHeightfield, xi, zi));
     }
   }
 
@@ -954,25 +1087,45 @@ function generateSamples(
 }
 
 function buildGridHeightfield(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhaseState): GridHeightfield {
+  const stableHeightfield = buildStableGridHeightfield(params);
+  const heights: HeightParts[] = [];
+  const phaseInfluences: HillOfHillsPhaseInfluence[] = [];
+
+  for (let index = 0; index < stableHeightfield.heights.length; index += 1) {
+    const xi = index % params.gridResolutionX;
+    const zi = Math.floor(index / params.gridResolutionX);
+    const x = -params.width * 0.5 + xi * stableHeightfield.dx;
+    const z = -params.length * 0.5 + zi * stableHeightfield.dz;
+    const phaseInfluence = phaseInfluenceAt(phaseState, x, z);
+    heights.push(applyPhaseToStableHeightParts(params, x, stableHeightfield.heights[index], phaseInfluence));
+    phaseInfluences.push(phaseInfluence);
+  }
+
+  return {
+    dx: stableHeightfield.dx,
+    dz: stableHeightfield.dz,
+    heights,
+    phaseInfluences
+  };
+}
+
+function buildStableGridHeightfield(params: HillOfHillsTerrainParams): StableGridHeightfield {
   const dx = params.width / (params.gridResolutionX - 1);
   const dz = params.length / (params.gridResolutionZ - 1);
   const heights: HeightParts[] = [];
-  const phaseInfluences: HillOfHillsPhaseInfluence[] = [];
 
   for (let zi = 0; zi < params.gridResolutionZ; zi += 1) {
     const z = -params.length * 0.5 + zi * dz;
     for (let xi = 0; xi < params.gridResolutionX; xi += 1) {
       const x = -params.width * 0.5 + xi * dx;
-      heights.push(heightAt(params, phaseState, x, z));
-      phaseInfluences.push(phaseInfluenceAt(phaseState, x, z));
+      heights.push(stableHeightAt(params, x, z));
     }
   }
 
   return {
     dx,
     dz,
-    heights,
-    phaseInfluences
+    heights
   };
 }
 
@@ -984,20 +1137,72 @@ function sampleTerrainFromGridHeightfield(
   xi: number,
   zi: number
 ): HillOfHillsTerrainSample {
-  const index = gridIndex(params, xi, zi);
+  return sampleTerrainFromHeightfieldParts(params, source, phaseState, heightfield, xi, zi);
+}
+
+function sampleTerrainFromStableHeightfield(
+  params: HillOfHillsTerrainParams,
+  source: SourceTruth,
+  phaseState: HillOfHillsPhaseState,
+  heightfield: StableGridHeightfield,
+  xi: number,
+  zi: number
+): HillOfHillsTerrainSample {
+  return sampleTerrainFromHeightfieldParts(params, source, phaseState, heightfield, xi, zi);
+}
+
+function sampleTerrainFromHeightfieldParts(
+  params: HillOfHillsTerrainParams,
+  source: SourceTruth,
+  phaseState: HillOfHillsPhaseState,
+  heightfield: GridHeightfield | StableGridHeightfield,
+  xi: number,
+  zi: number
+): HillOfHillsTerrainSample {
   const x = -params.width * 0.5 + xi * heightfield.dx;
   const z = -params.length * 0.5 + zi * heightfield.dz;
-  const heightParts = heightfield.heights[index];
-  const phaseInfluence = heightfield.phaseInfluences[index];
-  const leftHeight = heightfield.heights[gridIndex(params, Math.max(0, xi - 1), zi)].height;
-  const rightHeight = heightfield.heights[gridIndex(params, Math.min(params.gridResolutionX - 1, xi + 1), zi)].height;
-  const backHeight = heightfield.heights[gridIndex(params, xi, Math.max(0, zi - 1))].height;
-  const forwardHeight = heightfield.heights[gridIndex(params, xi, Math.min(params.gridResolutionZ - 1, zi + 1))].height;
+  const heightParts = heightPartsForGridIndex(params, phaseState, heightfield, xi, zi);
+  const phaseInfluence = phaseInfluenceForGridIndex(params, phaseState, heightfield, xi, zi);
+  const leftHeight = heightPartsForGridIndex(params, phaseState, heightfield, Math.max(0, xi - 1), zi).height;
+  const rightHeight = heightPartsForGridIndex(params, phaseState, heightfield, Math.min(params.gridResolutionX - 1, xi + 1), zi).height;
+  const backHeight = heightPartsForGridIndex(params, phaseState, heightfield, xi, Math.max(0, zi - 1)).height;
+  const forwardHeight = heightPartsForGridIndex(params, phaseState, heightfield, xi, Math.min(params.gridResolutionZ - 1, zi + 1)).height;
   const xDivisor = heightfield.dx * (xi === 0 || xi === params.gridResolutionX - 1 ? 1 : 2);
   const zDivisor = heightfield.dz * (zi === 0 || zi === params.gridResolutionZ - 1 ? 1 : 2);
   const terrainDx = (rightHeight - leftHeight) / Math.max(0.001, xDivisor);
   const terrainDz = (forwardHeight - backHeight) / Math.max(0.001, zDivisor);
   return sampleTerrainFromParts(params, source, phaseState, x, z, heightParts, phaseInfluence, terrainDx, terrainDz, `terrain-${xi}-${zi}`);
+}
+
+function heightPartsForGridIndex(
+  params: HillOfHillsTerrainParams,
+  phaseState: HillOfHillsPhaseState,
+  heightfield: GridHeightfield | StableGridHeightfield,
+  xi: number,
+  zi: number
+): HeightParts {
+  const index = gridIndex(params, xi, zi);
+  if ('phaseInfluences' in heightfield) {
+    return heightfield.heights[index];
+  }
+  const x = -params.width * 0.5 + xi * heightfield.dx;
+  return applyPhaseToStableHeightParts(params, x, heightfield.heights[index], phaseInfluenceForGridIndex(params, phaseState, heightfield, xi, zi));
+}
+
+function phaseInfluenceForGridIndex(
+  params: HillOfHillsTerrainParams,
+  phaseState: HillOfHillsPhaseState,
+  heightfield: GridHeightfield | StableGridHeightfield,
+  xi: number,
+  zi: number
+): HillOfHillsPhaseInfluence {
+  const index = gridIndex(params, xi, zi);
+  if ('phaseInfluences' in heightfield) {
+    return heightfield.phaseInfluences[index];
+  }
+  const x = -params.width * 0.5 + xi * heightfield.dx;
+  const z = -params.length * 0.5 + zi * heightfield.dz;
+  return phaseInfluenceAt(phaseState, x, z);
 }
 
 function sampleTerrain(
@@ -1243,6 +1448,10 @@ function blendedProxyColor(blends: HillOfHillsProxyMaterial['blends']): Vec3 {
 }
 
 function heightAt(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhaseState, x: number, z: number): HeightParts {
+  return applyPhaseToStableHeightParts(params, x, stableHeightAt(params, x, z), phaseInfluenceAt(phaseState, x, z));
+}
+
+function stableHeightAt(params: HillOfHillsTerrainParams, x: number, z: number): HeightParts {
   const halfFloor = params.floorWidth * 0.5;
   const lateral = Math.abs(x);
   const uphill = (z + params.length * 0.5) / params.length;
@@ -1265,13 +1474,9 @@ function heightAt(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhase
   const detail =
     textureAmplitude * Math.sin((x * 1.55 + z * 0.42 + params.seed * 0.001) * params.textureScale) +
     detailAmplitude * Math.cos((x * 3.6 - z * 2.1 + params.seed * 0.002) * params.textureScale);
-  const phaseInfluence = phaseInfluenceAt(phaseState, x, z);
-  const phaseDitch =
-    phaseInfluence.sideDitchAmount * (0.18 + params.valleyHeight * 0.24 + params.wallHeight * 0.035) +
-    phaseInfluence.trailAmount * (0.06 + params.valleyHeight * 0.05);
-  const openFloor = base + wall + gutter + hills * macroDamping - valleys * valleyFloorDamping + detail - phaseDitch;
+  const openFloor = base + wall + gutter + hills * macroDamping - valleys * valleyFloorDamping + detail;
   const floorMinimum = base - 0.12 - Math.max(0, params.valleyHeight - 1.2) * 0.08;
-  const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum - phaseDitch * 0.86) : openFloor;
+  const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum) : openFloor;
 
   return {
     base,
@@ -1280,6 +1485,43 @@ function heightAt(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhase
     hills,
     valleys,
     detail,
+    phaseDitch: 0,
+    height
+  };
+}
+
+function applyPhaseToStableHeightParts(
+  params: HillOfHillsTerrainParams,
+  x: number,
+  stableParts: HeightParts,
+  phaseInfluence: HillOfHillsPhaseInfluence
+): HeightParts {
+  const halfFloor = params.floorWidth * 0.5;
+  const lateral = Math.abs(x);
+  const phaseDitch =
+    phaseInfluence.sideDitchAmount * (0.18 + params.valleyHeight * 0.24 + params.wallHeight * 0.035) +
+    phaseInfluence.trailAmount * (0.06 + params.valleyHeight * 0.05);
+  const floorProtection = 1 - smoothstep(halfFloor * 0.45, halfFloor * 0.95, lateral);
+  const macroDamping = 1 - floorProtection * 0.58;
+  const valleyFloorDamping = 1 - floorProtection * 0.82;
+  const openFloor =
+    stableParts.base +
+    stableParts.wall +
+    stableParts.gutter +
+    stableParts.hills * macroDamping -
+    stableParts.valleys * valleyFloorDamping +
+    stableParts.detail -
+    phaseDitch;
+  const floorMinimum = stableParts.base - 0.12 - Math.max(0, params.valleyHeight - 1.2) * 0.08;
+  const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum - phaseDitch * 0.86) : openFloor;
+
+  return {
+    base: stableParts.base,
+    wall: stableParts.wall,
+    gutter: stableParts.gutter,
+    hills: stableParts.hills,
+    valleys: stableParts.valleys,
+    detail: stableParts.detail,
     phaseDitch,
     height
   };
@@ -1415,7 +1657,8 @@ function createWitness(
   source: SourceTruth,
   phaseState: HillOfHillsPhaseState,
   samples: readonly HillOfHillsTerrainSample[],
-  fallbackStatus: TerrainFallbackStatus
+  fallbackStatus: TerrainFallbackStatus,
+  cacheStats?: HillOfHillsCacheStats
 ): HillOfHillsWitness {
   const regionCounts: Partial<Record<TerrainRegion, number>> = {};
   const proxyMaterialCounts: Partial<Record<HillOfHillsProxyMaterialKind, number>> = {};
@@ -1424,8 +1667,19 @@ function createWitness(
   const phaseInfluenceRange = createRange();
   const trailInfluenceRange = createRange();
   const sideDitchInfluenceRange = createRange();
-  const recomputeWitness = dirtyRecomputeWitness(params, phaseState);
+  const recomputeWitness = dirtyRecomputeWitness(params, phaseState, cacheStats?.dirtyTiles);
   const supportFrame = supportFrameWitness(params, phaseState, samples, recomputeWitness);
+  const resolvedCacheStats =
+    cacheStats ??
+    ({
+      mode: 'uncached_full_grid',
+      generation: 0,
+      stableLayerChecksum: checksum(stableLayerCacheKey(params)),
+      stableLayerInvalidated: false,
+      invalidated: false,
+      reusedSampleCount: 0,
+      recomputedSampleCount: samples.length
+    } satisfies HillOfHillsCacheStats);
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
 
@@ -1462,7 +1716,7 @@ function createWitness(
       z: params.length / (params.gridResolutionZ - 1)
     },
     sampleCount: samples.length,
-    sampleChecksum: checksum(samples.map((sample) => `${sample.id}:${sample.height.toFixed(4)}:${sample.region}`).join('|')),
+    sampleChecksum: checksumParts(samples.map((sample) => `${sample.id}:${sample.height.toFixed(4)}:${sample.region}`)),
     heightRange: {
       min,
       max
@@ -1471,6 +1725,13 @@ function createWitness(
     featureChecksum: terrainFeatureChecksum(params),
     heightfieldMode: 'grid_heightfield',
     heightfieldChecksum: heightfieldChecksum(samples),
+    cacheMode: resolvedCacheStats.mode,
+    cacheGeneration: resolvedCacheStats.generation,
+    cacheStableLayerChecksum: resolvedCacheStats.stableLayerChecksum,
+    cacheStableLayerInvalidated: resolvedCacheStats.stableLayerInvalidated,
+    cacheInvalidated: resolvedCacheStats.invalidated,
+    cacheReusedSampleCount: resolvedCacheStats.reusedSampleCount,
+    cacheRecomputedSampleCount: resolvedCacheStats.recomputedSampleCount,
     recomputeMode: recomputeWitness.mode,
     recomputeTileSize: recomputeWitness.tileSize,
     recomputeTileCount: recomputeWitness.tileCount,
@@ -1480,8 +1741,8 @@ function createWitness(
     dirtyRegionChecksum: recomputeWitness.dirtyRegionChecksum,
     dirtyHaloSamples: recomputeWitness.dirtyHaloSamples,
     supportFrame,
-    topologyChecksum: checksum(samples.map((sample) => topologySignature(sample)).join('|')),
-    proxyMaterialChecksum: checksum(samples.map((sample) => `${sample.id}:${sample.proxyMaterial.kind}`).join('|')),
+    topologyChecksum: checksumParts(samples.map((sample) => topologySignature(sample))),
+    proxyMaterialChecksum: checksumParts(samples.map((sample) => `${sample.id}:${sample.proxyMaterial.kind}`)),
     phaseMode: phaseState.mode,
     terrainEpoch: phaseState.terrainEpoch,
     activePhaseCount: phaseState.activeEpisodes.length,
@@ -1493,7 +1754,7 @@ function createWitness(
     trailPhaseClock: phaseState.trailPhaseClock,
     trailPhaseProgress: phaseState.trailPhaseProgress,
     phaseChecksum: phaseState.checksum,
-    phaseInfluenceChecksum: checksum(samples.map((sample) => phaseInfluenceSignature(sample)).join('|')),
+    phaseInfluenceChecksum: checksumParts(samples.map((sample) => phaseInfluenceSignature(sample))),
     phaseInfluenceRange,
     trailInfluenceRange,
     sideDitchInfluenceRange,
@@ -1549,7 +1810,7 @@ function supportFrameWitness(
     ),
     maxHeightDelta,
     maxSurfaceSpeed,
-    supportFrameChecksum: checksum(samples.map((sample) => supportSignature(sample)).join('|')),
+    supportFrameChecksum: checksumParts(samples.map((sample) => supportSignature(sample))),
     motionClassCounts,
     shockClassCounts
   };
@@ -1594,35 +1855,45 @@ function topologySignature(sample: HillOfHillsTerrainSample): string {
 }
 
 function heightfieldChecksum(samples: readonly HillOfHillsTerrainSample[]): string {
-  return checksum(samples.map((sample) => `${sample.id}:${sample.height.toFixed(4)}:${sample.slope.toFixed(4)}:${sample.phaseInfluence.amount.toFixed(3)}`).join('|'));
+  return checksumParts(samples.map((sample) => `${sample.id}:${sample.height.toFixed(4)}:${sample.slope.toFixed(4)}:${sample.phaseInfluence.amount.toFixed(3)}`));
 }
 
-function dirtyRecomputeWitness(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhaseState): DirtyRecomputeWitness {
+function dirtyRecomputeWitness(
+  params: HillOfHillsTerrainParams,
+  phaseState: HillOfHillsPhaseState,
+  dirtyTileOverride?: readonly string[]
+): DirtyRecomputeWitness {
   const tileSize = {
-    x: 8,
-    z: 8
+    x: RECOMPUTE_TILE_SIZE.x,
+    z: RECOMPUTE_TILE_SIZE.z
   };
   const tileColumns = Math.ceil(params.gridResolutionX / tileSize.x);
   const tileRows = Math.ceil(params.gridResolutionZ / tileSize.z);
   const tileCount = tileColumns * tileRows;
-  const haloSamples = 2;
+  const haloSamples = RECOMPUTE_HALO_SAMPLES;
   const dirtyTiles = new Set<string>();
 
-  for (const episode of phaseState.activeEpisodes) {
-    const xRadius = episode.kind === 'trail_forming' ? episode.radius * 0.72 + episode.sideDitchOffset * 1.35 : episode.radius * 0.72;
-    const zRadius = episode.kind === 'trail_forming' ? episode.radius * 2.1 : episode.radius * 2.15;
-    const minXi = worldXToSampleIndex(params, episode.center[0] - xRadius) - haloSamples;
-    const maxXi = worldXToSampleIndex(params, episode.center[0] + xRadius) + haloSamples;
-    const minZi = worldZToSampleIndex(params, episode.center[2] - zRadius) - haloSamples;
-    const maxZi = worldZToSampleIndex(params, episode.center[2] + zRadius) + haloSamples;
-    const minTileX = clampInt(Math.floor(minXi / tileSize.x), 0, tileColumns - 1);
-    const maxTileX = clampInt(Math.floor(maxXi / tileSize.x), 0, tileColumns - 1);
-    const minTileZ = clampInt(Math.floor(minZi / tileSize.z), 0, tileRows - 1);
-    const maxTileZ = clampInt(Math.floor(maxZi / tileSize.z), 0, tileRows - 1);
+  if (dirtyTileOverride) {
+    for (const tile of dirtyTileOverride) {
+      dirtyTiles.add(tile);
+    }
+  } else {
+    for (const episode of phaseState.activeEpisodes) {
+      const xRadius = episode.kind === 'trail_forming' ? episode.radius * 0.72 + episode.sideDitchOffset * 1.35 : episode.radius * 0.72;
+      const zRadius = episode.kind === 'trail_forming' ? episode.radius * 2.1 : episode.radius * 2.15;
+      const minXi = worldXToSampleIndex(params, episode.center[0] - xRadius) - haloSamples;
+      const maxXi = worldXToSampleIndex(params, episode.center[0] + xRadius) + haloSamples;
+      const minZi = worldZToSampleIndex(params, episode.center[2] - zRadius) - haloSamples;
+      const maxZi = worldZToSampleIndex(params, episode.center[2] + zRadius) + haloSamples;
+      const minTileX = clampInt(Math.floor(minXi / tileSize.x), 0, tileColumns - 1);
+      const maxTileX = clampInt(Math.floor(maxXi / tileSize.x), 0, tileColumns - 1);
+      const minTileZ = clampInt(Math.floor(minZi / tileSize.z), 0, tileRows - 1);
+      const maxTileZ = clampInt(Math.floor(maxZi / tileSize.z), 0, tileRows - 1);
 
-    for (let tileZ = minTileZ; tileZ <= maxTileZ; tileZ += 1) {
-      for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
-        dirtyTiles.add(`${tileX}:${tileZ}`);
+      for (let tileZ = minTileZ; tileZ <= maxTileZ; tileZ += 1) {
+        for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
+          dirtyTiles.add(`${tileX}:${tileZ}`);
+        }
       }
     }
   }
@@ -1645,8 +1916,87 @@ function dirtyRecomputeWitness(params: HillOfHillsTerrainParams, phaseState: Hil
     dirtySampleCount,
     dirtyLayerKinds,
     dirtyRegionChecksum: sortedTiles.length === 0 ? 'none' : checksum(sortedTiles.join('|')),
-    dirtyHaloSamples: haloSamples
+    dirtyHaloSamples: haloSamples,
+    dirtyTiles: sortedTiles
   };
+}
+
+function stableLayerCacheKey(params: HillOfHillsTerrainParams): string {
+  return [
+    params.seed,
+    params.width.toFixed(4),
+    params.length.toFixed(4),
+    params.channelRadius.toFixed(4),
+    params.channelCurvature.toFixed(4),
+    params.wallHeight.toFixed(4),
+    params.floorWidth.toFixed(4),
+    params.hillRadius.toFixed(4),
+    params.hillCount,
+    params.hillHeight.toFixed(4),
+    params.hillVariance.toFixed(4),
+    params.valleyRadius.toFixed(4),
+    params.valleyCount,
+    params.valleyHeight.toFixed(4),
+    params.valleyVariance.toFixed(4),
+    params.distanceScale.toFixed(4),
+    params.worldScale.toFixed(4),
+    params.featureSpacing.toFixed(4),
+    params.textureScale.toFixed(4),
+    params.textureDamping.toFixed(4),
+    params.detailDamping.toFixed(4),
+    params.gridResolutionX,
+    params.gridResolutionZ,
+    params.crownZ.toFixed(4)
+  ].join(':');
+}
+
+function sourceCacheKey(source: SourceTruth): string {
+  return [
+    source.authority,
+    source.route,
+    source.frameId,
+    source.timestampMs,
+    source.sampleAgeMs,
+    source.backend ?? 'none',
+    source.configId ?? 'none'
+  ].join(':');
+}
+
+function allTileKeys(params: HillOfHillsTerrainParams): readonly string[] {
+  const tileSize = RECOMPUTE_TILE_SIZE;
+  const tileColumns = Math.ceil(params.gridResolutionX / tileSize.x);
+  const tileRows = Math.ceil(params.gridResolutionZ / tileSize.z);
+  const tiles: string[] = [];
+  for (let tileZ = 0; tileZ < tileRows; tileZ += 1) {
+    for (let tileX = 0; tileX < tileColumns; tileX += 1) {
+      tiles.push(`${tileX}:${tileZ}`);
+    }
+  }
+  return tiles;
+}
+
+function unionTileKeys(a: readonly string[], b: readonly string[]): readonly string[] {
+  return [...new Set([...a, ...b])].sort();
+}
+
+function sampleIndicesForTiles(params: HillOfHillsTerrainParams, tiles: readonly string[]): readonly number[] {
+  const tileSize = RECOMPUTE_TILE_SIZE;
+  const indices: number[] = [];
+
+  for (const tile of tiles) {
+    const [tileX, tileZ] = tile.split(':').map((value) => Number(value));
+    const minX = tileX * tileSize.x;
+    const maxX = Math.min(params.gridResolutionX, (tileX + 1) * tileSize.x);
+    const minZ = tileZ * tileSize.z;
+    const maxZ = Math.min(params.gridResolutionZ, (tileZ + 1) * tileSize.z);
+    for (let zi = minZ; zi < maxZ; zi += 1) {
+      for (let xi = minX; xi < maxX; xi += 1) {
+        indices.push(gridIndex(params, xi, zi));
+      }
+    }
+  }
+
+  return indices;
 }
 
 function worldXToSampleIndex(params: HillOfHillsTerrainParams, x: number): number {
@@ -1746,6 +2096,19 @@ function checksum(value: string): string {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i += 1) {
     hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function checksumParts(parts: Iterable<string>): string {
+  let hash = 2166136261;
+  for (const part of parts) {
+    for (let i = 0; i < part.length; i += 1) {
+      hash ^= part.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    hash ^= 124;
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');

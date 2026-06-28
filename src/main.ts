@@ -1,5 +1,7 @@
 import {
+  createHillOfHillsLayerTileCache,
   createHillOfHillsTerrain,
+  createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
   type HillOfHillsTerrain,
   type HillOfHillsTerrainParams,
@@ -35,7 +37,15 @@ let params: HillOfHillsTerrainParams = {
   gridResolutionX: 116,
   gridResolutionZ: 148
 };
-let terrain = createHillOfHillsTerrain(params);
+const terrainCache = createHillOfHillsLayerTileCache();
+const previewSourceOptions = {
+  route: 'hill-of-hills-terrain-preview-cache',
+  frameId: 'hill-of-hills-preview-cache-frame',
+  configId: 'hill-of-hills-preview-cache-v0',
+  timestampMs: 0,
+  sampleAgeMs: 0
+};
+let terrain = createHillOfHillsTerrainWithCache(terrainCache, params, previewSourceOptions);
 
 interface ViewState {
   yaw: number;
@@ -138,18 +148,15 @@ function render(timestampMs: number): void {
     params.trailPhaseIntensity > 0
       ? (params.trailPhaseTimeMs + motionTimestampMs * 0.38) % params.trailPhaseDurationMs
       : params.trailPhaseTimeMs;
-  terrain = createHillOfHillsTerrain(
+  terrain = createHillOfHillsTerrainWithCache(
+    terrainCache,
     {
       ...params,
       ditchPhaseTimeMs,
       trailPhaseTimeMs,
       crownZ: defaultHillOfHillsParams.crownZ + motion
     },
-    {
-      timestampMs,
-      frameId: `hill-of-hills-preview-${Math.floor(timestampMs)}`,
-      sampleAgeMs: 0
-    }
+    previewSourceOptions
   );
 
   ctx.fillStyle = '#06100d';
