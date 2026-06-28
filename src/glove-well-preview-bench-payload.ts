@@ -105,6 +105,16 @@ interface PreviewBenchFakeBoundary {
   carrierDropJuiceHitMergeForGloveWellThrow: true;
 }
 
+export interface PreviewBenchThrowPhysicsSummary {
+  schema: string;
+  route: string;
+  bounceCount: number;
+  trajectorySampleCount: number;
+  phaseTrace: string;
+  effectiveAuthority: SimulationAuthority;
+  fixtureInputDowngrade: boolean;
+}
+
 export interface GloveWellPreviewBenchPayload {
   schema: typeof LERMS_GLOVE_WELL_PREVIEW_BENCH_PAYLOAD_SCHEMA;
   route: typeof LERMS_GLOVE_WELL_PREVIEW_BENCH_PAYLOAD_ROUTE;
@@ -120,6 +130,7 @@ export interface GloveWellPreviewBenchPayload {
   gloveWell: PreviewBenchGloveWellSummary;
   goinObjecthood: PreviewBenchGoinObjecthoodSummary;
   benchHints: PreviewBenchHints;
+  throwPhysics?: PreviewBenchThrowPhysicsSummary;
   sourceReports: {
     gloveWellLaunch: GloveWellLaunchWitnessReport;
     goinObjecthood: GoinGloveWealthWitnessReport;
