@@ -248,7 +248,11 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       activeEpisodes: [],
       checksum: 'inline-terrain-socket-stable-phase-fixture-checksum',
       phaseClock: 0,
-      phaseProgress: 0
+      phaseProgress: 0,
+      trailSeedMethod: 'none',
+      trailCandidateChecksum: 'none',
+      trailCandidateScoreRange: { min: 0, max: 0 },
+      selectedTrailScoreRange: { min: 0, max: 0 }
     },
     samples: [sample],
     witness: {
@@ -278,6 +282,10 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       trailInfluenceRange: { min: 0, max: 0 },
       sideDitchInfluenceRange: { min: 0, max: 0 },
       phaseInfluenceKinds: { none: 1 },
+      trailSeedMethod: 'none',
+      trailCandidateChecksum: 'none',
+      trailCandidateScoreRange: { min: 0, max: 0 },
+      selectedTrailScoreRange: { min: 0, max: 0 },
       topologyRanges: {
         flowAccumulation: { min: 0.42, max: 0.42 },
         ridgeStrength: { min: 0.5, max: 0.5 },

@@ -380,6 +380,8 @@ function drawWitness(currentTerrain: HillOfHillsTerrain): void {
     `phase: ${witness.phaseMode} epoch ${witness.terrainEpoch} active ${witness.activePhaseCount}`,
     `phase clock: ${witness.phaseClock.toFixed(2)} progress ${witness.phaseProgress.toFixed(2)}`,
     `phase checksum: ${witness.phaseChecksum} / influence ${witness.phaseInfluenceChecksum}`,
+    `trail seed: ${witness.trailSeedMethod} / candidates ${witness.trailCandidateChecksum}`,
+    `trail score: ${witness.trailCandidateScoreRange.min.toFixed(2)} .. ${witness.trailCandidateScoreRange.max.toFixed(2)} / selected ${witness.selectedTrailScoreRange.min.toFixed(2)} .. ${witness.selectedTrailScoreRange.max.toFixed(2)}`,
     `phase influence: ${witness.phaseInfluenceRange.min.toFixed(2)} .. ${witness.phaseInfluenceRange.max.toFixed(2)}`,
     `trail ${witness.trailInfluenceRange.max.toFixed(2)} side-ditch ${witness.sideDitchInfluenceRange.max.toFixed(2)}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,

@@ -251,6 +251,18 @@ assert(
 assert(trailPhaseA.witness.phaseProgress > 0.35, 'trail phase witness exposes active phase progress');
 assert((trailPhaseA.witness.activePhaseKinds.trail_forming ?? 0) > 0, 'witness counts active trail-forming episodes');
 assert((trailPhaseA.witness.phaseInfluenceKinds.trail_forming ?? 0) > 0, 'witness counts trail-forming influenced samples');
+assert(trailPhaseA.witness.trailSeedMethod === 'topology_score', 'trail phase witness records topology-seeded placement');
+assert(typeof trailPhaseA.witness.trailCandidateChecksum === 'string', 'trail phase witness records candidate checksum');
+assert(trailPhaseA.witness.trailCandidateScoreRange.max > trailPhaseA.witness.trailCandidateScoreRange.min, 'trail candidate score range is populated');
+assert(trailPhaseA.witness.selectedTrailScoreRange.max > 0.35, 'selected trail score range records strong terrain candidates');
+assert(
+  trailPhaseA.phaseState.activeEpisodes.every((episode) => episode.kind !== 'trail_forming' || episode.seedMethod === 'topology_score'),
+  'trail episodes record topology score seed method'
+);
+assert(
+  trailPhaseA.phaseState.activeEpisodes.every((episode) => episode.kind !== 'trail_forming' || episode.seedScore > 0.35),
+  'trail episodes carry selected topology seed score'
+);
 assert(trailPhaseA.witness.trailInfluenceRange.max > 0.35, 'trail phase creates route scar influence');
 assert(trailPhaseA.witness.sideDitchInfluenceRange.max > 0.28, 'trail phase creates side-ditch influence');
 const trailSamples = trailPhaseA.samples.filter((terrainSample) => terrainSample.phaseInfluence.trailAmount > 0.32);
@@ -268,6 +280,32 @@ assert(
 assert(
   sideDitchSamples.some((terrainSample) => terrainSample.topology.ditchPotential > 0.66 || terrainSample.proxyMaterial.wetness > 0.55),
   'trail side ditches locally raise ditch potential or wetness'
+);
+
+const shiftedTrailTopology = createHillOfHillsTerrain({
+  ...trailPhaseParams,
+  hillCount: 30,
+  valleyCount: 5,
+  featureSpacing: 0.68,
+  distanceScale: 1.85
+});
+assert(
+  shiftedTrailTopology.witness.trailCandidateChecksum !== trailPhaseA.witness.trailCandidateChecksum,
+  'trail candidate checksum changes when underlying terrain topology changes'
+);
+assert(
+  shiftedTrailTopology.witness.phaseChecksum !== trailPhaseA.witness.phaseChecksum,
+  'same trail seed/time chooses different topology-seeded trail episodes after topology changes'
+);
+assert(
+  shiftedTrailTopology.phaseState.activeEpisodes.some(
+    (episode, index) =>
+      episode.kind === 'trail_forming' &&
+      trailPhaseA.phaseState.activeEpisodes[index]?.kind === 'trail_forming' &&
+      (Math.abs(episode.center[0] - trailPhaseA.phaseState.activeEpisodes[index].center[0]) > 0.08 ||
+        Math.abs(episode.center[2] - trailPhaseA.phaseState.activeEpisodes[index].center[2]) > 0.08)
+  ),
+  'terrain topology changes move at least one selected trail episode'
 );
 
 for (const terrainSample of baseline.samples) {
