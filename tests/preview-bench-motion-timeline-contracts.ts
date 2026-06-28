@@ -22,7 +22,7 @@ assert.equal(timeline.proxyBody.claimsFinalRedLermBody, false);
 
 assert.ok(timeline.timeline.length >= 6);
 assert.equal(timeline.timeline[0].timeMs, 0);
-assert.ok(timeline.durationMs >= 1200);
+assert.ok(timeline.durationMs >= 2700);
 for (let index = 1; index < timeline.timeline.length; index += 1) {
   assert.ok(timeline.timeline[index].timeMs > timeline.timeline[index - 1].timeMs);
 }
@@ -42,6 +42,13 @@ const events = new Set(timeline.timeline.flatMap((frame) => frame.events));
 assert.ok(events.has('goin-stolen'));
 assert.ok(events.has('juice-hit-carrier'));
 assert.ok(events.has('loose-goin-reroute'));
+
+const hitBeat = timeline.timeline.find((frame) => frame.label === 'hit');
+const dropBeat = timeline.timeline.find((frame) => frame.label === 'drop');
+const rerouteBeat = timeline.timeline.find((frame) => frame.label === 'reroute');
+assert.ok(hitBeat && dropBeat && rerouteBeat);
+assert.ok(dropBeat.timeMs - hitBeat.timeMs >= 600, 'hit and drop beats should be temporally separated');
+assert.ok(rerouteBeat.timeMs - dropBeat.timeMs >= 700, 'drop and reroute beats should be temporally separated');
 
 const states = new Set(timeline.timeline.flatMap((frame) => frame.actorMotion.map((actor) => actor.state)));
 assert.ok(states.has('approaching_hoard'));
@@ -81,6 +88,24 @@ assert.ok(timeline.goinCustody.rerouteTargets.some((target) =>
   target.goinId === 'goin-dropped-001' &&
   target.actorId === 'red-lerm-001' &&
   target.visibleTargetPull === true));
+assert.ok(timeline.goinCustody.possessionEvents.some((event) =>
+  event.frameIndex === 1 &&
+  event.event === 'possession-gained' &&
+  event.goinId === 'goin-hoard-001' &&
+  event.actorId === 'red-lerm-001' &&
+  event.visibleMarker === true));
+assert.ok(timeline.goinCustody.possessionEvents.some((event) =>
+  event.frameIndex === 3 &&
+  event.event === 'possession-released' &&
+  event.goinId === 'goin-hoard-001' &&
+  event.actorId === 'red-lerm-001' &&
+  event.visibleMarker === true));
+assert.ok(timeline.goinCustody.possessionEvents.some((event) =>
+  event.frameIndex === 5 &&
+  event.event === 'loose-target-noticed' &&
+  event.goinId === 'goin-dropped-001' &&
+  event.actorId === 'red-lerm-001' &&
+  event.visibleMarker === true));
 
 const carrierPositions = timeline.timeline
   .flatMap((frame) => frame.actorMotion)
@@ -101,13 +126,34 @@ assert.deepEqual(carrierStates, [
 const hitFrame = timeline.timeline.find((frame) => frame.label === 'hit');
 assert.ok(hitFrame?.hitFlash);
 assert.equal(hitFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.state, 'hit_reacting');
+assert.deepEqual(hitFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.statusCue, {
+  schema: 'lerms.preview-bench-actor-status-cue.v0',
+  cue: 'hit',
+  label: '!',
+  visibleAboveActor: true,
+});
 assert.equal(hitFrame.goins.find((goin) => goin.id === 'goin-hoard-001')?.droppedByActorId, 'red-lerm-001');
 assert.equal(hitFrame.goins.find((goin) => goin.id === 'goin-hoard-001')?.custodyRole, 'dropped_marker');
+assert.ok(distanceXZ(
+  hitFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.world,
+  hitFrame.goins.find((goin) => goin.id === 'goin-hoard-001')?.world,
+) >= 0.35, 'hit/drop marker should separate from carrier enough to read');
 const rerouteFrame = timeline.timeline.find((frame) => frame.label === 'reroute');
 assert.ok(rerouteFrame?.reroute);
 assert.equal(rerouteFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.targetGoinId, 'goin-dropped-001');
+assert.deepEqual(rerouteFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.statusCue, {
+  schema: 'lerms.preview-bench-actor-status-cue.v0',
+  cue: 'noticing_loose_goin',
+  label: '?',
+  targetGoinId: 'goin-dropped-001',
+  visibleAboveActor: true,
+});
 assert.equal(rerouteFrame.goins.find((goin) => goin.id === 'goin-dropped-001')?.custodyRole, 'reroute_target');
 assert.deepEqual(rerouteFrame.goins.find((goin) => goin.id === 'goin-dropped-001')?.targetedByActorIds, ['red-lerm-001']);
+assert.ok(distanceXZ(
+  rerouteFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.world,
+  rerouteFrame.goins.find((goin) => goin.id === 'goin-dropped-001')?.world,
+) >= 0.65, 'reroute actor and loose goin should be separated enough to read intent');
 
 const everyActor = timeline.timeline.flatMap((frame) => frame.actorMotion);
 assert.ok(everyActor.every((actor) => actor.motionAdapter.schema === 'lerms.schnoz-motion-adapter.v0'));
@@ -148,3 +194,8 @@ assert.equal(report.timeline.timeline.length, timeline.timeline.length);
 assert.equal(report.timeline.witnessState.requiresMotionWitness, true);
 
 console.log('preview bench motion timeline contracts passed');
+
+function distanceXZ(a: readonly number[] | undefined, b: readonly number[] | undefined): number {
+  assert.ok(a && b);
+  return Math.hypot(a[0] - b[0], a[2] - b[2]);
+}

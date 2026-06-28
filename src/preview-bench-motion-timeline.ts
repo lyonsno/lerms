@@ -39,6 +39,7 @@ type PreviewBenchTimelineActorMotion = {
   heading: Vec3;
   carryingGoinId?: string;
   targetGoinId?: string;
+  statusCue?: SchnozRenderLerm['statusCue'];
   terrainSampleId: string;
   motionAdapter: SchnozMotionAdapterOutput;
   selectedCliplet: {
@@ -98,6 +99,15 @@ type PreviewBenchGoinCustody = {
     actorId: string;
     world: Vec3;
     visibleTargetPull: true;
+  }[];
+  possessionEvents: {
+    frameIndex: number;
+    event: 'possession-gained' | 'possession-released' | 'loose-target-noticed';
+    goinId: string;
+    actorId: string;
+    world: Vec3;
+    label: string;
+    visibleMarker: true;
   }[];
 };
 
@@ -307,6 +317,37 @@ function buildGoinCustody(timeline: PreviewBenchTimelineFrame[]): PreviewBenchGo
       world: goin.world,
       visibleTargetPull: true as const,
     }))));
+  const possessionEvents: PreviewBenchGoinCustody['possessionEvents'] = [
+    ...attachments
+      .filter((attachment) => attachment.frameIndex === 1)
+      .map((attachment) => ({
+        frameIndex: attachment.frameIndex,
+        event: 'possession-gained' as const,
+        goinId: attachment.goinId,
+        actorId: attachment.carrierActorId,
+        world: attachment.world,
+        label: 'CARRY',
+        visibleMarker: true as const,
+      })),
+    ...drops.map((drop) => ({
+      frameIndex: drop.frameIndex,
+      event: 'possession-released' as const,
+      goinId: drop.goinId,
+      actorId: drop.droppedByActorId,
+      world: drop.world,
+      label: 'LOOSE',
+      visibleMarker: true as const,
+    })),
+    ...rerouteTargets.map((target) => ({
+      frameIndex: target.frameIndex,
+      event: 'loose-target-noticed' as const,
+      goinId: target.goinId,
+      actorId: target.actorId,
+      world: target.world,
+      label: 'TARGET',
+      visibleMarker: true as const,
+    })),
+  ];
   return {
     schema: PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA,
     visibleGoinPlayback: true,
@@ -319,6 +360,7 @@ function buildGoinCustody(timeline: PreviewBenchTimelineFrame[]): PreviewBenchGo
     attachments,
     drops,
     rerouteTargets,
+    possessionEvents,
   };
 }
 
@@ -354,6 +396,7 @@ function actorMotionForTimelineLerm(lerm: SchnozRenderLerm): PreviewBenchTimelin
     heading: lerm.heading,
     carryingGoinId: lerm.carryingGoinId,
     targetGoinId: lerm.targetGoinId,
+    statusCue: lerm.statusCue ? { ...lerm.statusCue } : undefined,
     terrainSampleId: terrainSampleIdForWorld(lerm.world),
     motionAdapter: adapter,
     selectedCliplet: {
