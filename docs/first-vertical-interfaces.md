@@ -131,6 +131,28 @@ npm run witness:glove-well -- --report /tmp/lerms-glove-well-launch-witness.json
 
 That route uses fixture glove input and deterministic goin physics. It is useful for proving command conversion, launch arc, rolling goin output, and reroute desire, but it must remain downgraded until a real non-fallback WiLoR Mini sidecar producer emits live `lerms.glove-input-frame.v0` packets.
 
+### `lerms.glove-well-live-comparison-witness.v0`
+
+The live comparison witness is the first Palm-side receipt that takes WiLoR Mini sidecar-shaped packets through the same Glove Well command bridge Greedy uses for fixture launch smokes.
+
+It is intentionally narrower than the launch witness. It records:
+
+- input packet path when the CLI reads saved packets;
+- adapted `lerms.glove-input-frame.v0` frames;
+- live command phases from those adapted frames;
+- fixture command phases from `buildFixtureGloveInputSequence`;
+- requested/effective route sets, producer config ids, fallback reasons, camera age, round-trip, and model-latency maxima;
+- whether the live command phase trace agrees with the fixture trace;
+- the live release event id and source input frame id, when a live packet sequence produces release.
+
+The witness route is:
+
+```sh
+npm run witness:glove-well-live-compare -- --packets /tmp/wilor-packets.json --report /tmp/lerms-glove-well-live-comparison.json
+```
+
+This route can honestly report `live_simulation` for the comparison when every adapted packet is fresh and non-fallback through `native_wilor_mini_mlx_detector_sidecar_live`. It still does not claim full first-vertical success, sidecar process management, Kaminos hosting, or carrier-drop/juice-hit merge. Those remain separate gates.
+
 ### `lerms.first-vertical-frame.v0`
 
 The frame envelope that joins terrain samples, lerm states, goin states, juice hits, and carrier-drop events under one source-truth packet.
