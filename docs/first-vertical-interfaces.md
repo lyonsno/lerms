@@ -153,6 +153,51 @@ npm run witness:glove-well-live-compare -- --packets /tmp/wilor-packets.json --r
 
 This route can honestly report `live_simulation` for the comparison when every adapted packet is fresh and non-fallback through `native_wilor_mini_mlx_detector_sidecar_live`. It still does not claim full first-vertical success, sidecar process management, Kaminos hosting, or carrier-drop/juice-hit merge. Those remain separate gates.
 
+### `lerms.glove-well-throw-physics-witness.v0`
+
+The throw physics witness is Greedy's first deterministic thrown-goin objecthood receipt. It takes a Glove Well release and emits the goin's physical trajectory instead of only recording that a release happened.
+
+It records:
+
+- launch, flight, bounce, rolling, settled, and recovered trajectory samples;
+- bounce contact records with restitution and spin;
+- terrain sample ids for contact points;
+- angular velocity while rolling;
+- energy and desire-strength decay;
+- composer-compatible rolling, settled, and recovered `lerms.goin-state.v0` rows;
+- reroute hints for lerms chasing the rolling goin;
+- an embedded Preview Bench throw summary for operator smoke.
+
+The fixture route is:
+
+```sh
+npm run witness:glove-well-throw-physics -- --report /tmp/lerms-glove-well-throw-physics-witness.json
+```
+
+Fixture Glove Well input keeps the witness/frame authority downgraded even when deterministic throw physics rows are internally `live_simulation`. This proves Greedy's throw law, not live operator input or full vertical success.
+
+### `lerms.glove-well-live-throw-composition-witness.v0`
+
+The live throw composition witness connects saved or live WiLoR Mini packet evidence to the same throw physics law. It adapts `perceptasia.wilor-mini-glove-input-packet.v0` packets into `lerms.glove-input-frame.v0`, builds `lerms.glove-well-command.v0` phases, requires a real release command, and feeds that release into `lerms.glove-well-throw-physics-witness.v0`.
+
+It records:
+
+- packet path when the CLI reads saved packets;
+- adapted glove input frames and command phase trace;
+- release event id and source WiLoR frame id;
+- requested/effective WiLoR routes, producer configs, fallback reasons, camera age, round-trip, and model-latency maxima;
+- stale/fallback packet counts;
+- throw trajectory, bounce, rolling, settle, and desire-decay evidence from the shared throw physics route;
+- Preview Bench throw summary with `throwPhysics` fields.
+
+The witness route is:
+
+```sh
+npm run witness:glove-well-live-throw -- --packets /tmp/wilor-packets.json --report /tmp/lerms-glove-well-live-throw-composition.json
+```
+
+Fresh non-fallback packets through `native_wilor_mini_mlx_detector_sidecar_live` can make the input-to-command-to-throw path `live_simulation`. Saved packets still do not prove that a sidecar process is running now, and this witness still does not claim full first-vertical success or carrier-drop/juice-hit merge. Stale release packets fail instead of silently producing throw evidence.
+
 ### `lerms.first-vertical-frame.v0`
 
 The frame envelope that joins terrain samples, lerm states, goin states, juice hits, and carrier-drop events under one source-truth packet.

@@ -138,6 +138,26 @@ export interface BuildGloveWellThrowPhysicsWitnessOptions {
   maxSampleAgeMs?: number;
 }
 
+export interface ThrowReleaseEvidence {
+  eventId: string;
+  sourceInputFrameId: string;
+  initialVelocity: Vec3;
+  baseWorld?: Vec3;
+}
+
+export interface BuildGloveWellThrowPhysicsFromReleaseOptions {
+  outputPath: string;
+  frameId: string;
+  timestampMs: number;
+  sampleAgeMs?: number;
+  maxSampleAgeMs?: number;
+  release: ThrowReleaseEvidence;
+  inputAuthority: SimulationAuthority;
+  inputRoute: string;
+  fixtureInputDowngrade: boolean;
+  previewDowngrades?: string[];
+}
+
 class ThrowPhysicsSourceStaleError extends Error {
   constructor() {
     super('throw physics source is stale for requested max sample age');
@@ -164,13 +184,54 @@ export function buildGloveWellThrowPhysicsWitnessReport({
     timestampMs,
     maxSampleAgeMs: Number.POSITIVE_INFINITY
   });
+  const launchedGoin = launchWitness.frame.goins.find((goin) => goin.id === launchWitness.launchEvidence.launchedGoinId);
+
+  return buildGloveWellThrowPhysicsWitnessReportFromRelease({
+    outputPath,
+    frameId,
+    timestampMs,
+    sampleAgeMs,
+    maxSampleAgeMs,
+    release: {
+      eventId: launchWitness.launchEvidence.releaseEventId,
+      sourceInputFrameId: launchWitness.launchEvidence.sourceInputFrameId,
+      initialVelocity: launchWitness.launchEvidence.initialVelocity,
+      baseWorld: launchedGoin?.world
+    },
+    inputAuthority: launchWitness.frame.source.authority,
+    inputRoute: launchWitness.route,
+    fixtureInputDowngrade: launchWitness.frame.source.authority === 'synthetic_fixture',
+    previewDowngrades: ['throw_physics_fixture_input_not_live_wilor']
+  });
+}
+
+export function buildGloveWellThrowPhysicsWitnessReportFromRelease({
+  outputPath,
+  frameId,
+  timestampMs,
+  sampleAgeMs = 0,
+  maxSampleAgeMs = 500,
+  release,
+  inputAuthority,
+  inputRoute,
+  fixtureInputDowngrade,
+  previewDowngrades = []
+}: BuildGloveWellThrowPhysicsFromReleaseOptions): GloveWellThrowPhysicsWitnessReport {
+  assertFinite(timestampMs, 'timestampMs');
+  assertFinite(sampleAgeMs, 'sampleAgeMs');
+  assertFinite(maxSampleAgeMs, 'maxSampleAgeMs');
+  if (sampleAgeMs > maxSampleAgeMs) {
+    throw new ThrowPhysicsSourceStaleError();
+  }
+
   const physicsSource = createSource('live_simulation', GLOVE_WELL_THROW_PHYSICS_ROUTE, frameId, timestampMs, sampleAgeMs);
-  const trajectory = buildTrajectory(physicsSource, launchWitness);
+  const effectiveAuthority = weakestAuthority([inputAuthority, physicsSource.authority]);
+  const trajectory = buildTrajectoryFromRelease(release.initialVelocity, release.baseWorld ?? [1.18, 1.02, 1.62]);
   const terrainSamples = trajectory.map((sample, index) => terrainSampleForTrajectory(physicsSource, sample, index));
   const bounceContacts = buildBounceContacts(trajectory);
   const goins = buildGoins(physicsSource, trajectory);
   const lerms = buildReroutingLerms(physicsSource, goins[0]);
-  const frameSource = createSource('synthetic_fixture', GLOVE_WELL_THROW_PHYSICS_WITNESS_ROUTE, frameId, timestampMs, sampleAgeMs);
+  const frameSource = createSource(effectiveAuthority, GLOVE_WELL_THROW_PHYSICS_WITNESS_ROUTE, frameId, timestampMs, sampleAgeMs);
   const frame: FirstVerticalFrame = {
     schema: 'lerms.first-vertical-frame.v0',
     source: frameSource,
@@ -188,7 +249,9 @@ export function buildGloveWellThrowPhysicsWitnessReport({
     timestampMs,
     trajectory,
     bounceContacts,
-    effectiveAuthority: frameSource.authority
+    effectiveAuthority: frameSource.authority,
+    fixtureInputDowngrade,
+    extraDowngrades: previewDowngrades
   });
 
   return {
@@ -198,21 +261,21 @@ export function buildGloveWellThrowPhysicsWitnessReport({
     outputPath,
     frameId,
     timestampMs,
-    launchWitnessSchema: launchWitness.schema,
+    launchWitnessSchema: 'lerms.glove-well-launch-witness.v0',
     sourceTruth: {
       effectiveAuthority: frameSource.authority,
-      inputAuthority: launchWitness.frame.source.authority,
+      inputAuthority,
       physicsAuthority: physicsSource.authority,
-      fixtureInputDowngrade: launchWitness.frame.source.authority === 'synthetic_fixture',
-      sourceInputFrameId: launchWitness.launchEvidence.sourceInputFrameId,
-      releaseEventId: launchWitness.launchEvidence.releaseEventId,
+      fixtureInputDowngrade,
+      sourceInputFrameId: release.sourceInputFrameId,
+      releaseEventId: release.eventId,
       downgrades: [
-        'fixture_glove_input_not_live_wilor',
+        ...(fixtureInputDowngrade ? ['fixture_glove_input_not_live_wilor'] : []),
         'throw_physics_transport_not_vertical_success',
         'no_carrier_drop_juice_hit_merge_for_glove_well_throw'
       ],
-      sourceRoutes: [launchWitness.route, physicsSource.route],
-      maxSampleAgeMs: Math.max(launchWitness.frame.source.sampleAgeMs, physicsSource.sampleAgeMs)
+      sourceRoutes: [inputRoute, physicsSource.route],
+      maxSampleAgeMs: physicsSource.sampleAgeMs
     },
     trajectory,
     bounceContacts,
@@ -267,13 +330,7 @@ export function runGloveWellThrowPhysicsWitnessCli(argv = process.argv.slice(2))
   }
 }
 
-function buildTrajectory(source: SourceTruth, launchWitness: GloveWellLaunchWitnessReport): ThrowTrajectorySample[] {
-  const launchVelocity = launchWitness.launchEvidence.initialVelocity;
-  const baseWorld = launchWitness.frame.goins.find((goin) => goin.id === launchWitness.launchEvidence.launchedGoinId)?.world ?? [
-    1.18,
-    1.02,
-    1.62
-  ];
+function buildTrajectoryFromRelease(launchVelocity: Vec3, baseWorld: Vec3): ThrowTrajectorySample[] {
   const phases: Array<{
     phase: ThrowPhase;
     tMs: number;
@@ -485,7 +542,9 @@ function buildThrowPreviewBenchPayload({
   timestampMs,
   trajectory,
   bounceContacts,
-  effectiveAuthority
+  effectiveAuthority,
+  fixtureInputDowngrade,
+  extraDowngrades
 }: {
   outputPath: string;
   frameId: string;
@@ -493,6 +552,8 @@ function buildThrowPreviewBenchPayload({
   trajectory: readonly ThrowTrajectorySample[];
   bounceContacts: readonly ThrowBounceContact[];
   effectiveAuthority: SimulationAuthority;
+  fixtureInputDowngrade: boolean;
+  extraDowngrades: readonly string[];
 }): GloveWellPreviewBenchPayloadReport {
   const preview = buildGloveWellPreviewBenchPayloadReport({
     outputPath: `${outputPath}#preview-bench`,
@@ -506,11 +567,14 @@ function buildThrowPreviewBenchPayload({
     trajectorySampleCount: trajectory.length,
     phaseTrace: trajectory.map((sample) => sample.phase).join('>'),
     effectiveAuthority,
-    fixtureInputDowngrade: true
+    fixtureInputDowngrade
   };
+  const inheritedDowngrades = fixtureInputDowngrade
+    ? preview.payload.downgrades
+    : preview.payload.downgrades.filter((downgrade) => downgrade !== 'fixture_glove_input_not_live_wilor');
   preview.payload.downgrades = [
-    ...preview.payload.downgrades,
-    'throw_physics_fixture_input_not_live_wilor',
+    ...inheritedDowngrades,
+    ...extraDowngrades,
     'throw_physics_transport_not_vertical_success'
   ];
   preview.payload.fields = [
@@ -612,6 +676,21 @@ function normalizeVec3(vector: Vec3): Vec3 {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function weakestAuthority(authorities: readonly SimulationAuthority[]): SimulationAuthority {
+  const rank: Record<SimulationAuthority, number> = {
+    invalid: 0,
+    fallback: 1,
+    visual_only: 2,
+    synthetic_fixture: 3,
+    stale_hold: 4,
+    live_simulation: 5
+  };
+  return authorities.reduce(
+    (weakest, authority) => (rank[authority] < rank[weakest] ? authority : weakest),
+    'live_simulation' as SimulationAuthority
+  );
 }
 
 function assertFinite(value: number, label: string): void {
