@@ -156,6 +156,7 @@ function buildSource(packet: WilorMiniGloveInputPacket): GloveInputSource {
     backend: packet.source.backend,
     model: packet.source.model,
     configId: GLOVE_INPUT_WILOR_ADAPTER_CONFIG_ID,
+    producerConfigId: packet.source.configId,
     requestedRoute: packet.source.requestedRoute,
     effectiveRoute: packet.source.effectiveRoute,
     fallbackReason: packet.source.fallbackReason ?? null

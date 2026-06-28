@@ -33,6 +33,7 @@ export type FingerName = 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
 
 export interface GloveInputSource extends SourceTruth {
   model?: string;
+  producerConfigId?: string;
   requestedRoute?: string;
   effectiveRoute?: string;
   fallbackReason?: string | null;

@@ -80,6 +80,7 @@ assert(liveFrame.source.effectiveRoute === GLOVE_INPUT_WILOR_LIVE_EFFECTIVE_ROUT
 assert(liveFrame.source.backend === basePacket.source.backend, 'source preserves backend');
 assert(liveFrame.source.model === 'wilor-mini-mlx', 'source preserves model');
 assert(liveFrame.source.configId === GLOVE_INPUT_WILOR_ADAPTER_CONFIG_ID, 'adapter config is explicit and stable');
+assert(liveFrame.source.producerConfigId === basePacket.source.configId, 'source preserves producer config id');
 assert(liveFrame.source.sampleAgeMs === 84, 'source sample age follows camera age');
 assert(liveFrame.timing.roundTripMs === 126, 'timing preserves round trip');
 assert(liveFrame.coordinateFrame.handedness === 'operator_unmirrored', 'adapter refuses display-mirrored coordinates');
@@ -147,6 +148,7 @@ const fallbackFrame = adaptWilorMiniPacketToGloveInputFrame({
 });
 assert(fallbackFrame.source.authority === 'fallback', 'fallback route is not live authority');
 assert(fallbackFrame.source.fallbackReason === 'sidecar-timeout', 'fallback reason is preserved');
+assert(fallbackFrame.source.producerConfigId === basePacket.source.configId, 'fallback still preserves producer config id');
 
 assertThrows(
   () =>

@@ -103,7 +103,7 @@ The first live-sidecar adapter is [`src/glove-input-wilor-adapter.ts`](../src/gl
 - accepted live effective route: `native_wilor_mini_mlx_detector_sidecar_live`;
 - adapter config: `lerms-glove-input-wilor-mini-mlx-adapter-v0`;
 - accepted coordinate frame: `screen_normalized` or `image_pixels`, `top_left`, `operator_unmirrored`;
-- accepted evidence: wrist, thumb tip/IP, index/middle/ring/pinky MCP and tips, timing/freshness, hand confidence, backend/model/config identity;
+- accepted evidence: wrist, thumb tip/IP, index/middle/ring/pinky MCP and tips, timing/freshness, hand confidence, backend/model, adapter config, and producer config identity;
 - derived gestures: thumb/index pinch strength from screen-plane tip distance, pinky aim direction from pinky MCP-to-tip, and pinky hold from the producer packet;
 - fallback behavior: any effective route other than the accepted live route must carry a `fallbackReason` and becomes `fallback`, not live authority.
 
