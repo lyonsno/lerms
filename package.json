@@ -13,6 +13,7 @@
     "test:composer-visual": "node tests/first-vertical-composer-visual-witness-contracts.mjs",
     "test:body-candidates": "node tests/red-lerm-body-candidate-witness-contracts.mjs",
     "test:goin": "node tests/goin-glove-wealth-witness-contracts.mjs",
+    "test:glove-input-wilor": "node --experimental-strip-types tests/glove-input-wilor-adapter-contracts.ts",
     "test:glove-well": "node --experimental-strip-types tests/glove-well-command-contracts.ts",
     "test:glove-well-visual": "node tests/glove-well-launch-visual-witness-contracts.mjs",
     "test:successor": "node tests/lerm-horde-successor-witness-contracts.mjs",

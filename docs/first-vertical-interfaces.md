@@ -97,6 +97,18 @@ Absolute depth, world-hand position, and "closer to camera means stronger launch
 
 Route truth matters. A live WiLoR bridge must expose effective route, backend/model/config identity, freshness/latency, mirroring policy, hand confidence, and fallback status. A requested live route that silently falls back is invalid; fixture or fallback input must downgrade any composed gameplay frame.
 
+The first live-sidecar adapter is [`src/glove-input-wilor-adapter.ts`](../src/glove-input-wilor-adapter.ts). It consumes a Perceptasia/WiLoR Mini MLX sidecar-shaped hand packet and emits `lerms.glove-input-frame.v0` without making depth load-bearing. Its contract is deliberately plain:
+
+- requested bridge route: `perceptasia/wilor-mini-mlx-sidecar/live-glove-input`;
+- accepted live effective route: `native_wilor_mini_mlx_detector_sidecar_live`;
+- adapter config: `lerms-glove-input-wilor-mini-mlx-adapter-v0`;
+- accepted coordinate frame: `screen_normalized` or `image_pixels`, `top_left`, `operator_unmirrored`;
+- accepted evidence: wrist, thumb tip/IP, index/middle/ring/pinky MCP and tips, timing/freshness, hand confidence, backend/model/config identity;
+- derived gestures: thumb/index pinch strength from screen-plane tip distance, pinky aim direction from pinky MCP-to-tip, and pinky hold from the producer packet;
+- fallback behavior: any effective route other than the accepted live route must carry a `fallbackReason` and becomes `fallback`, not live authority.
+
+The adapter is a pure bridge, not a sidecar process manager. A browser, Perceptasia, or Kaminos producer may poll the actual sidecar and then feed packets through this adapter, but the adapter itself does not claim that a live sidecar is running.
+
 ### `lerms.glove-well-command.v0`
 
 The local command derived from `lerms.glove-input-frame.v0` for Glove Well sacrifice launches.
