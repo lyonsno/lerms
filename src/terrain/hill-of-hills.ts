@@ -163,6 +163,7 @@ export interface HillOfHillsWitness {
     max: number;
   };
   regionCounts: Partial<Record<TerrainRegion, number>>;
+  featureChecksum: string;
   topologyChecksum: string;
   proxyMaterialChecksum: string;
   phaseMode: HillOfHillsPhaseMode;
@@ -248,6 +249,8 @@ interface Range {
   min: number;
   max: number;
 }
+
+const terrainFeatureCache = new Map<string, readonly TerrainFeature[]>();
 
 export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   seed: 52027,
@@ -592,7 +595,7 @@ function scoreTrailCandidates(params: HillOfHillsTerrainParams): TrailCandidateS
       const dx = (heightRight - heightLeft) / (epsX * 2);
       const dz = (heightForward - heightBack) / (epsZ * 2);
       const slope = Math.hypot(dx, dz);
-      const region = classifyRegion(params, phaseState, x, z, heightParts.height, slope);
+      const region = classifyRegion(params, x, z, heightParts, slope);
       const topology = topologyAt(params, x, z, heightParts, dx, dz, slope, region, phaseInfluence);
       const lateral = Math.abs(x);
       const centerFloor = 1 - smoothstep(halfFloor * 0.2, params.channelRadius * 0.76, lateral);
@@ -886,7 +889,7 @@ function sampleTerrain(
   const dz = (heightForward - heightBack) / (epsZ * 2);
   const normal = normalize([-dx, 1, -dz]);
   const slope = Math.hypot(dx, dz);
-  const region = classifyRegion(params, phaseState, clampedX, clampedZ, height, slope);
+  const region = classifyRegion(params, clampedX, clampedZ, heightParts, slope);
   const topology = topologyAt(params, clampedX, clampedZ, heightParts, dx, dz, slope, region, phaseInfluence);
   const proxyMaterial = proxyMaterialFor(region, topology);
 
@@ -1087,15 +1090,13 @@ function heightAt(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhase
 
 function classifyRegion(
   params: HillOfHillsTerrainParams,
-  phaseState: HillOfHillsPhaseState,
   x: number,
   z: number,
-  height: number,
+  heightParts: HeightParts,
   slope: number
 ): TerrainRegion {
   const lateral = Math.abs(x);
   const halfFloor = params.floorWidth * 0.5;
-  const heightParts = heightAt(params, phaseState, x, z);
 
   if (Math.abs(z - params.crownZ) < params.length * 0.075 && lateral < params.floorWidth * 0.72) {
     return 'crown';
@@ -1109,7 +1110,7 @@ function classifyRegion(
     return 'gutter';
   }
 
-  if (heightParts.valleys > heightParts.hills + 0.28 && height < heightParts.base + heightParts.wall + 0.06) {
+  if (heightParts.valleys > heightParts.hills + 0.28 && heightParts.height < heightParts.base + heightParts.wall + 0.06) {
     return 'basin';
   }
 
@@ -1120,7 +1121,13 @@ function classifyRegion(
   return 'approach';
 }
 
-function terrainFeatures(params: HillOfHillsTerrainParams, kind: 'hill' | 'valley'): TerrainFeature[] {
+function terrainFeatures(params: HillOfHillsTerrainParams, kind: 'hill' | 'valley'): readonly TerrainFeature[] {
+  const cacheKey = terrainFeatureCacheKey(params, kind);
+  const cached = terrainFeatureCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const rng = mulberry32(params.seed + (kind === 'hill' ? 9176 : 44107));
   const count = kind === 'hill' ? params.hillCount : params.valleyCount;
   const features: TerrainFeature[] = [];
@@ -1145,7 +1152,49 @@ function terrainFeatures(params: HillOfHillsTerrainParams, kind: 'hill' | 'valle
     features.push({ x: params.floorWidth * 0.68, z: params.length * 0.2, radius: radiusBase * 1.05, height: heightBase * 0.72 });
   }
 
+  terrainFeatureCache.set(cacheKey, features);
   return features;
+}
+
+function terrainFeatureCacheKey(params: HillOfHillsTerrainParams, kind: 'hill' | 'valley'): string {
+  const radius = kind === 'hill' ? params.hillRadius : params.valleyRadius;
+  const count = kind === 'hill' ? params.hillCount : params.valleyCount;
+  const height = kind === 'hill' ? params.hillHeight : params.valleyHeight;
+  const variance = kind === 'hill' ? params.hillVariance : params.valleyVariance;
+  return [
+    kind,
+    params.seed,
+    params.width.toFixed(4),
+    params.length.toFixed(4),
+    params.floorWidth.toFixed(4),
+    radius.toFixed(4),
+    count,
+    height.toFixed(4),
+    variance.toFixed(4)
+  ].join(':');
+}
+
+function terrainFeatureChecksum(params: HillOfHillsTerrainParams): string {
+  const featureDistanceScale = params.distanceScale / params.featureSpacing;
+  const hillFeatures = terrainFeatures(params, 'hill');
+  const valleyFeatures = terrainFeatures(params, 'valley');
+  return checksum(
+    [
+      featureDistanceScale.toFixed(4),
+      ...hillFeatures.map((feature) => terrainFeatureSignature('hill', feature)),
+      ...valleyFeatures.map((feature) => terrainFeatureSignature('valley', feature))
+    ].join('|')
+  );
+}
+
+function terrainFeatureSignature(kind: 'hill' | 'valley', feature: TerrainFeature): string {
+  return [
+    kind,
+    feature.x.toFixed(3),
+    feature.z.toFixed(3),
+    feature.radius.toFixed(3),
+    feature.height.toFixed(3)
+  ].join(':');
 }
 
 function featureContribution(features: readonly TerrainFeature[], x: number, z: number, distanceScale: number): number {
@@ -1220,6 +1269,7 @@ function createWitness(
       max
     },
     regionCounts,
+    featureChecksum: terrainFeatureChecksum(params),
     topologyChecksum: checksum(samples.map((sample) => topologySignature(sample)).join('|')),
     proxyMaterialChecksum: checksum(samples.map((sample) => `${sample.id}:${sample.proxyMaterial.kind}`).join('|')),
     phaseMode: phaseState.mode,

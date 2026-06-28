@@ -384,9 +384,15 @@ assert(baseline.witness.gridResolution.z === 58, 'terrain witness exposes grid r
 assert(baseline.witness.effectiveParams.floorWidth === baseline.params.floorWidth, 'terrain witness exposes effective params');
 assert(typeof (baseline.witness as any).topologyChecksum === 'string', 'terrain witness exposes topology checksum');
 assert(typeof (baseline.witness as any).proxyMaterialChecksum === 'string', 'terrain witness exposes proxy material checksum');
+assert(typeof (baseline.witness as any).featureChecksum === 'string', 'terrain witness exposes cached terrain feature checksum');
 assert((baseline.witness as any).topologyRanges.routePressure.max > 0.45, 'witness records route pressure range');
 assert((baseline.witness as any).topologyRanges.growthPotential.max > 0.5, 'witness records growth candidate range');
 assert((baseline.witness as any).proxyMaterialCounts['ditch-shadow'] > 0, 'witness counts ditch-shadow proxy material');
+assert(repeatA.witness.featureChecksum === repeatB.witness.featureChecksum, 'terrain feature checksum is deterministic for seed and params');
+assert(
+  shiftedTrailTopology.witness.featureChecksum !== trailPhaseA.witness.featureChecksum,
+  'terrain feature checksum changes when feature density or spacing changes'
+);
 
 const fallbackTerrain = createHillOfHillsTerrain(
   { gridResolutionX: 12, gridResolutionZ: 12 },

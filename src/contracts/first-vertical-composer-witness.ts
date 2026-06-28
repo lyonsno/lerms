@@ -272,6 +272,7 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       sampleChecksum: 'inline-terrain-socket-fixture-checksum',
       heightRange: { min: 1.8, max: 1.8 },
       regionCounts: { crown: 1 },
+      featureChecksum: 'inline-terrain-socket-feature-fixture-checksum',
       topologyChecksum: 'inline-terrain-socket-topology-fixture-checksum',
       proxyMaterialChecksum: 'inline-terrain-socket-material-fixture-checksum',
       phaseMode: 'stable',
