@@ -1,10 +1,11 @@
 import {
   createHillOfHillsLayerTileCache,
+  createHillOfHillsTerrainBuffer,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
-  type HillOfHillsTerrain,
+  type HillOfHillsTerrainBuffer,
+  type HillOfHillsTerrainBufferMetricChannel,
   type HillOfHillsTerrainParams,
-  type HillOfHillsTerrainSample
 } from './terrain/hill-of-hills.js';
 import {
   createHillTerrainWorkerRequest,
@@ -48,7 +49,7 @@ const previewSourceOptions = {
   timestampMs: 0,
   sampleAgeMs: 0
 };
-let terrain = createHillOfHillsTerrainWithCache(terrainCache, params, previewSourceOptions);
+let terrainBuffer = createHillOfHillsTerrainBuffer(createHillOfHillsTerrainWithCache(terrainCache, params, previewSourceOptions));
 let workerTerrain: Worker | undefined;
 let workerStatus = 'sync-fallback';
 let latestTerrainRequestId = 0;
@@ -73,7 +74,7 @@ try {
       workerTerrain = undefined;
       return;
     }
-    terrain = response.terrain;
+    terrainBuffer = response.terrainBuffer;
     latestWorkerDurationMs = response.durationMs;
     latestWorkerError = 'none';
     pendingTerrainRequestId = 0;
@@ -200,9 +201,9 @@ function render(timestampMs: number): void {
 
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
-  drawTerrain(terrain, width, height);
-  drawRouteMarkers(width, height);
-  drawWitness(terrain);
+  drawTerrain(terrainBuffer, width, height);
+  drawRouteMarkers(terrainBuffer, width, height);
+  drawWitness(terrainBuffer);
 
   window.requestAnimationFrame(render);
 }
@@ -217,7 +218,7 @@ function requestTerrain(nextParams: HillOfHillsTerrainParams): void {
   }
 
   if (!workerTerrain) {
-    terrain = createHillOfHillsTerrainWithCache(terrainCache, nextParams, previewSourceOptions);
+    terrainBuffer = createHillOfHillsTerrainBuffer(createHillOfHillsTerrainWithCache(terrainCache, nextParams, previewSourceOptions));
     workerStatus = latestWorkerError === 'none' ? 'sync-fallback' : workerStatus;
   }
 }
@@ -226,25 +227,30 @@ resize();
 window.addEventListener('resize', resize);
 window.requestAnimationFrame(render);
 
-function drawTerrain(currentTerrain: HillOfHillsTerrain, width: number, height: number): void {
-  const { gridResolutionX, gridResolutionZ } = currentTerrain.params;
-  const samples = currentTerrain.samples;
+function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const gridResolutionX = currentBuffer.gridResolution.x;
+  const gridResolutionZ = currentBuffer.gridResolution.z;
 
   for (let zi = gridResolutionZ - 2; zi >= 0; zi -= 1) {
     for (let xi = 0; xi < gridResolutionX - 1; xi += 1) {
-      const a = samples[zi * gridResolutionX + xi];
-      const b = samples[zi * gridResolutionX + xi + 1];
-      const c = samples[(zi + 1) * gridResolutionX + xi + 1];
-      const d = samples[(zi + 1) * gridResolutionX + xi];
-      const pa = project(a.world[0], a.world[1], a.world[2], currentTerrain, width, height);
-      const pb = project(b.world[0], b.world[1], b.world[2], currentTerrain, width, height);
-      const pc = project(c.world[0], c.world[1], c.world[2], currentTerrain, width, height);
-      const pd = project(d.world[0], d.world[1], d.world[2], currentTerrain, width, height);
-      const averageHeight = (a.height + b.height + c.height + d.height) * 0.25;
+      const a = zi * gridResolutionX + xi;
+      const b = zi * gridResolutionX + xi + 1;
+      const c = (zi + 1) * gridResolutionX + xi + 1;
+      const d = (zi + 1) * gridResolutionX + xi;
+      const pa = projectSample(currentBuffer, a, width, height);
+      const pb = projectSample(currentBuffer, b, width, height);
+      const pc = projectSample(currentBuffer, c, width, height);
+      const pd = projectSample(currentBuffer, d, width, height);
+      const averageHeight =
+        (metricAt(currentBuffer, a, 'height') +
+          metricAt(currentBuffer, b, 'height') +
+          metricAt(currentBuffer, c, 'height') +
+          metricAt(currentBuffer, d, 'height')) *
+        0.25;
       const averageNormal: readonly [number, number, number] = [
-        (a.normal[0] + b.normal[0] + c.normal[0] + d.normal[0]) * 0.25,
-        (a.normal[1] + b.normal[1] + c.normal[1] + d.normal[1]) * 0.25,
-        (a.normal[2] + b.normal[2] + c.normal[2] + d.normal[2]) * 0.25
+        (normalAt(currentBuffer, a, 0) + normalAt(currentBuffer, b, 0) + normalAt(currentBuffer, c, 0) + normalAt(currentBuffer, d, 0)) * 0.25,
+        (normalAt(currentBuffer, a, 1) + normalAt(currentBuffer, b, 1) + normalAt(currentBuffer, c, 1) + normalAt(currentBuffer, d, 1)) * 0.25,
+        (normalAt(currentBuffer, a, 2) + normalAt(currentBuffer, b, 2) + normalAt(currentBuffer, c, 2) + normalAt(currentBuffer, d, 2)) * 0.25
       ];
 
       ctx.beginPath();
@@ -253,20 +259,19 @@ function drawTerrain(currentTerrain: HillOfHillsTerrain, width: number, height: 
       ctx.lineTo(pc.x, pc.y);
       ctx.lineTo(pd.x, pd.y);
       ctx.closePath();
-      ctx.fillStyle = colorForSample(a, averageHeight, averageNormal, currentTerrain.witness.heightRange);
+      ctx.fillStyle = colorForBufferSample(currentBuffer, a, averageHeight, averageNormal, currentBuffer.heightRange);
       ctx.fill();
     }
   }
 
-  drawTopologyOverlays(currentTerrain, width, height);
+  drawTopologyOverlays(currentBuffer, width, height);
 
   ctx.strokeStyle = 'rgba(248, 233, 166, 0.1)';
   ctx.lineWidth = 1;
   for (let xi = 0; xi < gridResolutionX; xi += 8) {
     ctx.beginPath();
     for (let zi = 0; zi < gridResolutionZ; zi += 1) {
-      const sample = samples[zi * gridResolutionX + xi];
-      const point = project(sample.world[0], sample.world[1], sample.world[2], currentTerrain, width, height);
+      const point = projectSample(currentBuffer, zi * gridResolutionX + xi, width, height);
       if (zi === 0) ctx.moveTo(point.x, point.y);
       else ctx.lineTo(point.x, point.y);
     }
@@ -274,9 +279,9 @@ function drawTerrain(currentTerrain: HillOfHillsTerrain, width: number, height: 
   }
 }
 
-function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number, height: number): void {
-  const { gridResolutionX, gridResolutionZ } = currentTerrain.params;
-  const samples = currentTerrain.samples;
+function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const gridResolutionX = currentBuffer.gridResolution.x;
+  const gridResolutionZ = currentBuffer.gridResolution.z;
 
   ctx.save();
   ctx.lineCap = 'round';
@@ -286,12 +291,12 @@ function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number,
     ctx.beginPath();
     let drawing = false;
     for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
-      const sample = samples[zi * gridResolutionX + xi];
-      if (sample.topology.ditchPotential < 0.62) {
+      const index = zi * gridResolutionX + xi;
+      if (metricAt(currentBuffer, index, 'ditchPotential') < 0.62) {
         drawing = false;
         continue;
       }
-      const point = project(sample.world[0], sample.world[1] + 0.035, sample.world[2], currentTerrain, width, height);
+      const point = projectSample(currentBuffer, index, width, height, 0.035);
       if (!drawing) {
         ctx.moveTo(point.x, point.y);
         drawing = true;
@@ -309,13 +314,14 @@ function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number,
     let drawing = false;
     let strength = 0;
     for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
-      const sample = samples[zi * gridResolutionX + xi];
-      if (sample.phaseInfluence.amount < 0.18) {
+      const index = zi * gridResolutionX + xi;
+      const phaseAmount = metricAt(currentBuffer, index, 'phaseAmount');
+      if (phaseAmount < 0.18) {
         drawing = false;
         continue;
       }
-      strength = Math.max(strength, sample.phaseInfluence.amount);
-      const point = project(sample.world[0], sample.world[1] + 0.055, sample.world[2], currentTerrain, width, height);
+      strength = Math.max(strength, phaseAmount);
+      const point = projectSample(currentBuffer, index, width, height, 0.055);
       if (!drawing) {
         ctx.moveTo(point.x, point.y);
         drawing = true;
@@ -335,13 +341,14 @@ function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number,
     let drawing = false;
     let strength = 0;
     for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
-      const sample = samples[zi * gridResolutionX + xi];
-      if (sample.phaseInfluence.trailAmount < 0.18) {
+      const index = zi * gridResolutionX + xi;
+      const trailAmount = metricAt(currentBuffer, index, 'trailAmount');
+      if (trailAmount < 0.18) {
         drawing = false;
         continue;
       }
-      strength = Math.max(strength, sample.phaseInfluence.trailAmount);
-      const point = project(sample.world[0], sample.world[1] + 0.075, sample.world[2], currentTerrain, width, height);
+      strength = Math.max(strength, trailAmount);
+      const point = projectSample(currentBuffer, index, width, height, 0.075);
       if (!drawing) {
         ctx.moveTo(point.x, point.y);
         drawing = true;
@@ -358,13 +365,14 @@ function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number,
 
   for (let zi = 4; zi < gridResolutionZ - 4; zi += 7) {
     for (let xi = 4; xi < gridResolutionX - 4; xi += 7) {
-      const sample = samples[zi * gridResolutionX + xi];
-      if (sample.topology.growthPotential < 0.62) {
+      const index = zi * gridResolutionX + xi;
+      const growthPotential = metricAt(currentBuffer, index, 'growthPotential');
+      if (growthPotential < 0.62) {
         continue;
       }
-      const point = project(sample.world[0], sample.world[1] + 0.12, sample.world[2], currentTerrain, width, height);
-      const radius = 1.8 + sample.topology.growthPotential * 3.2;
-      ctx.fillStyle = `rgba(42, 111, 63, ${0.2 + sample.topology.growthPotential * 0.34})`;
+      const point = projectSample(currentBuffer, index, width, height, 0.12);
+      const radius = 1.8 + growthPotential * 3.2;
+      ctx.fillStyle = `rgba(42, 111, 63, ${0.2 + growthPotential * 0.34})`;
       ctx.beginPath();
       ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
       ctx.fill();
@@ -374,9 +382,9 @@ function drawTopologyOverlays(currentTerrain: HillOfHillsTerrain, width: number,
   ctx.restore();
 }
 
-function drawRouteMarkers(width: number, height: number): void {
-  const crown = project(0, 1.8, terrain.params.crownZ, terrain, width, height);
-  const start = project(0, 0.45, -terrain.params.length * 0.45, terrain, width, height);
+function drawRouteMarkers(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const crown = project(0, 1.8, currentBuffer.params.crownZ, currentBuffer, width, height);
+  const start = project(0, 0.45, -currentBuffer.params.length * 0.45, currentBuffer, width, height);
 
   ctx.fillStyle = 'rgba(247, 205, 86, 0.95)';
   ctx.beginPath();
@@ -395,7 +403,7 @@ function project(
   x: number,
   y: number,
   z: number,
-  currentTerrain: HillOfHillsTerrain,
+  currentBuffer: HillOfHillsTerrainBuffer,
   width: number,
   height: number
 ): { x: number; y: number } {
@@ -403,7 +411,7 @@ function project(
   const yawSin = Math.sin(viewState.yaw);
   const rotatedX = x * yawCos - z * yawSin;
   const rotatedZ = x * yawSin + z * yawCos;
-  const zn = (rotatedZ + currentTerrain.params.length * 0.5) / currentTerrain.params.length;
+  const zn = (rotatedZ + currentBuffer.params.length * 0.5) / currentBuffer.params.length;
   const perspective = (0.42 + (1 - zn) * 0.5) * viewState.zoom;
   const scaleX = Math.min(width / 16, height / 11) * perspective;
   const screenX = width * (0.5 + viewState.panX) + rotatedX * scaleX;
@@ -411,32 +419,63 @@ function project(
   return { x: screenX, y: screenY };
 }
 
-function colorForSample(
-  sample: HillOfHillsTerrainSample,
+function projectSample(currentBuffer: HillOfHillsTerrainBuffer, index: number, width: number, height: number, yOffset = 0): { x: number; y: number } {
+  const vectorOffset = index * 3;
+  return project(
+    currentBuffer.positions[vectorOffset],
+    currentBuffer.positions[vectorOffset + 1] + yOffset,
+    currentBuffer.positions[vectorOffset + 2],
+    currentBuffer,
+    width,
+    height
+  );
+}
+
+function colorForBufferSample(
+  buffer: HillOfHillsTerrainBuffer,
+  index: number,
   heightValue: number,
   normal: readonly [number, number, number],
   range: { min: number; max: number }
 ): string {
   const t = (heightValue - range.min) / Math.max(0.001, range.max - range.min);
   const sideLight = normal[0] * -0.32 + normal[1] * 0.72 + normal[2] * -0.2;
-  const phaseShadow = sample.phaseInfluence.sideDitchAmount * 0.22 + sample.phaseInfluence.trailAmount * 0.06;
-  const wetShadow = sample.proxyMaterial.wetness * 0.16 + sample.topology.ditchPotential * 0.1 + phaseShadow;
-  const growthLift = sample.proxyMaterial.growthTint * 0.14;
-  const routeLift = sample.topology.routePressure * 0.1;
+  const phaseShadow = metricAt(buffer, index, 'sideDitchAmount') * 0.22 + metricAt(buffer, index, 'trailAmount') * 0.06;
+  const wetShadow = metricAt(buffer, index, 'wetness') * 0.16 + metricAt(buffer, index, 'ditchPotential') * 0.1 + phaseShadow;
+  const growthLift = metricAt(buffer, index, 'growthTint') * 0.14;
+  const routeLift = metricAt(buffer, index, 'routePressure') * 0.1;
   const light = Math.max(0.36, Math.min(1.18, 0.6 + sideLight * 0.32 + t * 0.16 + routeLift + growthLift - wetShadow));
-  const base = sample.proxyMaterial.color;
-  const lift = 12 + t * 24 + sample.topology.routePressure * 14;
+  const base = colorAt(buffer, index);
+  const lift = 12 + t * 24 + metricAt(buffer, index, 'routePressure') * 14;
   const r = Math.round(Math.min(245, base[0] * light + lift));
   const g = Math.round(Math.min(245, base[1] * light + lift));
   const b = Math.round(Math.min(245, base[2] * light + lift));
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function drawWitness(currentTerrain: HillOfHillsTerrain): void {
-  const witness = currentTerrain.witness;
+function metricAt(buffer: HillOfHillsTerrainBuffer, index: number, channel: HillOfHillsTerrainBufferMetricChannel): number {
+  const channelIndex = buffer.channelLayout.metrics.indexOf(channel);
+  if (channelIndex < 0) {
+    return 0;
+  }
+  return buffer.metrics[index * buffer.channelLayout.metrics.length + channelIndex];
+}
+
+function normalAt(buffer: HillOfHillsTerrainBuffer, index: number, axis: 0 | 1 | 2): number {
+  return buffer.normals[index * 3 + axis];
+}
+
+function colorAt(buffer: HillOfHillsTerrainBuffer, index: number): readonly [number, number, number] {
+  const offset = index * 3;
+  return [buffer.colors[offset], buffer.colors[offset + 1], buffer.colors[offset + 2]];
+}
+
+function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
+  const witness = currentBuffer.witness;
   witnessPanel.textContent = [
     `Hill of Hills witness`,
     `${witness.sourceAuthority} / ${witness.route}`,
+    `buffer: ${currentBuffer.schema} / ${currentBuffer.sampleSchema}`,
     `fallback: ${witness.fallbackStatus}`,
     `grid: ${witness.gridResolution.x} x ${witness.gridResolution.z} / samples: ${witness.sampleCount}`,
     `height: ${witness.heightRange.min.toFixed(2)} .. ${witness.heightRange.max.toFixed(2)}`,

@@ -228,10 +228,12 @@ export interface HillOfHillsTerrainBuffer {
   channelLayout: {
     position: readonly ['x', 'y', 'z'];
     normal: readonly ['x', 'y', 'z'];
+    color: readonly ['r', 'g', 'b'];
     metrics: readonly HillOfHillsTerrainBufferMetricChannel[];
   };
   positions: Float32Array;
   normals: Float32Array;
+  colors: Float32Array;
   metrics: Float32Array;
   regionCodes: Uint8Array;
   materialCodes: Uint8Array;
@@ -620,6 +622,7 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
   const sampleCount = terrain.samples.length;
   const positions = new Float32Array(sampleCount * 3);
   const normals = new Float32Array(sampleCount * 3);
+  const colors = new Float32Array(sampleCount * 3);
   const metrics = new Float32Array(sampleCount * TERRAIN_BUFFER_METRIC_CHANNELS.length);
   const regionCodes = new Uint8Array(sampleCount);
   const materialCodes = new Uint8Array(sampleCount);
@@ -635,6 +638,9 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
     normals[vectorOffset] = sample.normal[0];
     normals[vectorOffset + 1] = sample.normal[1];
     normals[vectorOffset + 2] = sample.normal[2];
+    colors[vectorOffset] = sample.proxyMaterial.color[0];
+    colors[vectorOffset + 1] = sample.proxyMaterial.color[1];
+    colors[vectorOffset + 2] = sample.proxyMaterial.color[2];
     metrics[metricOffset] = sample.height;
     metrics[metricOffset + 1] = sample.slope;
     metrics[metricOffset + 2] = sample.topology.routePressure;
@@ -669,10 +675,12 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
     channelLayout: {
       position: ['x', 'y', 'z'],
       normal: ['x', 'y', 'z'],
+      color: ['r', 'g', 'b'],
       metrics: TERRAIN_BUFFER_METRIC_CHANNELS
     },
     positions,
     normals,
+    colors,
     metrics,
     regionCodes,
     materialCodes
@@ -683,6 +691,7 @@ export function transferListForHillOfHillsTerrainBuffer(buffer: HillOfHillsTerra
   return [
     buffer.positions.buffer as ArrayBuffer,
     buffer.normals.buffer as ArrayBuffer,
+    buffer.colors.buffer as ArrayBuffer,
     buffer.metrics.buffer as ArrayBuffer,
     buffer.regionCodes.buffer as ArrayBuffer,
     buffer.materialCodes.buffer as ArrayBuffer
@@ -728,7 +737,7 @@ export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainB
     },
     proxyMaterial: {
       kind: materialKind,
-      color: proxyColorFor(materialKind),
+      color: [buffer.colors[vectorOffset], buffer.colors[vectorOffset + 1], buffer.colors[vectorOffset + 2]],
       wetness,
       growthTint,
       blends: {

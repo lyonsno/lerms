@@ -24,7 +24,7 @@ export interface HillTerrainWorkerSuccess {
   requestId: number;
   ok: true;
   durationMs: number;
-  terrain: HillOfHillsTerrain;
+  terrain?: HillOfHillsTerrain;
   terrainBuffer: HillOfHillsTerrainBuffer;
 }
 
@@ -54,16 +54,20 @@ export function createHillTerrainWorkerRequest(
 export function createHillTerrainWorkerResponse(
   request: HillTerrainWorkerRequest,
   terrain: HillOfHillsTerrain,
-  durationMs: number
+  durationMs: number,
+  options: { includeTerrain?: boolean } = {}
 ): HillTerrainWorkerSuccess {
-  return {
+  const response: HillTerrainWorkerSuccess = {
     schema: HILL_TERRAIN_WORKER_RESPONSE_SCHEMA,
     requestId: request.requestId,
     ok: true,
     durationMs,
-    terrain,
     terrainBuffer: createHillOfHillsTerrainBuffer(terrain)
   };
+  if (options.includeTerrain) {
+    response.terrain = terrain;
+  }
+  return response;
 }
 
 export function createHillTerrainWorkerFailure(

@@ -50,14 +50,16 @@ const cache = createHillOfHillsLayerTileCache();
 const terrain = createHillOfHillsTerrainWithCache(cache, request.params, request.sourceOptions);
 const terrainBuffer = createHillOfHillsTerrainBuffer(terrain);
 const response = createHillTerrainWorkerResponse(request, terrain, 12.5);
+const compatibilityResponse = createHillTerrainWorkerResponse(request, terrain, 12.5, { includeTerrain: true });
 
 assert(response.schema === 'lerms.hill-of-hills-worker-response.v0', 'worker response carries schema');
 assert(response.ok === true, 'worker response is successful');
 assert(response.requestId === request.requestId, 'worker response preserves request id');
 assert(response.durationMs === 12.5, 'worker response records worker generation duration');
-assert(response.terrain.witness.cacheMode === 'persistent_layer_tile_cache', 'worker response carries cache witness');
-assert(response.terrain.source.route === request.sourceOptions.route, 'worker response terrain source preserves route');
-assert(response.terrain.source.configId === request.sourceOptions.configId, 'worker response terrain source preserves config id');
+assert(!('terrain' in response), 'worker hot response omits rich terrain object graph by default');
+assert(compatibilityResponse.terrain?.witness.cacheMode === 'persistent_layer_tile_cache', 'compatibility worker response can carry cache witness');
+assert(compatibilityResponse.terrain?.source.route === request.sourceOptions.route, 'compatibility terrain source preserves route');
+assert(compatibilityResponse.terrain?.source.configId === request.sourceOptions.configId, 'compatibility terrain source preserves config id');
 assert(response.terrainBuffer.schema === 'lerms.hill-of-hills-terrain-buffer.v0', 'worker response carries compact terrain buffer schema');
 assert(response.terrainBuffer.sampleSchema === 'lerms.terrain-sample.v0', 'terrain buffer preserves sample schema identity');
 assert(response.terrainBuffer.witnessSchema === 'lerms.hill-of-hills-witness.v0', 'terrain buffer preserves witness schema identity');
@@ -71,11 +73,13 @@ assert(response.terrainBuffer.topologyChecksum === terrain.witness.topologyCheck
 assert(response.terrainBuffer.proxyMaterialChecksum === terrain.witness.proxyMaterialChecksum, 'terrain buffer preserves proxy material checksum');
 assert(response.terrainBuffer.positions instanceof Float32Array, 'terrain buffer positions are Float32Array');
 assert(response.terrainBuffer.normals instanceof Float32Array, 'terrain buffer normals are Float32Array');
+assert(response.terrainBuffer.colors instanceof Float32Array, 'terrain buffer colors are Float32Array');
 assert(response.terrainBuffer.metrics instanceof Float32Array, 'terrain buffer metrics are Float32Array');
 assert(response.terrainBuffer.regionCodes instanceof Uint8Array, 'terrain buffer region codes are Uint8Array');
 assert(response.terrainBuffer.materialCodes instanceof Uint8Array, 'terrain buffer material codes are Uint8Array');
 assert(response.terrainBuffer.positions.length === terrain.samples.length * 3, 'terrain buffer has packed xyz positions');
 assert(response.terrainBuffer.normals.length === terrain.samples.length * 3, 'terrain buffer has packed normals');
+assert(response.terrainBuffer.colors.length === terrain.samples.length * 3, 'terrain buffer has packed proxy colors');
 assert(response.terrainBuffer.metrics.length === terrain.samples.length * response.terrainBuffer.channelLayout.metrics.length, 'terrain buffer has packed metric channels');
 assert(response.terrainBuffer.channelLayout.metrics.includes('routePressure'), 'terrain buffer exposes route pressure channel');
 assert(response.terrainBuffer.channelLayout.metrics.includes('sideDitchAmount'), 'terrain buffer exposes side-ditch channel');
@@ -97,15 +101,19 @@ assert(Math.abs(decoded.topology.routePressure - original.topology.routePressure
 assert(Math.abs(decoded.phaseInfluence.sideDitchAmount - original.phaseInfluence.sideDitchAmount) < 0.0001, 'decoded terrain buffer sample preserves side ditch amount');
 assert(decoded.region === original.region, 'decoded terrain buffer sample preserves terrain region');
 assert(decoded.proxyMaterial.kind === original.proxyMaterial.kind, 'decoded terrain buffer sample preserves material kind');
+assert(Math.abs(decoded.proxyMaterial.color[0] - original.proxyMaterial.color[0]) < 0.0001, 'decoded terrain buffer sample preserves material red');
+assert(Math.abs(decoded.proxyMaterial.color[1] - original.proxyMaterial.color[1]) < 0.0001, 'decoded terrain buffer sample preserves material green');
+assert(Math.abs(decoded.proxyMaterial.color[2] - original.proxyMaterial.color[2]) < 0.0001, 'decoded terrain buffer sample preserves material blue');
 
 const transferList = transferListForHillOfHillsTerrainBuffer(terrainBuffer);
-assert(transferList.length === 5, 'terrain buffer transfer list includes the five compact channel buffers');
+assert(transferList.length === 6, 'terrain buffer transfer list includes the six compact channel buffers');
 assert(transferList.includes(terrainBuffer.positions.buffer as ArrayBuffer), 'terrain buffer transfer list includes positions backing store');
 assert(transferList.includes(terrainBuffer.normals.buffer as ArrayBuffer), 'terrain buffer transfer list includes normals backing store');
+assert(transferList.includes(terrainBuffer.colors.buffer as ArrayBuffer), 'terrain buffer transfer list includes colors backing store');
 assert(transferList.includes(terrainBuffer.metrics.buffer as ArrayBuffer), 'terrain buffer transfer list includes metrics backing store');
 assert(transferList.includes(terrainBuffer.regionCodes.buffer as ArrayBuffer), 'terrain buffer transfer list includes region code backing store');
 assert(transferList.includes(terrainBuffer.materialCodes.buffer as ArrayBuffer), 'terrain buffer transfer list includes material code backing store');
-assert(hillTerrainWorkerTransferList(response).length === 5, 'worker success exposes terrain buffer transfer list');
+assert(hillTerrainWorkerTransferList(response).length === 6, 'worker success exposes terrain buffer transfer list');
 assert(isFreshHillTerrainWorkerResponse(response, 7), 'latest successful worker response is fresh');
 assert(!isFreshHillTerrainWorkerResponse(response, 8), 'older worker response is rejected as stale');
 
