@@ -137,6 +137,25 @@ assert(fallbackReport.sourceTruth.effectiveAuthority === 'fallback', 'fallback p
 assert(fallbackReport.sourceTruth.fallbackReasons.includes('sidecar-timeout'), 'fallback reason is surfaced');
 assert(fallbackReport.comparison.liveReleaseEventId === null, 'fallback comparison does not invent release');
 
+const staleReport = buildGloveWellLiveComparisonWitnessReport({
+  outputPath: '/tmp/lerms-glove-well-live-comparison-stale-test.json',
+  frameId: 'glove-well-live-comparison-stale-test',
+  timestampMs: 20_000,
+  packets: [
+    {
+      ...livePackets[0],
+      frameId: 'wilor-stale-prime',
+      timing: {
+        ...livePackets[0].timing,
+        cameraFrameAgeMs: 260
+      }
+    }
+  ]
+});
+assert(staleReport.sourceTruth.effectiveAuthority === 'stale_hold', 'stale packet downgrades comparison authority');
+assert(staleReport.sourceTruth.stalePacketCount === 1, 'stale packet count is surfaced');
+assert(staleReport.comparison.livePhaseTrace === 'cooldown', 'stale live packet becomes cooldown command');
+
 assertThrows(
   () =>
     buildGloveWellLiveComparisonWitnessReport({

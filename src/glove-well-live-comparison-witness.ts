@@ -131,7 +131,7 @@ export function buildGloveWellLiveComparisonWitnessReport({
     liveCommands,
     fixtureCommands,
     comparison: compareCommands(liveCommands, fixtureCommands),
-    sourceTruth: summarizeSourceTruth(adaptedFrames),
+    sourceTruth: summarizeSourceTruth(adaptedFrames, liveCommands),
     authorityNote:
       'comparison witness only; live command authority requires fresh non-fallback WiLoR packets and does not upgrade the full vertical',
     whatRemainsFake: {
@@ -210,8 +210,11 @@ function phaseTrace(commands: readonly GloveWellCommand[]): string {
   return commands.map((command) => command.phase).join('>');
 }
 
-function summarizeSourceTruth(frames: readonly GloveInputFrame[]): GloveWellLiveComparisonSourceTruth {
-  const authorities = frames.map((frame) => frame.source.authority);
+function summarizeSourceTruth(
+  frames: readonly GloveInputFrame[],
+  liveCommands: readonly GloveWellCommand[]
+): GloveWellLiveComparisonSourceTruth {
+  const authorities = liveCommands.map((command) => command.source.authority);
   const effectiveAuthority = weakestAuthority(authorities);
   const fallbackReasons = unique(
     frames.map((frame) => frame.source.fallbackReason).filter((reason): reason is string => Boolean(reason))
@@ -230,7 +233,7 @@ function summarizeSourceTruth(frames: readonly GloveInputFrame[]): GloveWellLive
     maxModelLatencyMs: modelLatencies.length ? Math.max(...modelLatencies) : null,
     nonFallbackLivePacketCount: frames.filter((frame) => frame.source.effectiveRoute === GLOVE_INPUT_WILOR_LIVE_EFFECTIVE_ROUTE && frame.source.authority === 'live_simulation').length,
     fallbackPacketCount: frames.filter((frame) => frame.source.authority === 'fallback').length,
-    stalePacketCount: frames.filter((frame) => frame.source.authority === 'stale_hold' || frame.source.authority === 'invalid').length
+    stalePacketCount: liveCommands.filter((command) => command.source.authority === 'stale_hold' || command.source.authority === 'invalid').length
   };
 }
 
