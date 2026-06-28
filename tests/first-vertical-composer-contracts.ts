@@ -72,6 +72,17 @@ const terrainSample: HillOfHillsTerrainSample = {
     amount: 0,
     trailAmount: 0,
     sideDitchAmount: 0
+  },
+  support: {
+    supportClass: 'single_valued_heightfield',
+    mappingMode: 'static_domain_to_world',
+    domain: { u: 0.5, v: 0.7833333333333333 },
+    domainIndex: { x: 0, z: 0 },
+    previousHeight: 1.8,
+    heightDelta: 0,
+    surfaceVelocity: [0, 0, 0],
+    motionClass: 'stable',
+    shock: 'none'
   }
 };
 
@@ -193,6 +204,31 @@ const terrain: HillOfHillsTerrain = {
     dirtyLayerKinds: [],
     dirtyRegionChecksum: 'none',
     dirtyHaloSamples: 2,
+    supportFrame: {
+      supportClass: 'single_valued_heightfield',
+      mappingMode: 'static_domain_to_world',
+      domainBounds: {
+        u: { min: 0, max: 1 },
+        v: { min: 0, max: 1 }
+      },
+      worldBounds: {
+        x: { min: -5, max: 5 },
+        z: { min: -6, max: 6 }
+      },
+      supportEpoch: 0,
+      topologyEpoch: 0,
+      substrateTileSize: { x: 8, z: 8 },
+      substrateTileCount: 1,
+      dirtySubstrateTileCount: 0,
+      dirtySubstrateSampleCount: 0,
+      dirtySubstrateRegionChecksum: 'none',
+      minSupportWavelength: 0,
+      maxHeightDelta: 0,
+      maxSurfaceSpeed: 0,
+      supportFrameChecksum: 'composer-terrain-support-frame-fixture-checksum',
+      motionClassCounts: { stable: 1 },
+      shockClassCounts: { none: 1 }
+    },
     topologyChecksum: 'composer-terrain-topology-fixture-checksum',
     proxyMaterialChecksum: 'composer-terrain-material-fixture-checksum',
     phaseMode: 'stable',

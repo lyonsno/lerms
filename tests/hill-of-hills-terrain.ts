@@ -258,6 +258,11 @@ assert(trailPhaseA.witness.dirtyLayerKinds.includes('phase_overlay'), 'dirty lay
 assert(trailPhaseA.witness.dirtyLayerKinds.includes('topology_derivatives'), 'dirty layer witness includes topology derivatives');
 assert(typeof trailPhaseA.witness.dirtyRegionChecksum === 'string', 'trail phase witness records dirty region checksum');
 assert(trailPhaseA.witness.dirtyRegionChecksum === trailPhaseB.witness.dirtyRegionChecksum, 'dirty region checksum is deterministic');
+assert(trailPhaseA.witness.supportFrame.dirtySubstrateTileCount === trailPhaseA.witness.dirtyTileCount, 'support frame ties dirty substrate tiles to recompute witness');
+assert(
+  trailPhaseA.witness.supportFrame.dirtySubstrateRegionChecksum === trailPhaseA.witness.dirtyRegionChecksum,
+  'support frame exposes the same dirty substrate region checksum fluid domains should consume'
+);
 assert(trailPhaseA.witness.phaseProgress > 0.35, 'trail phase witness exposes active phase progress');
 assert((trailPhaseA.witness.activePhaseKinds.trail_forming ?? 0) > 0, 'witness counts active trail-forming episodes');
 assert((trailPhaseA.witness.phaseInfluenceKinds.trail_forming ?? 0) > 0, 'witness counts trail-forming influenced samples');
@@ -279,6 +284,18 @@ const trailSamples = trailPhaseA.samples.filter((terrainSample) => terrainSample
 const sideDitchSamples = trailPhaseA.samples.filter((terrainSample) => terrainSample.phaseInfluence.sideDitchAmount > 0.25);
 assert(trailSamples.length > 0, 'trail phase marks pathlike route samples');
 assert(sideDitchSamples.length > 0, 'trail phase marks side-ditch samples');
+assert(
+  trailSamples.some((terrainSample) => terrainSample.support.motionClass === 'phase_morph'),
+  'active trail samples expose phase-morph support motion'
+);
+assert(
+  trailSamples.some((terrainSample) => Math.abs(terrainSample.support.heightDelta) > 0.0001),
+  'active trail samples expose support height delta for fluid contact'
+);
+assert(
+  trailSamples.some((terrainSample) => Math.abs(terrainSample.support.surfaceVelocity[1]) > 0.0001),
+  'active trail samples expose vertical support velocity for fluid contact'
+);
 assert(
   sideDitchSamples.some((terrainSample) => Math.abs(terrainSample.world[0]) < trailPhaseA.params.floorWidth * 0.72),
   'trail side ditches are not locked to the two wall gutter tracks'
@@ -403,6 +420,20 @@ assert(baseline.witness.dirtyTileCount === 0, 'stable terrain has no localized d
 assert(baseline.witness.dirtySampleCount === 0, 'stable terrain has no localized dirty phase samples');
 assert(baseline.witness.dirtyLayerKinds.length === 0, 'stable terrain has no localized dirty layer kinds');
 assert(baseline.witness.dirtyRegionChecksum === 'none', 'stable terrain dirty region checksum is explicitly none');
+assert(baseline.witness.supportFrame.supportClass === 'single_valued_heightfield', 'support frame declares single-valued terrain support');
+assert(baseline.witness.supportFrame.mappingMode === 'static_domain_to_world', 'support frame declares current domain mapping mode');
+assert(baseline.witness.supportFrame.domainBounds.u.min === 0, 'support frame domain u begins at zero');
+assert(baseline.witness.supportFrame.domainBounds.u.max === 1, 'support frame domain u ends at one');
+assert(baseline.witness.supportFrame.domainBounds.v.min === 0, 'support frame domain v begins at zero');
+assert(baseline.witness.supportFrame.domainBounds.v.max === 1, 'support frame domain v ends at one');
+assert(baseline.witness.supportFrame.substrateTileCount === baseline.witness.recomputeTileCount, 'support frame reuses recompute tile count as substrate tile count');
+assert(baseline.witness.supportFrame.dirtySubstrateTileCount === 0, 'stable support frame has no dirty substrate tiles');
+assert(baseline.witness.supportFrame.dirtySubstrateRegionChecksum === 'none', 'stable support frame dirty substrate checksum is none');
+assert(baseline.witness.supportFrame.maxHeightDelta === 0, 'stable support frame has no height delta');
+assert(baseline.witness.supportFrame.maxSurfaceSpeed === 0, 'stable support frame has no surface speed');
+assert((baseline.witness.supportFrame.motionClassCounts.stable ?? 0) === baseline.samples.length, 'stable support frame counts every sample as stable');
+assert((baseline.witness.supportFrame.shockClassCounts.none ?? 0) === baseline.samples.length, 'stable support frame reports no shocks');
+assert(typeof baseline.witness.supportFrame.supportFrameChecksum === 'string', 'support frame exposes checksum for fluid witness freshness');
 assert((baseline.witness as any).topologyRanges.routePressure.max > 0.45, 'witness records route pressure range');
 assert((baseline.witness as any).topologyRanges.growthPotential.max > 0.5, 'witness records growth candidate range');
 assert((baseline.witness as any).proxyMaterialCounts['ditch-shadow'] > 0, 'witness counts ditch-shadow proxy material');
@@ -412,6 +443,19 @@ assert(
   shiftedTrailTopology.witness.featureChecksum !== trailPhaseA.witness.featureChecksum,
   'terrain feature checksum changes when feature density or spacing changes'
 );
+
+for (const terrainSample of baseline.samples) {
+  assert(terrainSample.support.supportClass === 'single_valued_heightfield', `sample ${terrainSample.id} declares single-valued support`);
+  assert(terrainSample.support.domain.u >= 0 && terrainSample.support.domain.u <= 1, `sample ${terrainSample.id} domain u is normalized`);
+  assert(terrainSample.support.domain.v >= 0 && terrainSample.support.domain.v <= 1, `sample ${terrainSample.id} domain v is normalized`);
+  assert(Number.isInteger(terrainSample.support.domainIndex.x), `sample ${terrainSample.id} support domain x index is integer`);
+  assert(Number.isInteger(terrainSample.support.domainIndex.z), `sample ${terrainSample.id} support domain z index is integer`);
+  assert(terrainSample.support.previousHeight === terrainSample.height, `stable sample ${terrainSample.id} previous height matches current height`);
+  assert(terrainSample.support.heightDelta === 0, `stable sample ${terrainSample.id} height delta is zero`);
+  assert(terrainSample.support.surfaceVelocity[1] === 0, `stable sample ${terrainSample.id} vertical support velocity is zero`);
+  assert(terrainSample.support.motionClass === 'stable', `stable sample ${terrainSample.id} motion class is stable`);
+  assert(terrainSample.support.shock === 'none', `stable sample ${terrainSample.id} has no shock`);
+}
 
 const fallbackTerrain = createHillOfHillsTerrain(
   { gridResolutionX: 12, gridResolutionZ: 12 },

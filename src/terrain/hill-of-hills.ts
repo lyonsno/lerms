@@ -19,7 +19,11 @@ export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
 export type HillOfHillsTrailSeedMethod = 'none' | 'random_band' | 'topology_score';
 export type HillOfHillsHeightfieldMode = 'direct_query' | 'grid_heightfield';
 export type HillOfHillsRecomputeMode = 'full_grid_with_dirty_tiles';
-export type HillOfHillsDirtyLayerKind = 'height' | 'phase_overlay' | 'topology_derivatives' | 'proxy_material';
+export type HillOfHillsDirtyLayerKind = 'height' | 'phase_overlay' | 'topology_derivatives' | 'proxy_material' | 'support_frame';
+export type HillOfHillsSupportClass = 'single_valued_heightfield';
+export type HillOfHillsSupportMappingMode = 'static_domain_to_world';
+export type HillOfHillsSupportMotionClass = 'stable' | 'phase_morph' | 'shock_reset';
+export type HillOfHillsSupportShockClass = 'none' | 'shock_reset';
 export type HillOfHillsProxyMaterialKind =
   | 'crown-warmth'
   | 'approach-clay'
@@ -91,6 +95,53 @@ export interface HillOfHillsPhaseInfluence {
   episodeId?: string;
 }
 
+export interface HillOfHillsSupportSample {
+  supportClass: HillOfHillsSupportClass;
+  mappingMode: HillOfHillsSupportMappingMode;
+  domain: {
+    u: number;
+    v: number;
+  };
+  domainIndex: {
+    x: number;
+    z: number;
+  };
+  previousHeight: number;
+  heightDelta: number;
+  surfaceVelocity: Vec3;
+  motionClass: HillOfHillsSupportMotionClass;
+  shock: HillOfHillsSupportShockClass;
+}
+
+export interface HillOfHillsSupportFrameWitness {
+  supportClass: HillOfHillsSupportClass;
+  mappingMode: HillOfHillsSupportMappingMode;
+  domainBounds: {
+    u: Range;
+    v: Range;
+  };
+  worldBounds: {
+    x: Range;
+    z: Range;
+  };
+  supportEpoch: number;
+  topologyEpoch: number;
+  substrateTileSize: {
+    x: number;
+    z: number;
+  };
+  substrateTileCount: number;
+  dirtySubstrateTileCount: number;
+  dirtySubstrateSampleCount: number;
+  dirtySubstrateRegionChecksum: string;
+  minSupportWavelength: number;
+  maxHeightDelta: number;
+  maxSurfaceSpeed: number;
+  supportFrameChecksum: string;
+  motionClassCounts: Partial<Record<HillOfHillsSupportMotionClass, number>>;
+  shockClassCounts: Partial<Record<HillOfHillsSupportShockClass, number>>;
+}
+
 export interface HillOfHillsTerrainParams {
   seed: number;
   width: number;
@@ -142,6 +193,7 @@ export interface HillOfHillsTerrainSample extends TerrainSample {
   topology: HillOfHillsTopology;
   proxyMaterial: HillOfHillsProxyMaterial;
   phaseInfluence: HillOfHillsPhaseInfluence;
+  support: HillOfHillsSupportSample;
 }
 
 export interface HillOfHillsWitness {
@@ -180,6 +232,7 @@ export interface HillOfHillsWitness {
   dirtyLayerKinds: readonly HillOfHillsDirtyLayerKind[];
   dirtyRegionChecksum: string;
   dirtyHaloSamples: number;
+  supportFrame: HillOfHillsSupportFrameWitness;
   topologyChecksum: string;
   proxyMaterialChecksum: string;
   phaseMode: HillOfHillsPhaseMode;
@@ -989,6 +1042,7 @@ function sampleTerrainFromParts(
   const region = classifyRegion(params, x, z, heightParts, slope);
   const topology = topologyAt(params, x, z, heightParts, dx, dz, slope, region, phaseInfluence);
   const proxyMaterial = proxyMaterialFor(region, topology);
+  const support = supportSampleFor(params, phaseState, x, z, heightParts, phaseInfluence);
 
   return {
     schema: TERRAIN_SAMPLE_SCHEMA,
@@ -1001,12 +1055,54 @@ function sampleTerrainFromParts(
     region,
     topology,
     proxyMaterial,
-    phaseInfluence
+    phaseInfluence,
+    support
   };
 }
 
 function gridIndex(params: HillOfHillsTerrainParams, xi: number, zi: number): number {
   return zi * params.gridResolutionX + xi;
+}
+
+function supportSampleFor(
+  params: HillOfHillsTerrainParams,
+  phaseState: HillOfHillsPhaseState,
+  x: number,
+  z: number,
+  heightParts: HeightParts,
+  phaseInfluence: HillOfHillsPhaseInfluence
+): HillOfHillsSupportSample {
+  const domain = domainForWorld(params, x, z);
+  const domainIndex = {
+    x: worldXToSampleIndex(params, x),
+    z: worldZToSampleIndex(params, z)
+  };
+  const activeMotion = phaseState.activeEpisodes.length > 0 && phaseInfluence.amount > 0;
+  const heightDelta = activeMotion ? -heightParts.phaseDitch * 0.08 : 0;
+  const previousHeight = heightParts.height - heightDelta;
+  const supportTickSeconds = 16 / 1000;
+  const surfaceVelocity: Vec3 = [0, heightDelta / supportTickSeconds, 0];
+  const shock: HillOfHillsSupportShockClass = Math.abs(heightDelta) > 0.45 ? 'shock_reset' : 'none';
+  const motionClass: HillOfHillsSupportMotionClass = shock === 'shock_reset' ? 'shock_reset' : activeMotion ? 'phase_morph' : 'stable';
+
+  return {
+    supportClass: 'single_valued_heightfield',
+    mappingMode: 'static_domain_to_world',
+    domain,
+    domainIndex,
+    previousHeight,
+    heightDelta,
+    surfaceVelocity,
+    motionClass,
+    shock
+  };
+}
+
+function domainForWorld(params: HillOfHillsTerrainParams, x: number, z: number): { u: number; v: number } {
+  return {
+    u: clamp((x + params.width * 0.5) / Math.max(0.001, params.width), 0, 1),
+    v: clamp((z + params.length * 0.5) / Math.max(0.001, params.length), 0, 1)
+  };
 }
 
 function topologyAt(
@@ -1329,6 +1425,7 @@ function createWitness(
   const trailInfluenceRange = createRange();
   const sideDitchInfluenceRange = createRange();
   const recomputeWitness = dirtyRecomputeWitness(params, phaseState);
+  const supportFrame = supportFrameWitness(params, phaseState, samples, recomputeWitness);
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
 
@@ -1382,6 +1479,7 @@ function createWitness(
     dirtyLayerKinds: recomputeWitness.dirtyLayerKinds,
     dirtyRegionChecksum: recomputeWitness.dirtyRegionChecksum,
     dirtyHaloSamples: recomputeWitness.dirtyHaloSamples,
+    supportFrame,
     topologyChecksum: checksum(samples.map((sample) => topologySignature(sample)).join('|')),
     proxyMaterialChecksum: checksum(samples.map((sample) => `${sample.id}:${sample.proxyMaterial.kind}`).join('|')),
     phaseMode: phaseState.mode,
@@ -1407,6 +1505,69 @@ function createWitness(
     topologyRanges,
     proxyMaterialCounts
   };
+}
+
+function supportFrameWitness(
+  params: HillOfHillsTerrainParams,
+  phaseState: HillOfHillsPhaseState,
+  samples: readonly HillOfHillsTerrainSample[],
+  recomputeWitness: DirtyRecomputeWitness
+): HillOfHillsSupportFrameWitness {
+  const motionClassCounts: Partial<Record<HillOfHillsSupportMotionClass, number>> = {};
+  const shockClassCounts: Partial<Record<HillOfHillsSupportShockClass, number>> = {};
+  let maxHeightDelta = 0;
+  let maxSurfaceSpeed = 0;
+
+  for (const sample of samples) {
+    motionClassCounts[sample.support.motionClass] = (motionClassCounts[sample.support.motionClass] ?? 0) + 1;
+    shockClassCounts[sample.support.shock] = (shockClassCounts[sample.support.shock] ?? 0) + 1;
+    maxHeightDelta = Math.max(maxHeightDelta, Math.abs(sample.support.heightDelta));
+    maxSurfaceSpeed = Math.max(maxSurfaceSpeed, Math.hypot(...sample.support.surfaceVelocity));
+  }
+
+  return {
+    supportClass: 'single_valued_heightfield',
+    mappingMode: 'static_domain_to_world',
+    domainBounds: {
+      u: { min: 0, max: 1 },
+      v: { min: 0, max: 1 }
+    },
+    worldBounds: {
+      x: { min: -params.width * 0.5, max: params.width * 0.5 },
+      z: { min: -params.length * 0.5, max: params.length * 0.5 }
+    },
+    supportEpoch: phaseState.terrainEpoch,
+    topologyEpoch: phaseState.terrainEpoch,
+    substrateTileSize: recomputeWitness.tileSize,
+    substrateTileCount: recomputeWitness.tileCount,
+    dirtySubstrateTileCount: recomputeWitness.dirtyTileCount,
+    dirtySubstrateSampleCount: recomputeWitness.dirtySampleCount,
+    dirtySubstrateRegionChecksum: recomputeWitness.dirtyRegionChecksum,
+    minSupportWavelength: Math.max(
+      params.width / Math.max(1, params.gridResolutionX - 1),
+      params.length / Math.max(1, params.gridResolutionZ - 1)
+    ),
+    maxHeightDelta,
+    maxSurfaceSpeed,
+    supportFrameChecksum: checksum(samples.map((sample) => supportSignature(sample)).join('|')),
+    motionClassCounts,
+    shockClassCounts
+  };
+}
+
+function supportSignature(sample: HillOfHillsTerrainSample): string {
+  return [
+    sample.id,
+    sample.support.supportClass,
+    sample.support.mappingMode,
+    sample.support.domain.u.toFixed(4),
+    sample.support.domain.v.toFixed(4),
+    sample.support.domainIndex.x,
+    sample.support.domainIndex.z,
+    sample.support.heightDelta.toFixed(4),
+    sample.support.motionClass,
+    sample.support.shock
+  ].join(':');
 }
 
 function phaseInfluenceSignature(sample: HillOfHillsTerrainSample): string {
@@ -1474,7 +1635,7 @@ function dirtyRecomputeWitness(params: HillOfHillsTerrainParams, phaseState: Hil
     return sum + xCount * zCount;
   }, 0);
   const dirtyLayerKinds: readonly HillOfHillsDirtyLayerKind[] =
-    sortedTiles.length === 0 ? [] : ['phase_overlay', 'height', 'topology_derivatives', 'proxy_material'];
+    sortedTiles.length === 0 ? [] : ['phase_overlay', 'height', 'topology_derivatives', 'proxy_material', 'support_frame'];
 
   return {
     mode: 'full_grid_with_dirty_tiles',
