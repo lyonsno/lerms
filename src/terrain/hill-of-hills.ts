@@ -11,6 +11,7 @@ import {
 } from '../contracts/first-vertical.js';
 
 export const HILL_OF_HILLS_WITNESS_SCHEMA = 'lerms.hill-of-hills-witness.v0' as const;
+export const HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA = 'lerms.hill-of-hills-terrain-buffer.v0' as const;
 
 export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 'invalid';
 export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming' | 'trail_forming' | 'mixed_forming';
@@ -33,6 +34,21 @@ export type HillOfHillsProxyMaterialKind =
   | 'ditch-shadow'
   | 'rim-crust'
   | 'growth-lip';
+export type HillOfHillsTerrainBufferMetricChannel =
+  | 'height'
+  | 'slope'
+  | 'routePressure'
+  | 'flowAccumulation'
+  | 'ditchPotential'
+  | 'growthPotential'
+  | 'phaseAmount'
+  | 'trailAmount'
+  | 'sideDitchAmount'
+  | 'wetness'
+  | 'growthTint'
+  | 'previousHeight'
+  | 'heightDelta'
+  | 'surfaceVelocityY';
 
 export interface HillOfHillsTopology {
   flowDirection: Vec3;
@@ -188,6 +204,37 @@ export interface HillOfHillsTerrain {
   phaseState: HillOfHillsPhaseState;
   samples: readonly HillOfHillsTerrainSample[];
   witness: HillOfHillsWitness;
+}
+
+export interface HillOfHillsTerrainBuffer {
+  schema: typeof HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA;
+  sampleSchema: typeof TERRAIN_SAMPLE_SCHEMA;
+  witnessSchema: typeof HILL_OF_HILLS_WITNESS_SCHEMA;
+  source: SourceTruth;
+  params: HillOfHillsTerrainParams;
+  witness: HillOfHillsWitness;
+  gridResolution: {
+    x: number;
+    z: number;
+  };
+  sampleCount: number;
+  sampleChecksum: string;
+  topologyChecksum: string;
+  proxyMaterialChecksum: string;
+  heightRange: {
+    min: number;
+    max: number;
+  };
+  channelLayout: {
+    position: readonly ['x', 'y', 'z'];
+    normal: readonly ['x', 'y', 'z'];
+    metrics: readonly HillOfHillsTerrainBufferMetricChannel[];
+  };
+  positions: Float32Array;
+  normals: Float32Array;
+  metrics: Float32Array;
+  regionCodes: Uint8Array;
+  materialCodes: Uint8Array;
 }
 
 export interface HillOfHillsLayerTileCache {
@@ -382,6 +429,32 @@ const RECOMPUTE_TILE_SIZE = {
   z: 4
 } as const;
 const RECOMPUTE_HALO_SAMPLES = 1;
+const TERRAIN_BUFFER_METRIC_CHANNELS: readonly HillOfHillsTerrainBufferMetricChannel[] = [
+  'height',
+  'slope',
+  'routePressure',
+  'flowAccumulation',
+  'ditchPotential',
+  'growthPotential',
+  'phaseAmount',
+  'trailAmount',
+  'sideDitchAmount',
+  'wetness',
+  'growthTint',
+  'previousHeight',
+  'heightDelta',
+  'surfaceVelocityY'
+];
+const TERRAIN_REGION_CODEBOOK: readonly TerrainRegion[] = ['crown', 'approach', 'slope', 'basin', 'gutter', 'rim', 'underhill_fixture'];
+const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
+  'crown-warmth',
+  'approach-clay',
+  'slope-moss',
+  'basin-pool',
+  'ditch-shadow',
+  'rim-crust',
+  'growth-lip'
+];
 
 export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   seed: 52027,
@@ -540,6 +613,151 @@ export function createHillOfHillsFrame(terrain: HillOfHillsTerrain): FirstVertic
     goins: [],
     juiceHits: [],
     carrierDropEvents: []
+  };
+}
+
+export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): HillOfHillsTerrainBuffer {
+  const sampleCount = terrain.samples.length;
+  const positions = new Float32Array(sampleCount * 3);
+  const normals = new Float32Array(sampleCount * 3);
+  const metrics = new Float32Array(sampleCount * TERRAIN_BUFFER_METRIC_CHANNELS.length);
+  const regionCodes = new Uint8Array(sampleCount);
+  const materialCodes = new Uint8Array(sampleCount);
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const sample = terrain.samples[index];
+    const vectorOffset = index * 3;
+    const metricOffset = index * TERRAIN_BUFFER_METRIC_CHANNELS.length;
+
+    positions[vectorOffset] = sample.world[0];
+    positions[vectorOffset + 1] = sample.world[1];
+    positions[vectorOffset + 2] = sample.world[2];
+    normals[vectorOffset] = sample.normal[0];
+    normals[vectorOffset + 1] = sample.normal[1];
+    normals[vectorOffset + 2] = sample.normal[2];
+    metrics[metricOffset] = sample.height;
+    metrics[metricOffset + 1] = sample.slope;
+    metrics[metricOffset + 2] = sample.topology.routePressure;
+    metrics[metricOffset + 3] = sample.topology.flowAccumulation;
+    metrics[metricOffset + 4] = sample.topology.ditchPotential;
+    metrics[metricOffset + 5] = sample.topology.growthPotential;
+    metrics[metricOffset + 6] = sample.phaseInfluence.amount;
+    metrics[metricOffset + 7] = sample.phaseInfluence.trailAmount;
+    metrics[metricOffset + 8] = sample.phaseInfluence.sideDitchAmount;
+    metrics[metricOffset + 9] = sample.proxyMaterial.wetness;
+    metrics[metricOffset + 10] = sample.proxyMaterial.growthTint;
+    metrics[metricOffset + 11] = sample.support.previousHeight;
+    metrics[metricOffset + 12] = sample.support.heightDelta;
+    metrics[metricOffset + 13] = sample.support.surfaceVelocity[1];
+    regionCodes[index] = codeForTerrainRegion(sample.region);
+    materialCodes[index] = codeForProxyMaterial(sample.proxyMaterial.kind);
+  }
+
+  return {
+    schema: HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA,
+    sampleSchema: TERRAIN_SAMPLE_SCHEMA,
+    witnessSchema: HILL_OF_HILLS_WITNESS_SCHEMA,
+    source: terrain.source,
+    params: terrain.params,
+    witness: terrain.witness,
+    gridResolution: terrain.witness.gridResolution,
+    sampleCount,
+    sampleChecksum: terrain.witness.sampleChecksum,
+    topologyChecksum: terrain.witness.topologyChecksum,
+    proxyMaterialChecksum: terrain.witness.proxyMaterialChecksum,
+    heightRange: terrain.witness.heightRange,
+    channelLayout: {
+      position: ['x', 'y', 'z'],
+      normal: ['x', 'y', 'z'],
+      metrics: TERRAIN_BUFFER_METRIC_CHANNELS
+    },
+    positions,
+    normals,
+    metrics,
+    regionCodes,
+    materialCodes
+  };
+}
+
+export function transferListForHillOfHillsTerrainBuffer(buffer: HillOfHillsTerrainBuffer): ArrayBuffer[] {
+  return [
+    buffer.positions.buffer as ArrayBuffer,
+    buffer.normals.buffer as ArrayBuffer,
+    buffer.metrics.buffer as ArrayBuffer,
+    buffer.regionCodes.buffer as ArrayBuffer,
+    buffer.materialCodes.buffer as ArrayBuffer
+  ];
+}
+
+export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainBuffer, index: number): HillOfHillsTerrainSample {
+  if (index < 0 || index >= buffer.sampleCount) {
+    throw new Error(`terrain buffer sample index ${index} is outside 0..${buffer.sampleCount - 1}`);
+  }
+
+  const vectorOffset = index * 3;
+  const metricOffset = index * buffer.channelLayout.metrics.length;
+  const xi = index % buffer.gridResolution.x;
+  const zi = Math.floor(index / buffer.gridResolution.x);
+  const materialKind = proxyMaterialForCode(buffer.materialCodes[index]);
+  const wetness = metric(buffer, metricOffset, 'wetness');
+  const growthTint = metric(buffer, metricOffset, 'growthTint');
+  const region = terrainRegionForCode(buffer.regionCodes[index]);
+  const phaseAmount = metric(buffer, metricOffset, 'phaseAmount');
+  const trailAmount = metric(buffer, metricOffset, 'trailAmount');
+  const sideDitchAmount = metric(buffer, metricOffset, 'sideDitchAmount');
+  const heightDelta = metric(buffer, metricOffset, 'heightDelta');
+  const surfaceVelocityY = metric(buffer, metricOffset, 'surfaceVelocityY');
+
+  return {
+    schema: TERRAIN_SAMPLE_SCHEMA,
+    id: `terrain-${xi}-${zi}`,
+    source: buffer.source,
+    world: [buffer.positions[vectorOffset], buffer.positions[vectorOffset + 1], buffer.positions[vectorOffset + 2]],
+    normal: [buffer.normals[vectorOffset], buffer.normals[vectorOffset + 1], buffer.normals[vectorOffset + 2]],
+    height: metric(buffer, metricOffset, 'height'),
+    slope: metric(buffer, metricOffset, 'slope'),
+    region,
+    topology: {
+      flowDirection: [0, 0, 0],
+      flowAccumulation: metric(buffer, metricOffset, 'flowAccumulation'),
+      ridgeStrength: 0,
+      valleyStrength: 0,
+      routePressure: metric(buffer, metricOffset, 'routePressure'),
+      ditchPotential: metric(buffer, metricOffset, 'ditchPotential'),
+      growthPotential: metric(buffer, metricOffset, 'growthPotential')
+    },
+    proxyMaterial: {
+      kind: materialKind,
+      color: proxyColorFor(materialKind),
+      wetness,
+      growthTint,
+      blends: {
+        [materialKind]: 1
+      }
+    },
+    phaseInfluence: {
+      kind: phaseAmount > 0 ? (trailAmount > sideDitchAmount ? 'trail_forming' : 'ditch_forming') : 'none',
+      amount: phaseAmount,
+      trailAmount,
+      sideDitchAmount
+    },
+    support: {
+      supportClass: 'single_valued_heightfield',
+      mappingMode: 'static_domain_to_world',
+      domain: {
+        u: xi / Math.max(1, buffer.gridResolution.x - 1),
+        v: zi / Math.max(1, buffer.gridResolution.z - 1)
+      },
+      domainIndex: {
+        x: xi,
+        z: zi
+      },
+      previousHeight: metric(buffer, metricOffset, 'previousHeight'),
+      heightDelta,
+      surfaceVelocity: [0, surfaceVelocityY, 0],
+      motionClass: Math.abs(heightDelta) > 0 ? 'phase_morph' : 'stable',
+      shock: 'none'
+    }
   };
 }
 
@@ -1399,6 +1617,32 @@ function proxyColorFor(kind: HillOfHillsProxyMaterialKind): Vec3 {
     case 'approach-clay':
       return [123, 126, 92];
   }
+}
+
+function codeForTerrainRegion(region: TerrainRegion): number {
+  const index = TERRAIN_REGION_CODEBOOK.indexOf(region);
+  return index >= 0 ? index : TERRAIN_REGION_CODEBOOK.indexOf('underhill_fixture');
+}
+
+function terrainRegionForCode(code: number): TerrainRegion {
+  return TERRAIN_REGION_CODEBOOK[code] ?? 'underhill_fixture';
+}
+
+function codeForProxyMaterial(kind: HillOfHillsProxyMaterialKind): number {
+  const index = PROXY_MATERIAL_CODEBOOK.indexOf(kind);
+  return index >= 0 ? index : PROXY_MATERIAL_CODEBOOK.indexOf('approach-clay');
+}
+
+function proxyMaterialForCode(code: number): HillOfHillsProxyMaterialKind {
+  return PROXY_MATERIAL_CODEBOOK[code] ?? 'approach-clay';
+}
+
+function metric(buffer: HillOfHillsTerrainBuffer, metricOffset: number, channel: HillOfHillsTerrainBufferMetricChannel): number {
+  const index = buffer.channelLayout.metrics.indexOf(channel);
+  if (index < 0) {
+    throw new Error(`terrain buffer is missing metric channel ${channel}`);
+  }
+  return buffer.metrics[metricOffset + index];
 }
 
 function proxyMaterialBlendsFor(

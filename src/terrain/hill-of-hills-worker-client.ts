@@ -1,4 +1,11 @@
-import type { HillOfHillsSourceOptions, HillOfHillsTerrain, HillOfHillsTerrainParams } from './hill-of-hills.js';
+import {
+  createHillOfHillsTerrainBuffer,
+  transferListForHillOfHillsTerrainBuffer,
+  type HillOfHillsSourceOptions,
+  type HillOfHillsTerrain,
+  type HillOfHillsTerrainBuffer,
+  type HillOfHillsTerrainParams
+} from './hill-of-hills.js';
 
 export const HILL_TERRAIN_WORKER_REQUEST_SCHEMA = 'lerms.hill-of-hills-worker-request.v0' as const;
 export const HILL_TERRAIN_WORKER_RESPONSE_SCHEMA = 'lerms.hill-of-hills-worker-response.v0' as const;
@@ -18,6 +25,7 @@ export interface HillTerrainWorkerSuccess {
   ok: true;
   durationMs: number;
   terrain: HillOfHillsTerrain;
+  terrainBuffer: HillOfHillsTerrainBuffer;
 }
 
 export interface HillTerrainWorkerFailure {
@@ -53,7 +61,8 @@ export function createHillTerrainWorkerResponse(
     requestId: request.requestId,
     ok: true,
     durationMs,
-    terrain
+    terrain,
+    terrainBuffer: createHillOfHillsTerrainBuffer(terrain)
   };
 }
 
@@ -75,4 +84,11 @@ export function createHillTerrainWorkerFailure(
 
 export function isFreshHillTerrainWorkerResponse(response: HillTerrainWorkerResponse, latestRequestId: number): response is HillTerrainWorkerSuccess {
   return response.schema === HILL_TERRAIN_WORKER_RESPONSE_SCHEMA && response.ok === true && response.requestId === latestRequestId;
+}
+
+export function hillTerrainWorkerTransferList(response: HillTerrainWorkerResponse): ArrayBuffer[] {
+  if (!response.ok) {
+    return [];
+  }
+  return transferListForHillOfHillsTerrainBuffer(response.terrainBuffer);
 }
