@@ -19,6 +19,7 @@ export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_SCHEMA = 'lerms.preview-bench-a
 export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_FRAME_SCHEMA = 'lerms.preview-bench-actor-motion-timeline-frame.v0' as const;
 export const PREVIEW_BENCH_ACTOR_MOTION_PLAYBACK_SCHEMA = 'lerms.preview-bench-actor-motion-playback.v0' as const;
 export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_STATE_SCHEMA = 'lerms.preview-bench-actor-motion-timeline-state.v0' as const;
+export const PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA = 'lerms.preview-bench-actor-continuity.v0' as const;
 export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE = 'lerms/preview-bench/actor-motion-timeline-file' as const;
 
 type PreviewBenchTimelineDowngrade =
@@ -82,6 +83,14 @@ export type PreviewBenchActorMotionTimeline = {
   proxyBody: SchnozSimulationSnapshot['proxyBody'];
   durationMs: number;
   timeline: PreviewBenchTimelineFrame[];
+  continuity: {
+    schema: typeof PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA;
+    stableActorIdentities: boolean;
+    actorIds: string[];
+    framesWithCompleteActorSet: number;
+    discontinuityCount: number;
+    identityPolicy: 'persistent_actor_id_across_preview_bench_timeline';
+  };
   playback: {
     schema: typeof PREVIEW_BENCH_ACTOR_MOTION_PLAYBACK_SCHEMA;
     loop: true;
@@ -141,8 +150,12 @@ export function buildPreviewBenchActorMotionTimeline(
       adaptedPoseFields: [...frame.motionEvidence.adaptedPoseFields],
     },
   }));
-  const actorIds = [...new Set(timeline.flatMap((frame) => frame.actorMotion.map((actor) => actor.actorId)))];
+  const actorIds = timeline[0]?.actorMotion.map((actor) => actor.actorId) ?? [];
   const states = [...new Set(timeline.flatMap((frame) => frame.actorMotion.map((actor) => actor.state)))];
+  const framesWithCompleteActorSet = timeline.filter((frame) => {
+    const frameActorIds = frame.actorMotion.map((actor) => actor.actorId);
+    return frameActorIds.length === actorIds.length && frameActorIds.every((actorId, index) => actorId === actorIds[index]);
+  }).length;
 
   return {
     schema: PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_SCHEMA,
@@ -162,6 +175,14 @@ export function buildPreviewBenchActorMotionTimeline(
     },
     durationMs: timeline[timeline.length - 1]?.timeMs ?? 0,
     timeline,
+    continuity: {
+      schema: PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA,
+      stableActorIdentities: framesWithCompleteActorSet === timeline.length,
+      actorIds,
+      framesWithCompleteActorSet,
+      discontinuityCount: timeline.length - framesWithCompleteActorSet,
+      identityPolicy: 'persistent_actor_id_across_preview_bench_timeline',
+    },
     playback: {
       schema: PREVIEW_BENCH_ACTOR_MOTION_PLAYBACK_SCHEMA,
       loop: true,

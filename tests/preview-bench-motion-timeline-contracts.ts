@@ -29,6 +29,15 @@ for (let index = 1; index < timeline.timeline.length; index += 1) {
 
 const labels = timeline.timeline.map((frame) => frame.label);
 assert.deepEqual(labels, ['approach', 'steal', 'flee', 'hit', 'drop', 'reroute']);
+const stableActorIds = ['red-lerm-001', 'red-lerm-002', 'red-lerm-003', 'red-lerm-004', 'red-lerm-005', 'red-lerm-006'];
+assert.deepEqual(timeline.witnessState.actorIds, stableActorIds);
+assert.equal(timeline.continuity.schema, 'lerms.preview-bench-actor-continuity.v0');
+assert.equal(timeline.continuity.stableActorIdentities, true);
+assert.deepEqual(timeline.continuity.actorIds, stableActorIds);
+assert.equal(timeline.continuity.framesWithCompleteActorSet, timeline.timeline.length);
+for (const frame of timeline.timeline) {
+  assert.deepEqual(frame.actorMotion.map((actor) => actor.actorId), stableActorIds);
+}
 const events = new Set(timeline.timeline.flatMap((frame) => frame.events));
 assert.ok(events.has('goin-stolen'));
 assert.ok(events.has('juice-hit-carrier'));
@@ -44,16 +53,26 @@ assert.ok(states.has('rerouting_to_goin'));
 
 const carrierPositions = timeline.timeline
   .flatMap((frame) => frame.actorMotion)
-  .filter((actor) => actor.actorId === 'schnoz-approach')
+  .filter((actor) => actor.actorId === 'red-lerm-001')
   .map((actor) => actor.world.join(','));
 assert.ok(new Set(carrierPositions).size >= 2, 'timeline should move at least one stable actor across frames');
+const carrierStates = timeline.timeline
+  .map((frame) => frame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.state);
+assert.deepEqual(carrierStates, [
+  'approaching_hoard',
+  'stealing_goin',
+  'fleeing_with_goin',
+  'hit_reacting',
+  'tumbling',
+  'rerouting_to_goin',
+]);
 
 const hitFrame = timeline.timeline.find((frame) => frame.label === 'hit');
 assert.ok(hitFrame?.hitFlash);
-assert.ok(hitFrame.actorMotion.some((actor) => actor.state === 'hit_reacting'));
+assert.equal(hitFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.state, 'hit_reacting');
 const rerouteFrame = timeline.timeline.find((frame) => frame.label === 'reroute');
 assert.ok(rerouteFrame?.reroute);
-assert.ok(rerouteFrame.actorMotion.some((actor) => actor.targetGoinId === 'goin-dropped-001'));
+assert.equal(rerouteFrame.actorMotion.find((actor) => actor.actorId === 'red-lerm-001')?.targetGoinId, 'goin-dropped-001');
 
 const everyActor = timeline.timeline.flatMap((frame) => frame.actorMotion);
 assert.ok(everyActor.every((actor) => actor.motionAdapter.schema === 'lerms.schnoz-motion-adapter.v0'));

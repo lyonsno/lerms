@@ -110,47 +110,67 @@ export function buildSchnozSimulationSnapshot(): SchnozSimulationSnapshot {
 export function buildSchnozTimeline(): SchnozTimelineFrame[] {
   return [
     frame(0, 'approach', 0, ['uphill-approach'], [
-      lerm('schnoz-approach', [-2.6, 0.4, 0], [1, 0, 0.1], 'approaching_hoard'),
-      lerm('schnoz-rerouter', [-2.1, 0.34, -0.3], [1, 0, 0.2], 'approaching_hoard'),
+      lerm('red-lerm-001', [-2.6, 0.4, 0], [1, 0, 0.1], 'approaching_hoard'),
+      lerm('red-lerm-002', [-2.1, 0.34, -0.3], [1, 0, 0.2], 'approaching_hoard'),
+      lerm('red-lerm-003', [-2.35, 0.36, 0.34], [1, 0, -0.1], 'approaching_hoard'),
+      lerm('red-lerm-004', [-1.85, 0.42, 0.58], [1, 0, -0.25], 'approaching_hoard'),
+      lerm('red-lerm-005', [-1.65, 0.38, -0.52], [1, 0, 0.12], 'approaching_hoard'),
+      lerm('red-lerm-006', [-2.75, 0.32, -0.65], [1, 0, 0.22], 'approaching_hoard'),
     ], [
       goin('goin-hoard-001', [1.95, 0.58, 0.05], 'hoarded'),
       goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
     ], evidence(0, 0, 'approach / commit', 'uphill approach')),
     frame(1, 'steal', 240, ['goin-stolen'], [
-      lerm('schnoz-thief', [0.95, 0.58, 0.02], [1, 0, 0], 'stealing_goin', 'goin-hoard-001'),
-      lerm('schnoz-approach', [-1.5, 0.43, -0.1], [1, 0, 0.05], 'approaching_hoard'),
+      lerm('red-lerm-001', [0.95, 0.58, 0.02], [1, 0, 0], 'stealing_goin', 'goin-hoard-001'),
+      lerm('red-lerm-002', [-1.5, 0.43, -0.1], [1, 0, 0.05], 'approaching_hoard'),
+      lerm('red-lerm-003', [-1.92, 0.41, 0.28], [1, 0, -0.12], 'approaching_hoard'),
+      lerm('red-lerm-004', [-1.45, 0.46, 0.45], [1, 0, -0.22], 'approaching_hoard'),
+      lerm('red-lerm-005', [-1.28, 0.42, -0.46], [1, 0, 0.12], 'approaching_hoard'),
+      lerm('red-lerm-006', [-2.18, 0.35, -0.56], [1, 0, 0.18], 'approaching_hoard'),
     ], [
       goin('goin-hoard-001', [1.05, 0.61, 0.03], 'carried'),
       goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
     ], evidence(1, 240, 'reach / steal', 'grab lunge')),
     frame(2, 'flee', 480, ['carrier-fleeing'], [
-      lerm('schnoz-fleeing', [0.25, 0.55, -0.15], [-1, 0, -0.2], 'fleeing_with_goin', 'goin-hoard-001'),
-      lerm('schnoz-chaser', [-0.95, 0.45, -0.18], [1, 0, 0], 'approaching_hoard'),
+      lerm('red-lerm-001', [0.25, 0.55, -0.15], [-1, 0, -0.2], 'fleeing_with_goin', 'goin-hoard-001'),
+      lerm('red-lerm-002', [-0.95, 0.45, -0.18], [1, 0, 0], 'approaching_hoard'),
+      lerm('red-lerm-003', [0.35, 0.56, 0.38], [-1, 0, 0.2], 'fleeing_with_goin', 'goin-loose-001'),
+      lerm('red-lerm-004', [-0.88, 0.5, 0.28], [1, 0, -0.2], 'approaching_hoard'),
+      lerm('red-lerm-005', [-0.72, 0.49, -0.38], [1, 0, 0.08], 'approaching_hoard'),
+      lerm('red-lerm-006', [-1.56, 0.39, -0.42], [1, 0, 0.14], 'approaching_hoard'),
     ], [
       goin('goin-hoard-001', [0.12, 0.58, -0.15], 'carried'),
       goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
     ], evidence(2, 480, 'turn / flee', 'panic carry')),
     frame(3, 'hit', 720, ['juice-hit-carrier'], [
-      lerm('schnoz-hit-carrier', [-0.15, 0.56, -0.2], [-1, 0, -0.1], 'hit_reacting', undefined, undefined, 180),
-      lerm('schnoz-chaser', [-0.75, 0.45, -0.18], [1, 0, 0], 'approaching_hoard'),
+      lerm('red-lerm-001', [-0.15, 0.56, -0.2], [-1, 0, -0.1], 'hit_reacting', undefined, undefined, 180),
+      lerm('red-lerm-002', [-0.75, 0.45, -0.18], [1, 0, 0], 'approaching_hoard'),
+      lerm('red-lerm-003', [0.22, 0.56, 0.37], [-1, 0, 0.2], 'fleeing_with_goin', 'goin-loose-001'),
+      lerm('red-lerm-004', [-0.38, 0.54, 0.18], [-1, 0, -0.2], 'hit_reacting', undefined, undefined, 120),
+      lerm('red-lerm-005', [-0.42, 0.54, -0.32], [-1, 0, -0.18], 'hit_reacting', undefined, undefined, 140),
+      lerm('red-lerm-006', [-1.05, 0.42, -0.28], [1, 0, 0.08], 'approaching_hoard'),
     ], [
       goin('goin-hoard-001', [-0.04, 0.57, -0.18], 'dropped'),
       goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
     ], evidence(3, 720, 'brake / compress', 'hit reaction'), { world: [-0.15, 0.72, -0.2], radius: 0.38 }),
     frame(4, 'drop', 960, ['drop-started'], [
-      lerm('schnoz-tumbling', [-0.55, 0.62, -0.3], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
-      lerm('schnoz-rerouter', [-1.25, 0.44, -0.18], [1, 0, -0.05], 'approaching_hoard'),
+      lerm('red-lerm-001', [-0.55, 0.62, -0.3], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
+      lerm('red-lerm-002', [-1.25, 0.44, -0.18], [1, 0, -0.05], 'approaching_hoard'),
+      lerm('red-lerm-003', [0.1, 0.55, 0.42], [-1, 0, 0.1], 'fleeing_with_goin', 'goin-loose-001'),
+      lerm('red-lerm-004', [-0.5, 0.58, 0.12], [-1, 0, -0.2], 'tumbling', undefined, undefined, 220),
+      lerm('red-lerm-005', [-0.64, 0.62, -0.35], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
+      lerm('red-lerm-006', [-1.22, 0.44, -0.18], [1, 0, -0.05], 'approaching_hoard'),
     ], [
       goin('goin-hoard-001', [-0.55, 0.42, -0.42], 'rolling'),
       goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded'),
     ], evidence(4, 960, 'drop / recover', 'tumble drop')),
     frame(5, 'reroute', 1200, ['loose-goin-reroute'], [
-      lerm('schnoz-approach', [-1.95, 0.4, 0.2], [1, 0, -0.05], 'approaching_hoard'),
-      lerm('schnoz-carrier', [0.75, 0.55, 0.24], [-1, 0, 0], 'carrying_goin', 'goin-carried-001'),
-      lerm('schnoz-fleeing', [0.35, 0.56, 0.38], [-1, 0, 0.2], 'fleeing_with_goin', 'goin-flee-001'),
-      lerm('schnoz-hit-carrier', [-0.22, 0.6, -0.25], [-1, 0, -0.2], 'hit_reacting', undefined, undefined, 220),
-      lerm('schnoz-tumbling', [-0.64, 0.62, -0.35], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
-      lerm('schnoz-rerouter', [-1.35, 0.42, -0.12], [1, 0, -0.2], 'rerouting_to_goin', undefined, 'goin-dropped-001'),
+      lerm('red-lerm-001', [-1.35, 0.42, -0.12], [1, 0, -0.2], 'rerouting_to_goin', undefined, 'goin-dropped-001'),
+      lerm('red-lerm-002', [0.75, 0.55, 0.24], [-1, 0, 0], 'carrying_goin', 'goin-carried-001'),
+      lerm('red-lerm-003', [0.35, 0.56, 0.38], [-1, 0, 0.2], 'fleeing_with_goin', 'goin-flee-001'),
+      lerm('red-lerm-004', [-0.22, 0.6, -0.25], [-1, 0, -0.2], 'hit_reacting', undefined, undefined, 220),
+      lerm('red-lerm-005', [-0.64, 0.62, -0.35], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
+      lerm('red-lerm-006', [-1.95, 0.4, 0.2], [1, 0, -0.05], 'approaching_hoard'),
     ], [
       goin('goin-carried-001', [0.85, 0.57, 0.25], 'carried'),
       goin('goin-flee-001', [0.22, 0.56, 0.37], 'carried'),
@@ -197,9 +217,9 @@ export function buildFirstVerticalFrameFromSchnozSimulation(timeline = buildSchn
     velocity: item.state === 'rolling' ? [-0.42, -0.05, -0.7] : [0, 0, 0],
     carrierLermId:
       item.id === 'goin-carried-001'
-        ? 'schnoz-carrier'
+        ? 'red-lerm-002'
         : item.id === 'goin-flee-001'
-          ? 'schnoz-fleeing'
+          ? 'red-lerm-003'
           : undefined,
     desireRadius: item.state === 'rolling' ? 1.8 : 0.65,
     mass: 1,
@@ -210,7 +230,7 @@ export function buildFirstVerticalFrameFromSchnozSimulation(timeline = buildSchn
     source: sourceForPackets,
     chemistry: 'index_knockback',
     targetKind: 'lerm',
-    targetId: 'schnoz-hit-carrier',
+    targetId: 'red-lerm-001',
     contactWorld: [-0.22, 0.74, -0.25],
     impulse: [-0.65, 0.25, -0.4],
     sourcePacketId: 'proxy-index-juice-packet-001',
@@ -221,7 +241,7 @@ export function buildFirstVerticalFrameFromSchnozSimulation(timeline = buildSchn
     id: 'schnoz-drop-001',
     source: sourceForPackets,
     cause: 'juice_hit',
-    lermId: 'schnoz-hit-carrier',
+    lermId: 'red-lerm-001',
     goinId: 'goin-dropped-001',
     world: [-0.88, 0.38, -0.54],
     outgoingVelocity: [-0.42, -0.05, -0.7],
