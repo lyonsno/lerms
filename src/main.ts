@@ -1,12 +1,15 @@
 import {
   createHillOfHillsLayerTileCache,
-  createHillOfHillsTerrain,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
   type HillOfHillsTerrain,
   type HillOfHillsTerrainParams,
   type HillOfHillsTerrainSample
 } from './terrain/hill-of-hills.js';
+import {
+  createHillTerrainWorkerRequest,
+  type HillTerrainWorkerResponse
+} from './terrain/hill-of-hills-worker-client.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -46,6 +49,46 @@ const previewSourceOptions = {
   sampleAgeMs: 0
 };
 let terrain = createHillOfHillsTerrainWithCache(terrainCache, params, previewSourceOptions);
+let workerTerrain: Worker | undefined;
+let workerStatus = 'sync-fallback';
+let latestTerrainRequestId = 0;
+let pendingTerrainRequestId = 0;
+let latestWorkerDurationMs = 0;
+let latestWorkerError = 'none';
+
+try {
+  workerTerrain = new Worker(new URL('./terrain/hill-of-hills.worker.ts', import.meta.url), { type: 'module' });
+  workerStatus = 'worker-started';
+  workerTerrain.onmessage = (event: MessageEvent<HillTerrainWorkerResponse>) => {
+    const response = event.data;
+    if (response.requestId !== latestTerrainRequestId) {
+      workerStatus = `stale-response-${response.requestId}`;
+      latestWorkerError = 'stale-response';
+      return;
+    }
+    if (!response.ok) {
+      workerStatus = 'worker-failed-sync-fallback';
+      latestWorkerError = response.error.message;
+      pendingTerrainRequestId = 0;
+      workerTerrain = undefined;
+      return;
+    }
+    terrain = response.terrain;
+    latestWorkerDurationMs = response.durationMs;
+    latestWorkerError = 'none';
+    pendingTerrainRequestId = 0;
+    workerStatus = 'worker-live';
+  };
+  workerTerrain.onerror = (event) => {
+    workerStatus = 'worker-error-sync-fallback';
+    latestWorkerError = event.message || 'worker error';
+    workerTerrain = undefined;
+  };
+} catch (error) {
+  workerStatus = 'worker-unavailable-sync-fallback';
+  latestWorkerError = error instanceof Error ? error.message : String(error);
+  workerTerrain = undefined;
+}
 
 interface ViewState {
   yaw: number;
@@ -148,16 +191,12 @@ function render(timestampMs: number): void {
     params.trailPhaseIntensity > 0
       ? (params.trailPhaseTimeMs + motionTimestampMs * 0.38) % params.trailPhaseDurationMs
       : params.trailPhaseTimeMs;
-  terrain = createHillOfHillsTerrainWithCache(
-    terrainCache,
-    {
-      ...params,
-      ditchPhaseTimeMs,
-      trailPhaseTimeMs,
-      crownZ: defaultHillOfHillsParams.crownZ + motion
-    },
-    previewSourceOptions
-  );
+  requestTerrain({
+    ...params,
+    ditchPhaseTimeMs,
+    trailPhaseTimeMs,
+    crownZ: defaultHillOfHillsParams.crownZ + motion
+  });
 
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
@@ -166,6 +205,21 @@ function render(timestampMs: number): void {
   drawWitness(terrain);
 
   window.requestAnimationFrame(render);
+}
+
+function requestTerrain(nextParams: HillOfHillsTerrainParams): void {
+  if (workerTerrain && pendingTerrainRequestId === 0) {
+    latestTerrainRequestId += 1;
+    pendingTerrainRequestId = latestTerrainRequestId;
+    workerStatus = 'worker-pending';
+    workerTerrain.postMessage(createHillTerrainWorkerRequest(latestTerrainRequestId, nextParams, previewSourceOptions));
+    return;
+  }
+
+  if (!workerTerrain) {
+    terrain = createHillOfHillsTerrainWithCache(terrainCache, nextParams, previewSourceOptions);
+    workerStatus = latestWorkerError === 'none' ? 'sync-fallback' : workerStatus;
+  }
 }
 
 resize();
@@ -399,6 +453,8 @@ function drawWitness(currentTerrain: HillOfHillsTerrain): void {
     `trail ${witness.trailInfluenceRange.max.toFixed(2)} side-ditch ${witness.sideDitchInfluenceRange.max.toFixed(2)}`,
     `support: ${witness.supportFrame.supportClass} / ${witness.supportFrame.mappingMode}`,
     `support motion: delta ${witness.supportFrame.maxHeightDelta.toFixed(3)} speed ${witness.supportFrame.maxSurfaceSpeed.toFixed(2)} dirty ${witness.supportFrame.dirtySubstrateTileCount}/${witness.supportFrame.substrateTileCount}`,
+    `worker: ${workerStatus} req ${latestTerrainRequestId} pending ${pendingTerrainRequestId || 'none'} duration ${latestWorkerDurationMs.toFixed(1)}ms`,
+    `worker error: ${latestWorkerError}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
