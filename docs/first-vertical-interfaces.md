@@ -218,6 +218,18 @@ npm run witness:goin-ecology-merge -- --report /tmp/lerms-goin-ecology-merge-wit
 
 This route proves shared goin ecology, not live camera input, sidecar process management, final goin art, full crowd AI, or first-vertical success. Fixture or saved transport stays downgraded even when deterministic goin physics and desire routing are internally live-simulation subsystem evidence.
 
+### `kaminos.forge-host.smoke-offer.v0` For Goin Ecology
+
+Greedy can export the merged goin ecology as a Forge Host / Preview Bench smoke offer for Kaminos without giving Kaminos ownership of goin law.
+
+The route is:
+
+```sh
+npm run witness:goin-ecology-smoke-offer -- --source-ref /tmp/lerms-goin-ecology-merge-witness.json --source-commit <lerms-commit> --report /tmp/lerms-goin-ecology-merge-smoke-offer.json
+```
+
+The exported file uses `kaminos.forge-host.smoke-offer.v0` with the Preview Bench loader route `kaminos/preview-bench/smoke-offer-file`. It carries producer diaulos, source route/ref/commit, freshness budget, fixture authority, downgrades, rejected debug surfaces, and a nested `kaminos.preview-bench.payload-report.v0` summary. This is a hostable smoke offer, not source authority, live camera proof, or full vertical acceptance.
+
 ### `lerms.first-vertical-frame.v0`
 
 The frame envelope that joins terrain samples, lerm states, goin states, juice hits, and carrier-drop events under one source-truth packet.
