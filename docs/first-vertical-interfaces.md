@@ -198,6 +198,26 @@ npm run witness:glove-well-live-throw -- --packets /tmp/wilor-packets.json --rep
 
 Fresh non-fallback packets through `native_wilor_mini_mlx_detector_sidecar_live` can make the input-to-command-to-throw path `live_simulation`. Saved packets still do not prove that a sidecar process is running now, and this witness still does not claim full first-vertical success or carrier-drop/juice-hit merge. Stale release packets fail instead of silently producing throw evidence.
 
+### `lerms.goin-ecology-merge-witness.v0`
+
+The goin ecology merge witness is Greedy's first shared-desire receipt. It composes the existing stolen carrier-drop goin evidence with the Glove Well thrown-sacrifice goin evidence in one `lerms.first-vertical-frame.v0`, so the first vertical can stop treating dropped stolen wealth and launched bait wealth as separate toy worlds.
+
+It records:
+
+- the carrier hit-to-drop chain from `lerms.goin-glove-wealth-witness.v0`;
+- the thrown goin release, bounce count, phase trace, rolling/settled/recovered states from `lerms.glove-well-throw-physics-witness.v0`;
+- one merged frame with both rolling goins present;
+- shared desire hints showing nearby lerms targeting the carrier-dropped goin and the thrown sacrifice goin;
+- source-truth evaluation showing why the merged frame is still not full first-vertical acceptance.
+
+The witness route is:
+
+```sh
+npm run witness:goin-ecology-merge -- --report /tmp/lerms-goin-ecology-merge-witness.json
+```
+
+This route proves shared goin ecology, not live camera input, sidecar process management, final goin art, full crowd AI, or first-vertical success. Fixture or saved transport stays downgraded even when deterministic goin physics and desire routing are internally live-simulation subsystem evidence.
+
 ### `lerms.first-vertical-frame.v0`
 
 The frame envelope that joins terrain samples, lerm states, goin states, juice hits, and carrier-drop events under one source-truth packet.
