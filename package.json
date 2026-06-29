@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "test:contracts": "rm -rf /tmp/lerms-contract-tests && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir /tmp/lerms-contract-tests --noEmit false src/contracts/first-vertical.ts src/terrain/hill-of-hills.ts src/terrain/hill-of-hills-worker-client.ts tests/first-vertical-contracts.ts tests/hill-of-hills-terrain.ts tests/hill-of-hills-worker-contracts.ts && node /tmp/lerms-contract-tests/tests/first-vertical-contracts.js && node /tmp/lerms-contract-tests/tests/hill-of-hills-terrain.js && node /tmp/lerms-contract-tests/tests/hill-of-hills-worker-contracts.js",
+    "test:contracts": "rm -rf /tmp/lerms-contract-tests && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir /tmp/lerms-contract-tests --noEmit false src/contracts/first-vertical.ts src/terrain/hill-of-hills.ts src/terrain/hill-of-hills-worker-client.ts src/terrain/hill-of-hills-preview-bench-payload.ts tests/first-vertical-contracts.ts tests/hill-of-hills-terrain.ts tests/hill-of-hills-worker-contracts.ts tests/hill-of-hills-preview-bench-payload-contracts.ts && node /tmp/lerms-contract-tests/tests/first-vertical-contracts.js && node /tmp/lerms-contract-tests/tests/hill-of-hills-terrain.js && node /tmp/lerms-contract-tests/tests/hill-of-hills-worker-contracts.js && node /tmp/lerms-contract-tests/tests/hill-of-hills-preview-bench-payload-contracts.js",
     "test:composer": "node --experimental-strip-types tests/first-vertical-composer-contracts.ts",
     "test:source-truth-upgrade": "node --experimental-strip-types tests/first-vertical-source-truth-upgrade-contracts.ts",
     "test:composer-witness": "node tests/first-vertical-composer-witness-contracts.mjs",
@@ -17,6 +17,7 @@
     "witness:lerm-horde-successor": "node --experimental-strip-types src/lerm-horde-successor-witness.ts",
     "witness:composer": "node --experimental-strip-types src/contracts/first-vertical-composer-witness.ts",
     "witness:composer-visual": "node --experimental-strip-types src/contracts/first-vertical-composer-visual-witness.ts",
+    "witness:hill-preview-bench-payload": "rm -rf /tmp/lerms-hill-preview-bench-payload && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir /tmp/lerms-hill-preview-bench-payload --noEmit false src/contracts/first-vertical.ts src/terrain/hill-of-hills.ts src/terrain/hill-of-hills-preview-bench-payload.ts && node /tmp/lerms-hill-preview-bench-payload/terrain/hill-of-hills-preview-bench-payload.js",
     "witness:red-lerm-body-candidates": "node --experimental-strip-types src/red-lerm-body-candidate-witness.ts",
     "witness:red-lerm": "node --experimental-strip-types src/red-lerm-body-motion-witness.ts",
     "witness:red-lerm-visual": "node --experimental-strip-types src/red-lerm-visual-witness.ts"
