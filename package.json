@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "typecheck": "tsc --noEmit"
+    "test:hand-surface": "node --experimental-strip-types tests/hand-surface-lerms-contracts.ts",
+    "typecheck": "tsc --noEmit",
+    "witness:hand-surface": "node --experimental-strip-types scripts/hand-surface-witness.mjs"
   },
   "dependencies": {
     "vite": "^8.1.0"
