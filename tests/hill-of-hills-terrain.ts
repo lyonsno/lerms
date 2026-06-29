@@ -137,6 +137,43 @@ assert(
   'hill count changes topology independently from radius'
 );
 
+const denseHillPileupParams: Partial<HillOfHillsTerrainParams> = {
+  seed: 60629,
+  gridResolutionX: 64,
+  gridResolutionZ: 84,
+  hillRadius: 2.05,
+  hillCount: 64,
+  hillHeight: 1.6,
+  hillVariance: 1.25,
+  valleyHeight: 0,
+  valleyCount: 1,
+  textureDamping: 1,
+  detailDamping: 1,
+  ditchPhaseIntensity: 0,
+  trailPhaseIntensity: 0,
+  featureSpacing: 0.42,
+  distanceScale: 2.1
+};
+const denseHillPileup = createHillOfHillsTerrain(denseHillPileupParams);
+const denseHillPileupWithoutHills = createHillOfHillsTerrain({
+  ...denseHillPileupParams,
+  hillHeight: 0
+});
+let maxDenseHillLift = 0;
+for (let i = 0; i < denseHillPileup.samples.length; i += 1) {
+  maxDenseHillLift = Math.max(maxDenseHillLift, denseHillPileup.samples[i].height - denseHillPileupWithoutHills.samples[i].height);
+}
+const denseHillSingleFeatureCeiling =
+  denseHillPileup.params.hillHeight * (1.24 + denseHillPileup.params.hillVariance * 0.46);
+assert(
+  maxDenseHillLift <= denseHillSingleFeatureCeiling,
+  'dense hill count is overlap-controlled instead of stacking accidental multi-hill spikes'
+);
+assert(
+  denseHillPileup.witness.topologyChecksum !== denseHillPileupWithoutHills.witness.topologyChecksum,
+  'overlap-controlled dense hills still change terrain topology'
+);
+
 const sparseValleys = createHillOfHillsTerrain({ seed: 4321, valleyRadius: 1.25, hillCount: 14, valleyCount: 5 });
 const denseValleys = createHillOfHillsTerrain({ seed: 4321, valleyRadius: 1.25, hillCount: 14, valleyCount: 22 });
 assert(sparseValleys.params.valleyRadius === denseValleys.params.valleyRadius, 'valley density does not mutate valley radius');

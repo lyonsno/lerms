@@ -351,6 +351,10 @@ interface TerrainFeature {
   height: number;
 }
 
+interface TerrainFeatureCandidate extends TerrainFeature {
+  clearance: number;
+}
+
 interface HeightParts {
   base: number;
   wall: number;
@@ -1826,14 +1830,34 @@ function terrainFeatures(params: HillOfHillsTerrainParams, kind: 'hill' | 'valle
   const radiusBase = kind === 'hill' ? params.hillRadius : params.valleyRadius;
   const heightBase = kind === 'hill' ? params.hillHeight : params.valleyHeight;
   const variance = kind === 'hill' ? params.hillVariance : params.valleyVariance;
+  const minimumSeparation = radiusBase * (kind === 'hill' ? 0.68 : 0.58) * Math.sqrt(params.featureSpacing);
+  const attemptCount = Math.max(8, Math.min(28, Math.ceil(count * 0.42)));
+  const useDensePlacement = count > 32 || params.featureSpacing < 0.5;
 
   for (let i = 0; i < count; i += 1) {
-    const sideBias = i % 3 === 0 ? 0.18 : 0.95;
-    const x = (rng() - 0.5) * params.width * sideBias;
-    const z = (rng() - 0.5) * params.length * 0.92;
-    const radius = radiusBase * (0.72 + rng() * (0.5 + variance * 0.75));
-    const height = heightBase * (0.56 + rng() * (0.62 + variance * 0.72));
-    features.push({ x, z, radius, height });
+    if (!useDensePlacement) {
+      features.push(terrainFeatureCandidate(params, kind, i, radiusBase, heightBase, variance, rng));
+      continue;
+    }
+
+    let selected: TerrainFeatureCandidate | undefined;
+
+    for (let attempt = 0; attempt < attemptCount; attempt += 1) {
+      const candidate = terrainFeatureCandidate(params, kind, i, radiusBase, heightBase, variance, rng);
+      const clearance = featureClearance(candidate, features);
+      const clearedCandidate = { ...candidate, clearance };
+      if (!selected || clearedCandidate.clearance > selected.clearance) {
+        selected = clearedCandidate;
+      }
+      if (clearance >= minimumSeparation) {
+        break;
+      }
+    }
+
+    if (selected) {
+      const { clearance: _clearance, ...feature } = selected;
+      features.push(limitDenseFeatureHeight(feature, heightBase, variance));
+    }
   }
 
   if (kind === 'hill') {
@@ -1846,6 +1870,45 @@ function terrainFeatures(params: HillOfHillsTerrainParams, kind: 'hill' | 'valle
 
   terrainFeatureCache.set(cacheKey, features);
   return features;
+}
+
+function terrainFeatureCandidate(
+  params: HillOfHillsTerrainParams,
+  kind: 'hill' | 'valley',
+  index: number,
+  radiusBase: number,
+  heightBase: number,
+  variance: number,
+  rng: () => number
+): TerrainFeature {
+  const sideBias = index % 3 === 0 ? 0.18 : 0.95;
+  const x = (rng() - 0.5) * params.width * sideBias;
+  const z = (rng() - 0.5) * params.length * 0.92;
+  const radius = radiusBase * (0.72 + rng() * (0.5 + variance * 0.75));
+  const height = heightBase * (0.56 + rng() * (0.62 + variance * 0.72));
+  return { x, z, radius, height };
+}
+
+function limitDenseFeatureHeight(feature: TerrainFeature, heightBase: number, variance: number): TerrainFeature {
+  const heightCeiling = heightBase * (1.24 + variance * 0.46);
+  return {
+    ...feature,
+    height: Math.min(feature.height, heightCeiling)
+  };
+}
+
+function featureClearance(feature: TerrainFeature, features: readonly TerrainFeature[]): number {
+  if (features.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  let clearance = Number.POSITIVE_INFINITY;
+  for (const placed of features) {
+    const centerDistance = Math.hypot(feature.x - placed.x, feature.z - placed.z);
+    const radiusPressure = Math.max(0.001, (feature.radius + placed.radius) * 0.28);
+    clearance = Math.min(clearance, centerDistance / radiusPressure);
+  }
+  return clearance;
 }
 
 function terrainFeatureCacheKey(params: HillOfHillsTerrainParams, kind: 'hill' | 'valley'): string {
@@ -1862,7 +1925,8 @@ function terrainFeatureCacheKey(params: HillOfHillsTerrainParams, kind: 'hill' |
     radius.toFixed(4),
     count,
     height.toFixed(4),
-    variance.toFixed(4)
+    variance.toFixed(4),
+    params.featureSpacing.toFixed(4)
   ].join(':');
 }
 
@@ -1891,6 +1955,7 @@ function terrainFeatureSignature(kind: 'hill' | 'valley', feature: TerrainFeatur
 
 function featureContribution(features: readonly TerrainFeature[], x: number, z: number, distanceScale: number): number {
   let total = 0;
+  let strongest = 0;
 
   for (const feature of features) {
     const dx = (x - feature.x) * distanceScale;
@@ -1898,11 +1963,19 @@ function featureContribution(features: readonly TerrainFeature[], x: number, z: 
     const d = Math.hypot(dx, dz);
     if (d < feature.radius) {
       const t = 1 - d / feature.radius;
-      total += feature.height * smoothCap(t);
+      const contribution = feature.height * smoothCap(t);
+      total += contribution;
+      strongest = Math.max(strongest, contribution);
     }
   }
 
-  return total;
+  if (strongest <= 0) {
+    return 0;
+  }
+
+  const overlap = Math.max(0, total - strongest);
+  const overlapReinforcement = overlap * 0.22 * (1 - smoothstep(strongest * 0.35, strongest * 1.2, overlap));
+  return strongest + overlapReinforcement;
 }
 
 function createWitness(
