@@ -30,6 +30,8 @@ export type HillOfHillsProxyMaterialKind =
   | 'crown-warmth'
   | 'approach-clay'
   | 'slope-moss'
+  | 'basin-meadow'
+  | 'basin-dust'
   | 'basin-pool'
   | 'ditch-shadow'
   | 'rim-crust'
@@ -456,6 +458,8 @@ const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
   'crown-warmth',
   'approach-clay',
   'slope-moss',
+  'basin-meadow',
+  'basin-dust',
   'basin-pool',
   'ditch-shadow',
   'rim-crust',
@@ -1591,7 +1595,15 @@ function proxyMaterialFor(region: TerrainRegion, topology: HillOfHillsTopology):
   const kind = proxyMaterialKindFor(region, topology);
   const blends = proxyMaterialBlendsFor(region, topology, kind);
   const color = blendedProxyColor(blends);
-  const wetness = clamp(topology.flowAccumulation * 0.5 + topology.ditchPotential * 0.42 + topology.valleyStrength * 0.26, 0, 1);
+  const wetness = clamp(
+    topology.flowAccumulation * 0.18 +
+      topology.ditchPotential * 0.46 +
+      topology.valleyStrength * (kind === 'basin-meadow' || kind === 'basin-dust' ? 0.04 : 0.12) +
+      (kind === 'basin-pool' ? 0.34 : 0) +
+      (kind === 'ditch-shadow' ? 0.15 : 0),
+    0,
+    1
+  );
   const growthTint = clamp(topology.growthPotential * 0.86 + (kind === 'growth-lip' ? 0.14 : 0), 0, 1);
 
   return {
@@ -1606,8 +1618,13 @@ function proxyMaterialFor(region: TerrainRegion, topology: HillOfHillsTopology):
 function proxyMaterialKindFor(region: TerrainRegion, topology: HillOfHillsTopology): HillOfHillsProxyMaterialKind {
   if (region === 'crown') return 'crown-warmth';
   if (topology.growthPotential > 0.54 && (region === 'slope' || region === 'rim')) return 'growth-lip';
-  if (region === 'gutter' || topology.ditchPotential > 0.58) return 'ditch-shadow';
-  if (region === 'basin') return 'basin-pool';
+  if (region === 'gutter') return 'ditch-shadow';
+  if (region === 'basin') {
+    if (topology.ditchPotential > 0.76 && topology.flowAccumulation > 0.78) return 'basin-pool';
+    if (topology.growthPotential > 0.28 || topology.routePressure > 0.42) return 'basin-meadow';
+    return 'basin-dust';
+  }
+  if (topology.ditchPotential > 0.65) return 'ditch-shadow';
   if (region === 'rim') return 'rim-crust';
   if (region === 'slope') return 'slope-moss';
   return 'approach-clay';
@@ -1617,8 +1634,12 @@ function proxyColorFor(kind: HillOfHillsProxyMaterialKind): Vec3 {
   switch (kind) {
     case 'crown-warmth':
       return [205, 165, 72];
+    case 'basin-meadow':
+      return [91, 136, 76];
+    case 'basin-dust':
+      return [139, 129, 82];
     case 'basin-pool':
-      return [43, 123, 137];
+      return [49, 111, 128];
     case 'ditch-shadow':
       return [67, 58, 104];
     case 'growth-lip':
@@ -1663,10 +1684,15 @@ function proxyMaterialBlendsFor(
   topology: HillOfHillsTopology,
   dominantKind: HillOfHillsProxyMaterialKind
 ): HillOfHillsProxyMaterial['blends'] {
+  const basinWetPocket = clamp((topology.flowAccumulation - 0.72) / 0.24, 0, 1) * clamp((topology.ditchPotential - 0.62) / 0.24, 0, 1);
+  const basinMeadow = region === 'basin' ? clamp(topology.growthPotential * 0.5 + topology.routePressure * 0.28 + (1 - topology.ditchPotential) * 0.18, 0, 1) : 0;
+  const basinDust = region === 'basin' ? clamp((1 - topology.growthPotential) * 0.42 + topology.valleyStrength * 0.18 + (1 - topology.flowAccumulation) * 0.18, 0, 1) : 0;
   const raw: Partial<Record<HillOfHillsProxyMaterialKind, number>> = {
     [dominantKind]: 1,
-    'ditch-shadow': topology.ditchPotential * 0.72,
-    'basin-pool': topology.valleyStrength * 0.56,
+    'ditch-shadow': topology.ditchPotential * (region === 'basin' ? 0.28 : 0.72),
+    'basin-meadow': basinMeadow,
+    'basin-dust': basinDust,
+    'basin-pool': basinWetPocket * 0.72,
     'growth-lip': topology.growthPotential * 0.62,
     'approach-clay': topology.routePressure * 0.48,
     'slope-moss': topology.ridgeStrength * 0.32,

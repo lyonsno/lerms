@@ -112,6 +112,41 @@ for (const region of ['approach', 'slope', 'basin', 'gutter', 'rim', 'crown'] as
   assert(regions.has(region), `terrain grid classifies ${region} samples`);
 }
 
+const ordinaryBasinTerrain = createHillOfHillsTerrain({
+  seed: 5150,
+  gridResolutionX: 56,
+  gridResolutionZ: 72,
+  hillCount: 18,
+  valleyCount: 28,
+  valleyRadius: 1.55,
+  valleyHeight: 1.2,
+  ditchPhaseIntensity: 0,
+  trailPhaseIntensity: 0
+});
+const ordinaryBasinSamples = ordinaryBasinTerrain.samples.filter(
+  (terrainSample) =>
+    terrainSample.region === 'basin' &&
+    terrainSample.topology.ditchPotential < 0.56 &&
+    terrainSample.topology.flowAccumulation < 0.78
+);
+assert(ordinaryBasinSamples.length > 24, 'ordinary basin contract has enough non-ditch basin samples to judge material read');
+const basinPoolSamples = ordinaryBasinSamples.filter((terrainSample) => terrainSample.proxyMaterial.kind === 'basin-pool');
+assert(
+  basinPoolSamples.length / ordinaryBasinSamples.length < 0.25,
+  'ordinary valleys mostly read as ground, not default water pools'
+);
+assert(
+  ordinaryBasinSamples.some((terrainSample) => ['basin-meadow', 'basin-dust'].includes(terrainSample.proxyMaterial.kind as string)),
+  'ordinary basin samples expose ground-like meadow/dust proxy materials'
+);
+const ordinaryBasinAverageWetness =
+  ordinaryBasinSamples.reduce((sum, terrainSample) => sum + terrainSample.proxyMaterial.wetness, 0) / ordinaryBasinSamples.length;
+assert(ordinaryBasinAverageWetness < 0.54, 'ordinary basin wetness stays below fluid-like read');
+assert(
+  ordinaryBasinTerrain.witness.proxyMaterialCounts['basin-meadow'] || ordinaryBasinTerrain.witness.proxyMaterialCounts['basin-dust'],
+  'witness counts ground-like basin proxy materials'
+);
+
 const gutterSamples = baseline.samples.filter((terrainSample) => terrainSample.region === 'gutter');
 assert(gutterSamples.some((terrainSample) => (terrainSample as any).topology?.ditchPotential > 0.55), 'gutters advertise ditch potential');
 assert(
