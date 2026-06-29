@@ -26,6 +26,14 @@ export type HillOfHillsSupportClass = 'single_valued_heightfield';
 export type HillOfHillsSupportMappingMode = 'static_domain_to_world';
 export type HillOfHillsSupportMotionClass = 'stable' | 'phase_morph' | 'shock_reset';
 export type HillOfHillsSupportShockClass = 'none' | 'shock_reset';
+export type HillOfHillsSurfaceDetailKind =
+  | 'none'
+  | 'meadow-tuft'
+  | 'dust-scuff'
+  | 'slope-striation'
+  | 'damp-edge'
+  | 'trail-wear'
+  | 'growth-bud';
 export type HillOfHillsProxyMaterialKind =
   | 'crown-warmth'
   | 'approach-clay'
@@ -50,7 +58,9 @@ export type HillOfHillsTerrainBufferMetricChannel =
   | 'growthTint'
   | 'previousHeight'
   | 'heightDelta'
-  | 'surfaceVelocityY';
+  | 'surfaceVelocityY'
+  | 'surfaceDetailDensity'
+  | 'surfaceDetailEdgeMix';
 
 export interface HillOfHillsTopology {
   flowDirection: Vec3;
@@ -223,6 +233,7 @@ export interface HillOfHillsTerrainBuffer {
   sampleChecksum: string;
   topologyChecksum: string;
   proxyMaterialChecksum: string;
+  surfaceDetailChecksum: string;
   heightRange: {
     min: number;
     max: number;
@@ -239,6 +250,7 @@ export interface HillOfHillsTerrainBuffer {
   metrics: Float32Array;
   regionCodes: Uint8Array;
   materialCodes: Uint8Array;
+  surfaceDetailCodes: Uint8Array;
 }
 
 export interface HillOfHillsLayerTileCache {
@@ -256,6 +268,7 @@ export interface HillOfHillsTerrainSample extends TerrainSample {
   proxyMaterial: HillOfHillsProxyMaterial;
   phaseInfluence: HillOfHillsPhaseInfluence;
   support: HillOfHillsSupportSample;
+  surfaceDetail: HillOfHillsSurfaceDetail;
 }
 
 export interface HillOfHillsWitness {
@@ -333,6 +346,15 @@ export interface HillOfHillsWitness {
     growthPotential: Range;
   };
   proxyMaterialCounts: Partial<Record<HillOfHillsProxyMaterialKind, number>>;
+  surfaceDetailChecksum: string;
+  surfaceDetailCounts: Partial<Record<HillOfHillsSurfaceDetailKind, number>>;
+}
+
+export interface HillOfHillsSurfaceDetail {
+  kind: HillOfHillsSurfaceDetailKind;
+  density: number;
+  edgeMix: number;
+  seed: number;
 }
 
 export interface HillOfHillsSourceOptions {
@@ -451,7 +473,9 @@ const TERRAIN_BUFFER_METRIC_CHANNELS: readonly HillOfHillsTerrainBufferMetricCha
   'growthTint',
   'previousHeight',
   'heightDelta',
-  'surfaceVelocityY'
+  'surfaceVelocityY',
+  'surfaceDetailDensity',
+  'surfaceDetailEdgeMix'
 ];
 const TERRAIN_REGION_CODEBOOK: readonly TerrainRegion[] = ['crown', 'approach', 'slope', 'basin', 'gutter', 'rim', 'underhill_fixture'];
 const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
@@ -464,6 +488,15 @@ const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
   'ditch-shadow',
   'rim-crust',
   'growth-lip'
+];
+const SURFACE_DETAIL_CODEBOOK: readonly HillOfHillsSurfaceDetailKind[] = [
+  'none',
+  'meadow-tuft',
+  'dust-scuff',
+  'slope-striation',
+  'damp-edge',
+  'trail-wear',
+  'growth-bud'
 ];
 
 export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
@@ -634,6 +667,7 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
   const metrics = new Float32Array(sampleCount * TERRAIN_BUFFER_METRIC_CHANNELS.length);
   const regionCodes = new Uint8Array(sampleCount);
   const materialCodes = new Uint8Array(sampleCount);
+  const surfaceDetailCodes = new Uint8Array(sampleCount);
 
   for (let index = 0; index < sampleCount; index += 1) {
     const sample = terrain.samples[index];
@@ -663,8 +697,11 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
     metrics[metricOffset + 11] = sample.support.previousHeight;
     metrics[metricOffset + 12] = sample.support.heightDelta;
     metrics[metricOffset + 13] = sample.support.surfaceVelocity[1];
+    metrics[metricOffset + 14] = sample.surfaceDetail.density;
+    metrics[metricOffset + 15] = sample.surfaceDetail.edgeMix;
     regionCodes[index] = codeForTerrainRegion(sample.region);
     materialCodes[index] = codeForProxyMaterial(sample.proxyMaterial.kind);
+    surfaceDetailCodes[index] = codeForSurfaceDetail(sample.surfaceDetail.kind);
   }
 
   return {
@@ -679,6 +716,7 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
     sampleChecksum: terrain.witness.sampleChecksum,
     topologyChecksum: terrain.witness.topologyChecksum,
     proxyMaterialChecksum: terrain.witness.proxyMaterialChecksum,
+    surfaceDetailChecksum: terrain.witness.surfaceDetailChecksum,
     heightRange: terrain.witness.heightRange,
     channelLayout: {
       position: ['x', 'y', 'z'],
@@ -691,7 +729,8 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
     colors,
     metrics,
     regionCodes,
-    materialCodes
+    materialCodes,
+    surfaceDetailCodes
   };
 }
 
@@ -702,7 +741,8 @@ export function transferListForHillOfHillsTerrainBuffer(buffer: HillOfHillsTerra
     buffer.colors.buffer as ArrayBuffer,
     buffer.metrics.buffer as ArrayBuffer,
     buffer.regionCodes.buffer as ArrayBuffer,
-    buffer.materialCodes.buffer as ArrayBuffer
+    buffer.materialCodes.buffer as ArrayBuffer,
+    buffer.surfaceDetailCodes.buffer as ArrayBuffer
   ];
 }
 
@@ -716,6 +756,7 @@ export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainB
   const xi = index % buffer.gridResolution.x;
   const zi = Math.floor(index / buffer.gridResolution.x);
   const materialKind = proxyMaterialForCode(buffer.materialCodes[index]);
+  const surfaceDetailKind = surfaceDetailForCode(buffer.surfaceDetailCodes[index]);
   const wetness = metric(buffer, metricOffset, 'wetness');
   const growthTint = metric(buffer, metricOffset, 'growthTint');
   const region = terrainRegionForCode(buffer.regionCodes[index]);
@@ -774,6 +815,12 @@ export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainB
       surfaceVelocity: [0, surfaceVelocityY, 0],
       motionClass: Math.abs(heightDelta) > 0 ? 'phase_morph' : 'stable',
       shock: 'none'
+    },
+    surfaceDetail: {
+      kind: surfaceDetailKind,
+      density: metric(buffer, metricOffset, 'surfaceDetailDensity'),
+      edgeMix: metric(buffer, metricOffset, 'surfaceDetailEdgeMix'),
+      seed: detailSeedFor(buffer.source.configId ?? buffer.source.route, xi, zi, surfaceDetailKind)
     }
   };
 }
@@ -1483,6 +1530,7 @@ function sampleTerrainFromParts(
   const topology = topologyAt(params, x, z, heightParts, dx, dz, slope, region, phaseInfluence);
   const proxyMaterial = proxyMaterialFor(region, topology);
   const support = supportSampleFor(params, phaseState, x, z, heightParts, phaseInfluence);
+  const surfaceDetail = surfaceDetailFor(params, x, z, region, topology, proxyMaterial, phaseInfluence, slope);
 
   return {
     schema: TERRAIN_SAMPLE_SCHEMA,
@@ -1496,7 +1544,66 @@ function sampleTerrainFromParts(
     topology,
     proxyMaterial,
     phaseInfluence,
-    support
+    support,
+    surfaceDetail
+  };
+}
+
+function surfaceDetailFor(
+  params: HillOfHillsTerrainParams,
+  x: number,
+  z: number,
+  region: TerrainRegion,
+  topology: HillOfHillsTopology,
+  proxyMaterial: HillOfHillsProxyMaterial,
+  phaseInfluence: HillOfHillsPhaseInfluence,
+  slope: number
+): HillOfHillsSurfaceDetail {
+  const edgeMix = clamp(
+    Math.max(
+      topology.ditchPotential * 0.54,
+      topology.valleyStrength * 0.34,
+      topology.routePressure * 0.28,
+      slope * 0.3,
+      phaseInfluence.trailAmount * 0.86,
+      phaseInfluence.sideDitchAmount * 0.9
+    ),
+    0,
+    1
+  );
+  const seed = detailSeedFor(params.seed, x, z, proxyMaterial.kind);
+  const jitter = seededUnit(seed);
+  let kind: HillOfHillsSurfaceDetailKind = 'none';
+  let density = 0;
+
+  if (phaseInfluence.trailAmount > 0.24) {
+    kind = 'trail-wear';
+    density = clamp(0.34 + phaseInfluence.trailAmount * 0.58 + topology.routePressure * 0.16 + jitter * 0.08, 0, 1);
+  } else if (region === 'approach' && topology.routePressure > 0.68) {
+    kind = 'trail-wear';
+    density = clamp(0.16 + topology.routePressure * 0.28 + topology.valleyStrength * 0.08 + jitter * 0.1, 0, 1);
+  } else if (topology.ditchPotential > 0.64 || phaseInfluence.sideDitchAmount > 0.24 || proxyMaterial.wetness > 0.62) {
+    kind = 'damp-edge';
+    density = clamp(0.28 + topology.ditchPotential * 0.48 + phaseInfluence.sideDitchAmount * 0.28 + jitter * 0.08, 0, 1);
+  } else if (topology.growthPotential > 0.6 && (region === 'slope' || region === 'rim' || proxyMaterial.kind === 'growth-lip')) {
+    kind = 'growth-bud';
+    density = clamp(0.24 + topology.growthPotential * 0.58 + jitter * 0.12, 0, 1);
+  } else if (proxyMaterial.kind === 'basin-meadow') {
+    kind = 'meadow-tuft';
+    density = clamp(0.22 + topology.growthPotential * 0.48 + topology.routePressure * 0.14 + jitter * 0.16, 0, 1);
+  } else if (proxyMaterial.kind === 'basin-dust' || (region === 'basin' && proxyMaterial.wetness < 0.48)) {
+    kind = 'dust-scuff';
+    density = clamp(0.22 + (1 - topology.growthPotential) * 0.34 + topology.valleyStrength * 0.16 + jitter * 0.16, 0, 1);
+  } else if (region === 'slope' || slope > 0.34 || topology.ridgeStrength > 0.38) {
+    kind = 'slope-striation';
+    density = clamp(0.18 + slope * 0.34 + topology.ridgeStrength * 0.2 + jitter * 0.1, 0, 1);
+  }
+
+  return {
+    kind,
+    density,
+    edgeMix,
+    seed
   };
 }
 
@@ -1669,6 +1776,15 @@ function codeForProxyMaterial(kind: HillOfHillsProxyMaterialKind): number {
 
 function proxyMaterialForCode(code: number): HillOfHillsProxyMaterialKind {
   return PROXY_MATERIAL_CODEBOOK[code] ?? 'approach-clay';
+}
+
+function codeForSurfaceDetail(kind: HillOfHillsSurfaceDetailKind): number {
+  const index = SURFACE_DETAIL_CODEBOOK.indexOf(kind);
+  return index >= 0 ? index : SURFACE_DETAIL_CODEBOOK.indexOf('none');
+}
+
+function surfaceDetailForCode(code: number): HillOfHillsSurfaceDetailKind {
+  return SURFACE_DETAIL_CODEBOOK[code] ?? 'none';
 }
 
 function metric(buffer: HillOfHillsTerrainBuffer, metricOffset: number, channel: HillOfHillsTerrainBufferMetricChannel): number {
@@ -2014,6 +2130,7 @@ function createWitness(
 ): HillOfHillsWitness {
   const regionCounts: Partial<Record<TerrainRegion, number>> = {};
   const proxyMaterialCounts: Partial<Record<HillOfHillsProxyMaterialKind, number>> = {};
+  const surfaceDetailCounts: Partial<Record<HillOfHillsSurfaceDetailKind, number>> = {};
   const phaseInfluenceKinds: Partial<Record<HillOfHillsPhaseInfluenceKind, number>> = {};
   const topologyRanges = createTopologyRanges();
   const phaseInfluenceRange = createRange();
@@ -2040,6 +2157,7 @@ function createWitness(
     max = Math.max(max, sample.height);
     regionCounts[sample.region] = (regionCounts[sample.region] ?? 0) + 1;
     proxyMaterialCounts[sample.proxyMaterial.kind] = (proxyMaterialCounts[sample.proxyMaterial.kind] ?? 0) + 1;
+    surfaceDetailCounts[sample.surfaceDetail.kind] = (surfaceDetailCounts[sample.surfaceDetail.kind] ?? 0) + 1;
     phaseInfluenceKinds[sample.phaseInfluence.kind] = (phaseInfluenceKinds[sample.phaseInfluence.kind] ?? 0) + 1;
     includeInRange(phaseInfluenceRange, sample.phaseInfluence.amount);
     includeInRange(trailInfluenceRange, sample.phaseInfluence.trailAmount);
@@ -2116,7 +2234,9 @@ function createWitness(
     trailCandidateScoreRange: phaseState.trailCandidateScoreRange,
     selectedTrailScoreRange: phaseState.selectedTrailScoreRange,
     topologyRanges,
-    proxyMaterialCounts
+    proxyMaterialCounts,
+    surfaceDetailChecksum: checksumParts(samples.map((sample) => surfaceDetailSignature(sample))),
+    surfaceDetailCounts
   };
 }
 
@@ -2203,6 +2323,16 @@ function topologySignature(sample: HillOfHillsTerrainSample): string {
     sample.topology.routePressure.toFixed(3),
     sample.topology.ditchPotential.toFixed(3),
     sample.topology.growthPotential.toFixed(3)
+  ].join(':');
+}
+
+function surfaceDetailSignature(sample: HillOfHillsTerrainSample): string {
+  return [
+    sample.id,
+    sample.surfaceDetail.kind,
+    sample.surfaceDetail.density.toFixed(3),
+    sample.surfaceDetail.edgeMix.toFixed(3),
+    sample.surfaceDetail.seed
   ].join(':');
 }
 
@@ -2431,6 +2561,14 @@ function normalize(vector: Vec3): Vec3 {
 
 function roundId(value: number): string {
   return value.toFixed(3).replaceAll('-', 'm').replaceAll('.', 'p');
+}
+
+function detailSeedFor(seedOrConfig: number | string, x: number, z: number, kind: string): number {
+  return parseInt(checksum(`${seedOrConfig}:${roundId(x)}:${roundId(z)}:${kind}`), 16) >>> 0;
+}
+
+function seededUnit(seed: number): number {
+  return (seed >>> 0) / 0xffffffff;
 }
 
 function mulberry32(seed: number): () => number {

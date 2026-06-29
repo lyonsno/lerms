@@ -3,6 +3,7 @@ import {
   createHillOfHillsTerrainBuffer,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
+  type HillOfHillsSurfaceDetailKind,
   type HillOfHillsTerrainBuffer,
   type HillOfHillsTerrainBufferMetricChannel,
   type HillOfHillsTerrainParams,
@@ -31,6 +32,15 @@ if (!context) {
 
 const appCanvas = canvas;
 const ctx = context;
+const SURFACE_DETAIL_CODEBOOK: readonly HillOfHillsSurfaceDetailKind[] = [
+  'none',
+  'meadow-tuft',
+  'dust-scuff',
+  'slope-striation',
+  'damp-edge',
+  'trail-wear',
+  'growth-bud'
+];
 let params: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
   ditchPhaseIntensity: 0.18,
@@ -269,6 +279,7 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
     }
   }
 
+  drawSurfaceDetails(currentBuffer, width, height);
   drawTopologyOverlays(currentBuffer, width, height);
 
   ctx.strokeStyle = 'rgba(248, 233, 166, 0.1)';
@@ -281,6 +292,104 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
       else ctx.lineTo(point.x, point.y);
     }
     ctx.stroke();
+  }
+}
+
+function drawSurfaceDetails(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const gridResolutionX = currentBuffer.gridResolution.x;
+  const gridResolutionZ = currentBuffer.gridResolution.z;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (let zi = 2; zi < gridResolutionZ - 2; zi += 2) {
+    for (let xi = 2; xi < gridResolutionX - 2; xi += 2) {
+      const index = zi * gridResolutionX + xi;
+      const kind = surfaceDetailAt(currentBuffer, index);
+      if (kind === 'none') {
+        continue;
+      }
+      const density = metricAt(currentBuffer, index, 'surfaceDetailDensity');
+      const edgeMix = metricAt(currentBuffer, index, 'surfaceDetailEdgeMix');
+      const jitter = detailJitter(currentBuffer, index);
+      if (jitter > density * 0.72) {
+        continue;
+      }
+      drawSurfaceDetailMark(currentBuffer, index, kind, density, edgeMix, jitter, width, height);
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawSurfaceDetailMark(
+  currentBuffer: HillOfHillsTerrainBuffer,
+  index: number,
+  kind: HillOfHillsSurfaceDetailKind,
+  density: number,
+  edgeMix: number,
+  jitter: number,
+  width: number,
+  height: number
+): void {
+  const point = projectSample(currentBuffer, index, width, height, 0.095 + density * 0.035);
+  const angle = detailAngle(currentBuffer, index, jitter);
+  const length = 3 + density * 8;
+  const bend = (edgeMix - 0.5) * 4;
+  const dx = Math.cos(angle) * length;
+  const dy = Math.sin(angle) * length * 0.42;
+
+  switch (kind) {
+    case 'meadow-tuft':
+      ctx.strokeStyle = `rgba(54, 122, 62, ${0.16 + density * 0.28})`;
+      ctx.lineWidth = 0.8 + density * 0.8;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.25, point.y + dy * 0.2);
+      ctx.lineTo(point.x, point.y - length * 0.48);
+      ctx.lineTo(point.x + dx * 0.28, point.y + dy * 0.15);
+      ctx.stroke();
+      return;
+    case 'dust-scuff':
+      ctx.strokeStyle = `rgba(183, 160, 102, ${0.13 + density * 0.2})`;
+      ctx.lineWidth = 1 + density * 1.1;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.5, point.y - dy * 0.5);
+      ctx.lineTo(point.x + dx * 0.5, point.y + dy * 0.5 + bend);
+      ctx.stroke();
+      return;
+    case 'slope-striation':
+      ctx.strokeStyle = `rgba(228, 218, 155, ${0.09 + density * 0.12})`;
+      ctx.lineWidth = 0.8 + density * 0.75;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.7, point.y - dy * 0.7);
+      ctx.quadraticCurveTo(point.x, point.y + bend, point.x + dx * 0.7, point.y + dy * 0.7);
+      ctx.stroke();
+      return;
+    case 'damp-edge':
+      ctx.strokeStyle = `rgba(45, 48, 82, ${0.12 + density * 0.24})`;
+      ctx.lineWidth = 1.4 + density * 1.4;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.52, point.y - dy * 0.52);
+      ctx.lineTo(point.x + dx * 0.52, point.y + dy * 0.52);
+      ctx.stroke();
+      return;
+    case 'trail-wear':
+      ctx.strokeStyle = `rgba(219, 199, 133, ${0.18 + density * 0.24})`;
+      ctx.lineWidth = 1.1 + density * 1.2;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.58, point.y - dy * 0.58);
+      ctx.lineTo(point.x + dx * 0.58, point.y + dy * 0.58 + bend * 0.4);
+      ctx.stroke();
+      return;
+    case 'growth-bud':
+      ctx.fillStyle = `rgba(35, 108, 55, ${0.18 + density * 0.34})`;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 1.8 + density * 2.7, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    case 'none':
+      return;
   }
 }
 
@@ -401,6 +510,26 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
   ctx.restore();
 }
 
+function surfaceDetailAt(buffer: HillOfHillsTerrainBuffer, index: number): HillOfHillsSurfaceDetailKind {
+  return SURFACE_DETAIL_CODEBOOK[buffer.surfaceDetailCodes[index]] ?? 'none';
+}
+
+function detailJitter(buffer: HillOfHillsTerrainBuffer, index: number): number {
+  const x = buffer.positions[index * 3];
+  const z = buffer.positions[index * 3 + 2];
+  const raw = Math.sin(x * 12.9898 + z * 78.233 + buffer.params.seed * 0.021 + index * 0.137) * 43758.5453;
+  return raw - Math.floor(raw);
+}
+
+function detailAngle(buffer: HillOfHillsTerrainBuffer, index: number, jitter: number): number {
+  const nx = buffer.normals[index * 3];
+  const nz = buffer.normals[index * 3 + 2];
+  if (Math.abs(nx) + Math.abs(nz) > 0.02) {
+    return Math.atan2(nz, nx) + Math.PI * 0.5 + (jitter - 0.5) * 0.8;
+  }
+  return jitter * Math.PI * 2;
+}
+
 function strokeOverlayPath(style: HillOverlayStrokeStyle): void {
   ctx.strokeStyle = style.strokeStyle;
   ctx.lineWidth = style.lineWidth;
@@ -506,6 +635,7 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `height: ${witness.heightRange.min.toFixed(2)} .. ${witness.heightRange.max.toFixed(2)}`,
     `checksum: ${witness.sampleChecksum}`,
     `topology: ${witness.topologyChecksum} / material: ${witness.proxyMaterialChecksum}`,
+    `detail: ${witness.surfaceDetailChecksum} meadow ${witness.surfaceDetailCounts['meadow-tuft'] ?? 0} dust ${witness.surfaceDetailCounts['dust-scuff'] ?? 0} damp ${witness.surfaceDetailCounts['damp-edge'] ?? 0}`,
     `phase: ${witness.phaseMode} epoch ${witness.terrainEpoch} active ${witness.activePhaseCount}`,
     `phase clock: ${witness.phaseClock.toFixed(2)} progress ${witness.phaseProgress.toFixed(2)}`,
     `ditch phase: ${witness.effectiveParams.ditchPhaseTimeMs.toFixed(0)}ms clock ${witness.ditchPhaseClock.toFixed(2)} progress ${witness.ditchPhaseProgress.toFixed(2)}`,

@@ -247,6 +247,12 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       surfaceVelocity: [0, 0, 0],
       motionClass: 'stable',
       shock: 'none'
+    },
+    surfaceDetail: {
+      kind: 'none',
+      density: 0,
+      edgeMix: 0,
+      seed: 0
     }
   };
 
@@ -328,6 +334,7 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       },
       topologyChecksum: 'inline-terrain-socket-topology-fixture-checksum',
       proxyMaterialChecksum: 'inline-terrain-socket-material-fixture-checksum',
+      surfaceDetailChecksum: 'inline-terrain-socket-surface-detail-fixture-checksum',
       phaseMode: 'stable',
       terrainEpoch: 0,
       activePhaseCount: 0,
@@ -356,7 +363,8 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
         ditchPotential: { min: 0.08, max: 0.08 },
         growthPotential: { min: 0.36, max: 0.36 }
       },
-      proxyMaterialCounts: { 'crown-warmth': 1 }
+      proxyMaterialCounts: { 'crown-warmth': 1 },
+      surfaceDetailCounts: { none: 1 }
     }
   };
 }

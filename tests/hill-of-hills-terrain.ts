@@ -76,6 +76,13 @@ assert(centerPhase.amount === 0, 'default center phase influence is zero');
 assert(centerPhase.trailAmount === 0, 'default center trail phase influence is zero');
 assert(centerPhase.sideDitchAmount === 0, 'default center side-ditch phase influence is zero');
 
+const centerDetail = (center as any).surfaceDetail;
+assert(centerDetail, 'terrain sample exposes deterministic surface detail for procedural ornament');
+assert(typeof centerDetail.kind === 'string' && centerDetail.kind.length > 0, 'surface detail kind is named');
+assertUnit(centerDetail.density, 'surface detail density');
+assertUnit(centerDetail.edgeMix, 'surface detail edge mix');
+assert(typeof centerDetail.seed === 'number' && Number.isInteger(centerDetail.seed), 'surface detail seed is deterministic integer');
+
 const pushed = createHillOfHillsTerrain({
   channelRadius: 4.2,
   channelCurvature: 1.8,
@@ -146,6 +153,10 @@ assert(
   ordinaryBasinTerrain.witness.proxyMaterialCounts['basin-meadow'] || ordinaryBasinTerrain.witness.proxyMaterialCounts['basin-dust'],
   'witness counts ground-like basin proxy materials'
 );
+assert(typeof (ordinaryBasinTerrain.witness as any).surfaceDetailChecksum === 'string', 'witness exposes surface detail checksum');
+assert((ordinaryBasinTerrain.witness as any).surfaceDetailChecksum !== 'none', 'surface detail checksum is not empty');
+assert((ordinaryBasinTerrain.witness as any).surfaceDetailCounts['meadow-tuft'] > 0, 'basin meadow terrain emits meadow tuft detail');
+assert((ordinaryBasinTerrain.witness as any).surfaceDetailCounts['dust-scuff'] > 0, 'dry basin terrain emits dust scuff detail');
 
 const gutterSamples = baseline.samples.filter((terrainSample) => terrainSample.region === 'gutter');
 assert(gutterSamples.some((terrainSample) => (terrainSample as any).topology?.ditchPotential > 0.55), 'gutters advertise ditch potential');
@@ -563,6 +574,15 @@ assert(typeof baseline.witness.supportFrame.supportFrameChecksum === 'string', '
 assert((baseline.witness as any).topologyRanges.routePressure.max > 0.45, 'witness records route pressure range');
 assert((baseline.witness as any).topologyRanges.growthPotential.max > 0.5, 'witness records growth candidate range');
 assert((baseline.witness as any).proxyMaterialCounts['ditch-shadow'] > 0, 'witness counts ditch-shadow proxy material');
+assert(typeof (baseline.witness as any).surfaceDetailChecksum === 'string', 'witness records surface detail checksum');
+assert((baseline.witness as any).surfaceDetailCounts['slope-striation'] > 0, 'witness counts slope striation detail');
+assert((baseline.witness as any).surfaceDetailCounts['damp-edge'] > 0, 'witness counts damp edge detail');
+assert((baseline.witness as any).surfaceDetailCounts['growth-bud'] > 0, 'witness counts growth bud detail');
+assert((trailPhaseA.witness as any).surfaceDetailCounts['trail-wear'] > 0, 'trail phase witness counts trail-worn detail');
+assert(
+  repeatA.witness.surfaceDetailChecksum === repeatB.witness.surfaceDetailChecksum,
+  'surface detail checksum is deterministic for seed and params'
+);
 assert(repeatA.witness.featureChecksum === repeatB.witness.featureChecksum, 'terrain feature checksum is deterministic for seed and params');
 assert(repeatA.witness.heightfieldChecksum === repeatB.witness.heightfieldChecksum, 'terrain heightfield checksum is deterministic for seed and params');
 assert(
