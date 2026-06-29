@@ -218,6 +218,18 @@ npm run witness:goin-ecology-merge -- --report /tmp/lerms-goin-ecology-merge-wit
 
 This route proves shared goin ecology, not live camera input, sidecar process management, final goin art, full crowd AI, or first-vertical success. Fixture or saved transport stays downgraded even when deterministic goin physics and desire routing are internally live-simulation subsystem evidence.
 
+### `lerms.glove-wealth-custody-witness.v0`
+
+The Glove Wealth custody witness makes the wealth lineage explicit without pretending to define the final economy. It composes the merged goin ecology into `lerms.glove-well-state.v0`, `lerms.glove-wealth-fragment.v0`, and `lerms.glove-wealth-custody-event.v0` rows so consumers can see which portable desire chunk came from the Glove Well, which lerm stole it, which hit dropped it, which piece was sacrificially thrown, which rolling goins became local desire wells, and which fragment returned to the well.
+
+The route is:
+
+```sh
+npm run witness:glove-wealth-custody -- --report /tmp/lerms-glove-wealth-custody-witness.json
+```
+
+This is a lineage and custody receipt, not scoring, treasure economy, final goin art, live sidecar proof, or first-vertical acceptance. It carries the merged ecology source-truth blocker forward and fails stale custody evidence instead of emitting a fresh-looking lineage report.
+
 ### `kaminos.forge-host.smoke-offer.v0` For Goin Ecology
 
 Greedy can export the merged goin ecology as a Forge Host / Preview Bench smoke offer for Kaminos without giving Kaminos ownership of goin law.
