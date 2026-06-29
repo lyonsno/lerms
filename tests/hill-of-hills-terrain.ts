@@ -83,6 +83,14 @@ assertUnit(centerDetail.density, 'surface detail density');
 assertUnit(centerDetail.edgeMix, 'surface detail edge mix');
 assert(typeof centerDetail.seed === 'number' && Number.isInteger(centerDetail.seed), 'surface detail seed is deterministic integer');
 
+const centerEdge = (center as any).materialEdge;
+assert(centerEdge, 'terrain sample exposes material edge dissolve for procedural asset affordances');
+assert(typeof centerEdge.kind === 'string' && centerEdge.kind.length > 0, 'material edge kind is named');
+assert(typeof centerEdge.anchor === 'string' && centerEdge.anchor.length > 0, 'material edge anchor is named');
+assertUnit(centerEdge.strength, 'material edge strength');
+assertUnit(centerEdge.dissolve, 'material edge dissolve');
+assert(typeof centerEdge.seed === 'number' && Number.isInteger(centerEdge.seed), 'material edge seed is deterministic integer');
+
 const pushed = createHillOfHillsTerrain({
   channelRadius: 4.2,
   channelCurvature: 1.8,
@@ -157,6 +165,20 @@ assert(typeof (ordinaryBasinTerrain.witness as any).surfaceDetailChecksum === 's
 assert((ordinaryBasinTerrain.witness as any).surfaceDetailChecksum !== 'none', 'surface detail checksum is not empty');
 assert((ordinaryBasinTerrain.witness as any).surfaceDetailCounts['meadow-tuft'] > 0, 'basin meadow terrain emits meadow tuft detail');
 assert((ordinaryBasinTerrain.witness as any).surfaceDetailCounts['dust-scuff'] > 0, 'dry basin terrain emits dust scuff detail');
+assert(typeof (ordinaryBasinTerrain.witness as any).materialEdgeChecksum === 'string', 'witness exposes material edge checksum');
+assert((ordinaryBasinTerrain.witness as any).materialEdgeChecksum !== 'none', 'material edge checksum is not empty');
+assert(
+  ((ordinaryBasinTerrain.witness as any).materialEdgeCounts['meadow-dust'] ?? 0) +
+    ((ordinaryBasinTerrain.witness as any).materialEdgeCounts['dust-crust'] ?? 0) >
+    0,
+  'ordinary basin terrain emits meadow/dust edge dissolves for procedural asset placement'
+);
+assert(
+  ((ordinaryBasinTerrain.witness as any).surfaceAnchorCounts['tuft-line'] ?? 0) +
+    ((ordinaryBasinTerrain.witness as any).surfaceAnchorCounts['scuff-line'] ?? 0) >
+    0,
+  'ordinary basin terrain emits tuft/scuff anchors for procedural asset placement'
+);
 
 const gutterSamples = baseline.samples.filter((terrainSample) => terrainSample.region === 'gutter');
 assert(gutterSamples.some((terrainSample) => (terrainSample as any).topology?.ditchPotential > 0.55), 'gutters advertise ditch potential');
@@ -579,9 +601,20 @@ assert((baseline.witness as any).surfaceDetailCounts['slope-striation'] > 0, 'wi
 assert((baseline.witness as any).surfaceDetailCounts['damp-edge'] > 0, 'witness counts damp edge detail');
 assert((baseline.witness as any).surfaceDetailCounts['growth-bud'] > 0, 'witness counts growth bud detail');
 assert((trailPhaseA.witness as any).surfaceDetailCounts['trail-wear'] > 0, 'trail phase witness counts trail-worn detail');
+assert(typeof (baseline.witness as any).materialEdgeChecksum === 'string', 'witness records material edge checksum');
+assert((baseline.witness as any).materialEdgeCounts['damp-rim'] > 0, 'witness counts damp rim material edges');
+assert((baseline.witness as any).materialEdgeCounts['growth-cluster'] > 0, 'witness counts growth cluster material edges');
+assert((baseline.witness as any).surfaceAnchorCounts['wet-rim'] > 0, 'witness counts wet rim surface anchors');
+assert((baseline.witness as any).surfaceAnchorCounts['growth-cluster'] > 0, 'witness counts growth cluster surface anchors');
+assert((trailPhaseA.witness as any).materialEdgeCounts['route-wear'] > 0, 'trail phase witness counts route-wear material edges');
+assert((trailPhaseA.witness as any).surfaceAnchorCounts['trail-accent'] > 0, 'trail phase witness counts trail accent anchors');
 assert(
   repeatA.witness.surfaceDetailChecksum === repeatB.witness.surfaceDetailChecksum,
   'surface detail checksum is deterministic for seed and params'
+);
+assert(
+  (repeatA.witness as any).materialEdgeChecksum === (repeatB.witness as any).materialEdgeChecksum,
+  'material edge checksum is deterministic for seed and params'
 );
 assert(repeatA.witness.featureChecksum === repeatB.witness.featureChecksum, 'terrain feature checksum is deterministic for seed and params');
 assert(repeatA.witness.heightfieldChecksum === repeatB.witness.heightfieldChecksum, 'terrain heightfield checksum is deterministic for seed and params');

@@ -3,7 +3,9 @@ import {
   createHillOfHillsTerrainBuffer,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
+  type HillOfHillsMaterialEdgeKind,
   type HillOfHillsSurfaceDetailKind,
+  type HillOfHillsSurfaceAnchorKind,
   type HillOfHillsTerrainBuffer,
   type HillOfHillsTerrainBufferMetricChannel,
   type HillOfHillsTerrainParams,
@@ -40,6 +42,25 @@ const SURFACE_DETAIL_CODEBOOK: readonly HillOfHillsSurfaceDetailKind[] = [
   'damp-edge',
   'trail-wear',
   'growth-bud'
+];
+const MATERIAL_EDGE_CODEBOOK: readonly HillOfHillsMaterialEdgeKind[] = [
+  'none',
+  'meadow-dust',
+  'meadow-growth',
+  'dust-crust',
+  'damp-rim',
+  'route-wear',
+  'growth-cluster',
+  'slope-break'
+];
+const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
+  'none',
+  'tuft-line',
+  'scuff-line',
+  'wet-rim',
+  'trail-accent',
+  'growth-cluster',
+  'stone-scatter'
 ];
 let params: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
@@ -279,6 +300,7 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
     }
   }
 
+  drawMaterialEdgeDissolves(currentBuffer, width, height);
   drawSurfaceDetails(currentBuffer, width, height);
   drawTopologyOverlays(currentBuffer, width, height);
 
@@ -292,6 +314,106 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
       else ctx.lineTo(point.x, point.y);
     }
     ctx.stroke();
+  }
+}
+
+function drawMaterialEdgeDissolves(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const gridResolutionX = currentBuffer.gridResolution.x;
+  const gridResolutionZ = currentBuffer.gridResolution.z;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (let zi = 2; zi < gridResolutionZ - 2; zi += 3) {
+    for (let xi = 2; xi < gridResolutionX - 2; xi += 3) {
+      const index = zi * gridResolutionX + xi;
+      const kind = materialEdgeAt(currentBuffer, index);
+      const anchor = surfaceAnchorAt(currentBuffer, index);
+      if (kind === 'none' || anchor === 'none') {
+        continue;
+      }
+
+      const strength = metricAt(currentBuffer, index, 'materialEdgeStrength');
+      const dissolve = metricAt(currentBuffer, index, 'materialEdgeDissolve');
+      const jitter = detailJitter(currentBuffer, index);
+      if (jitter > dissolve * 0.82 + 0.05) {
+        continue;
+      }
+
+      drawMaterialEdgeMark(currentBuffer, index, kind, anchor, strength, dissolve, jitter, width, height);
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawMaterialEdgeMark(
+  currentBuffer: HillOfHillsTerrainBuffer,
+  index: number,
+  kind: HillOfHillsMaterialEdgeKind,
+  anchor: HillOfHillsSurfaceAnchorKind,
+  strength: number,
+  dissolve: number,
+  jitter: number,
+  width: number,
+  height: number
+): void {
+  const point = projectSample(currentBuffer, index, width, height, 0.11 + dissolve * 0.025);
+  const angle = detailAngle(currentBuffer, index, jitter) + (jitter - 0.5) * 0.55;
+  const length = 2.5 + dissolve * 7;
+  const dx = Math.cos(angle) * length;
+  const dy = Math.sin(angle) * length * 0.5;
+  const alpha = 0.08 + dissolve * 0.18;
+
+  switch (anchor) {
+    case 'wet-rim':
+      ctx.strokeStyle = `rgba(38, 48, 80, ${0.12 + strength * 0.22})`;
+      ctx.lineWidth = 1 + strength * 1.25;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.62, point.y - dy * 0.62);
+      ctx.quadraticCurveTo(point.x, point.y + (jitter - 0.5) * 3, point.x + dx * 0.62, point.y + dy * 0.62);
+      ctx.stroke();
+      return;
+    case 'trail-accent':
+      ctx.strokeStyle = `rgba(216, 194, 128, ${0.1 + strength * 0.2})`;
+      ctx.lineWidth = 0.85 + strength * 1;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.55, point.y - dy * 0.55);
+      ctx.lineTo(point.x + dx * 0.55, point.y + dy * 0.55);
+      ctx.stroke();
+      return;
+    case 'growth-cluster':
+      ctx.fillStyle = `rgba(39, 117, 61, ${0.12 + strength * 0.26})`;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 1.2 + strength * 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    case 'tuft-line':
+      ctx.strokeStyle = kind === 'meadow-growth' ? `rgba(75, 148, 78, ${alpha})` : `rgba(137, 152, 92, ${alpha})`;
+      ctx.lineWidth = 0.75 + strength * 0.8;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.4, point.y + dy * 0.2);
+      ctx.lineTo(point.x, point.y - length * 0.38);
+      ctx.lineTo(point.x + dx * 0.4, point.y + dy * 0.2);
+      ctx.stroke();
+      return;
+    case 'scuff-line':
+      ctx.strokeStyle = `rgba(185, 157, 96, ${0.09 + strength * 0.17})`;
+      ctx.lineWidth = 0.8 + strength * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(point.x - dx * 0.5, point.y - dy * 0.35);
+      ctx.lineTo(point.x + dx * 0.5, point.y + dy * 0.35);
+      ctx.stroke();
+      return;
+    case 'stone-scatter':
+      ctx.fillStyle = `rgba(97, 88, 82, ${0.08 + strength * 0.2})`;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 0.8 + strength * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    case 'none':
+      return;
   }
 }
 
@@ -514,6 +636,14 @@ function surfaceDetailAt(buffer: HillOfHillsTerrainBuffer, index: number): HillO
   return SURFACE_DETAIL_CODEBOOK[buffer.surfaceDetailCodes[index]] ?? 'none';
 }
 
+function materialEdgeAt(buffer: HillOfHillsTerrainBuffer, index: number): HillOfHillsMaterialEdgeKind {
+  return MATERIAL_EDGE_CODEBOOK[buffer.materialEdgeCodes[index]] ?? 'none';
+}
+
+function surfaceAnchorAt(buffer: HillOfHillsTerrainBuffer, index: number): HillOfHillsSurfaceAnchorKind {
+  return SURFACE_ANCHOR_CODEBOOK[buffer.surfaceAnchorCodes[index]] ?? 'none';
+}
+
 function detailJitter(buffer: HillOfHillsTerrainBuffer, index: number): number {
   const x = buffer.positions[index * 3];
   const z = buffer.positions[index * 3 + 2];
@@ -636,6 +766,7 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `checksum: ${witness.sampleChecksum}`,
     `topology: ${witness.topologyChecksum} / material: ${witness.proxyMaterialChecksum}`,
     `detail: ${witness.surfaceDetailChecksum} meadow ${witness.surfaceDetailCounts['meadow-tuft'] ?? 0} dust ${witness.surfaceDetailCounts['dust-scuff'] ?? 0} damp ${witness.surfaceDetailCounts['damp-edge'] ?? 0}`,
+    `edge: ${witness.materialEdgeChecksum} damp ${witness.materialEdgeCounts['damp-rim'] ?? 0} trail ${witness.materialEdgeCounts['route-wear'] ?? 0} growth ${witness.materialEdgeCounts['growth-cluster'] ?? 0}`,
     `phase: ${witness.phaseMode} epoch ${witness.terrainEpoch} active ${witness.activePhaseCount}`,
     `phase clock: ${witness.phaseClock.toFixed(2)} progress ${witness.phaseProgress.toFixed(2)}`,
     `ditch phase: ${witness.effectiveParams.ditchPhaseTimeMs.toFixed(0)}ms clock ${witness.ditchPhaseClock.toFixed(2)} progress ${witness.ditchPhaseProgress.toFixed(2)}`,

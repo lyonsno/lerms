@@ -78,6 +78,8 @@ assert(response.terrainBuffer.metrics instanceof Float32Array, 'terrain buffer m
 assert(response.terrainBuffer.regionCodes instanceof Uint8Array, 'terrain buffer region codes are Uint8Array');
 assert(response.terrainBuffer.materialCodes instanceof Uint8Array, 'terrain buffer material codes are Uint8Array');
 assert(response.terrainBuffer.surfaceDetailCodes instanceof Uint8Array, 'terrain buffer surface detail codes are Uint8Array');
+assert(response.terrainBuffer.materialEdgeCodes instanceof Uint8Array, 'terrain buffer material edge codes are Uint8Array');
+assert(response.terrainBuffer.surfaceAnchorCodes instanceof Uint8Array, 'terrain buffer surface anchor codes are Uint8Array');
 assert(response.terrainBuffer.positions.length === terrain.samples.length * 3, 'terrain buffer has packed xyz positions');
 assert(response.terrainBuffer.normals.length === terrain.samples.length * 3, 'terrain buffer has packed normals');
 assert(response.terrainBuffer.colors.length === terrain.samples.length * 3, 'terrain buffer has packed proxy colors');
@@ -85,6 +87,8 @@ assert(response.terrainBuffer.metrics.length === terrain.samples.length * respon
 assert(response.terrainBuffer.channelLayout.metrics.includes('routePressure'), 'terrain buffer exposes route pressure channel');
 assert(response.terrainBuffer.channelLayout.metrics.includes('sideDitchAmount'), 'terrain buffer exposes side-ditch channel');
 assert(response.terrainBuffer.channelLayout.metrics.includes('surfaceDetailDensity'), 'terrain buffer exposes surface detail density channel');
+assert(response.terrainBuffer.channelLayout.metrics.includes('materialEdgeStrength'), 'terrain buffer exposes material edge strength channel');
+assert(response.terrainBuffer.channelLayout.metrics.includes('materialEdgeDissolve'), 'terrain buffer exposes material edge dissolve channel');
 assert(
   Array.from(response.terrainBuffer.metrics).every(Number.isFinite),
   'terrain buffer metric channels are finite'
@@ -105,12 +109,22 @@ assert(decoded.region === original.region, 'decoded terrain buffer sample preser
 assert(decoded.proxyMaterial.kind === original.proxyMaterial.kind, 'decoded terrain buffer sample preserves material kind');
 assert(decoded.surfaceDetail.kind === original.surfaceDetail.kind, 'decoded terrain buffer sample preserves surface detail kind');
 assert(Math.abs(decoded.surfaceDetail.density - original.surfaceDetail.density) < 0.0001, 'decoded terrain buffer sample preserves surface detail density');
+assert((decoded as any).materialEdge.kind === (original as any).materialEdge.kind, 'decoded terrain buffer sample preserves material edge kind');
+assert((decoded as any).materialEdge.anchor === (original as any).materialEdge.anchor, 'decoded terrain buffer sample preserves material edge anchor');
+assert(
+  Math.abs((decoded as any).materialEdge.strength - (original as any).materialEdge.strength) < 0.0001,
+  'decoded terrain buffer sample preserves material edge strength'
+);
+assert(
+  Math.abs((decoded as any).materialEdge.dissolve - (original as any).materialEdge.dissolve) < 0.0001,
+  'decoded terrain buffer sample preserves material edge dissolve'
+);
 assert(Math.abs(decoded.proxyMaterial.color[0] - original.proxyMaterial.color[0]) < 0.0001, 'decoded terrain buffer sample preserves material red');
 assert(Math.abs(decoded.proxyMaterial.color[1] - original.proxyMaterial.color[1]) < 0.0001, 'decoded terrain buffer sample preserves material green');
 assert(Math.abs(decoded.proxyMaterial.color[2] - original.proxyMaterial.color[2]) < 0.0001, 'decoded terrain buffer sample preserves material blue');
 
 const transferList = transferListForHillOfHillsTerrainBuffer(terrainBuffer);
-assert(transferList.length === 7, 'terrain buffer transfer list includes the seven compact channel buffers');
+assert(transferList.length === 9, 'terrain buffer transfer list includes the nine compact channel buffers');
 assert(transferList.includes(terrainBuffer.positions.buffer as ArrayBuffer), 'terrain buffer transfer list includes positions backing store');
 assert(transferList.includes(terrainBuffer.normals.buffer as ArrayBuffer), 'terrain buffer transfer list includes normals backing store');
 assert(transferList.includes(terrainBuffer.colors.buffer as ArrayBuffer), 'terrain buffer transfer list includes colors backing store');
@@ -118,7 +132,9 @@ assert(transferList.includes(terrainBuffer.metrics.buffer as ArrayBuffer), 'terr
 assert(transferList.includes(terrainBuffer.regionCodes.buffer as ArrayBuffer), 'terrain buffer transfer list includes region code backing store');
 assert(transferList.includes(terrainBuffer.materialCodes.buffer as ArrayBuffer), 'terrain buffer transfer list includes material code backing store');
 assert(transferList.includes(terrainBuffer.surfaceDetailCodes.buffer as ArrayBuffer), 'terrain buffer transfer list includes surface detail code backing store');
-assert(hillTerrainWorkerTransferList(response).length === 7, 'worker success exposes terrain buffer transfer list');
+assert(transferList.includes(terrainBuffer.materialEdgeCodes.buffer as ArrayBuffer), 'terrain buffer transfer list includes material edge code backing store');
+assert(transferList.includes(terrainBuffer.surfaceAnchorCodes.buffer as ArrayBuffer), 'terrain buffer transfer list includes surface anchor code backing store');
+assert(hillTerrainWorkerTransferList(response).length === 9, 'worker success exposes terrain buffer transfer list');
 assert(isFreshHillTerrainWorkerResponse(response, 7), 'latest successful worker response is fresh');
 assert(!isFreshHillTerrainWorkerResponse(response, 8), 'older worker response is rejected as stale');
 

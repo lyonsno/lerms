@@ -89,6 +89,13 @@ const terrainSample: HillOfHillsTerrainSample = {
     density: 0,
     edgeMix: 0,
     seed: 0
+  },
+  materialEdge: {
+    kind: 'none',
+    anchor: 'none',
+    strength: 0,
+    dissolve: 0,
+    seed: 0
   }
 };
 
@@ -245,6 +252,7 @@ const terrain: HillOfHillsTerrain = {
     topologyChecksum: 'composer-terrain-topology-fixture-checksum',
     proxyMaterialChecksum: 'composer-terrain-material-fixture-checksum',
     surfaceDetailChecksum: 'composer-terrain-surface-detail-fixture-checksum',
+    materialEdgeChecksum: 'composer-terrain-material-edge-fixture-checksum',
     phaseMode: 'stable',
     terrainEpoch: 0,
     activePhaseCount: 0,
@@ -274,7 +282,9 @@ const terrain: HillOfHillsTerrain = {
       growthPotential: { min: 0.36, max: 0.36 }
     },
     proxyMaterialCounts: { 'crown-warmth': 1 },
-    surfaceDetailCounts: { none: 1 }
+    surfaceDetailCounts: { none: 1 },
+    materialEdgeCounts: { none: 1 },
+    surfaceAnchorCounts: { none: 1 }
   }
 };
 
