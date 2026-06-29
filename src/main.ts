@@ -11,6 +11,11 @@ import {
   createHillTerrainWorkerRequest,
   type HillTerrainWorkerResponse
 } from './terrain/hill-of-hills-worker-client.js';
+import {
+  hillOverlayStrokeStyle,
+  shouldBreakHillTrailStroke,
+  type HillOverlayStrokeStyle
+} from './terrain/hill-of-hills-overlay-style.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -287,15 +292,18 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  for (let zi = 2; zi < gridResolutionZ - 2; zi += 4) {
+  for (let zi = 2; zi < gridResolutionZ - 2; zi += 5) {
     ctx.beginPath();
     let drawing = false;
+    let strength = 0;
     for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
       const index = zi * gridResolutionX + xi;
-      if (metricAt(currentBuffer, index, 'ditchPotential') < 0.62) {
+      const ditchPotential = metricAt(currentBuffer, index, 'ditchPotential');
+      if (ditchPotential < 0.64) {
         drawing = false;
         continue;
       }
+      strength = Math.max(strength, ditchPotential);
       const point = projectSample(currentBuffer, index, width, height, 0.035);
       if (!drawing) {
         ctx.moveTo(point.x, point.y);
@@ -304,12 +312,12 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
         ctx.lineTo(point.x, point.y);
       }
     }
-    ctx.strokeStyle = 'rgba(30, 22, 54, 0.48)';
-    ctx.lineWidth = 3.2;
-    ctx.stroke();
+    if (strength > 0) {
+      strokeOverlayPath(hillOverlayStrokeStyle('ditch', strength));
+    }
   }
 
-  for (let zi = 2; zi < gridResolutionZ - 2; zi += 3) {
+  for (let zi = 2; zi < gridResolutionZ - 2; zi += 4) {
     ctx.beginPath();
     let drawing = false;
     let strength = 0;
@@ -330,9 +338,7 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
       }
     }
     if (strength > 0) {
-      ctx.strokeStyle = `rgba(24, 18, 46, ${0.3 + strength * 0.36})`;
-      ctx.lineWidth = 4.2 + strength * 4.4;
-      ctx.stroke();
+      strokeOverlayPath(hillOverlayStrokeStyle('phaseDitch', strength));
     }
   }
 
@@ -340,13 +346,21 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
     ctx.beginPath();
     let drawing = false;
     let strength = 0;
+    let runSampleCount = 0;
     for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
       const index = zi * gridResolutionX + xi;
       const trailAmount = metricAt(currentBuffer, index, 'trailAmount');
       if (trailAmount < 0.18) {
+        if (drawing && strength > 0) {
+          strokeOverlayPath(hillOverlayStrokeStyle('trail', strength));
+        }
+        ctx.beginPath();
         drawing = false;
+        strength = 0;
+        runSampleCount = 0;
         continue;
       }
+      runSampleCount += 1;
       strength = Math.max(strength, trailAmount);
       const point = projectSample(currentBuffer, index, width, height, 0.075);
       if (!drawing) {
@@ -355,11 +369,16 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
       } else {
         ctx.lineTo(point.x, point.y);
       }
+      if (shouldBreakHillTrailStroke(runSampleCount, trailAmount)) {
+        strokeOverlayPath(hillOverlayStrokeStyle('trail', strength));
+        ctx.beginPath();
+        drawing = false;
+        strength = 0;
+        runSampleCount = 0;
+      }
     }
     if (strength > 0) {
-      ctx.strokeStyle = `rgba(220, 196, 117, ${0.24 + strength * 0.32})`;
-      ctx.lineWidth = 2.4 + strength * 3.2;
-      ctx.stroke();
+      strokeOverlayPath(hillOverlayStrokeStyle('trail', strength));
     }
   }
 
@@ -380,6 +399,12 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
   }
 
   ctx.restore();
+}
+
+function strokeOverlayPath(style: HillOverlayStrokeStyle): void {
+  ctx.strokeStyle = style.strokeStyle;
+  ctx.lineWidth = style.lineWidth;
+  ctx.stroke();
 }
 
 function drawRouteMarkers(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
