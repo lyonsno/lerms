@@ -64,6 +64,25 @@ interface RejectedDebugSurface {
   reason: string;
 }
 
+interface BenchHintMarker {
+  id: string;
+  kind: 'carrier_actor' | 'carried_goin' | 'drop_release' | 'loose_goin' | 'reroute_actor' | 'reroute_target';
+  label: string;
+  world: [number, number, number];
+  authority: 'fixture';
+  route: typeof PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE;
+  frameIndex: number;
+  goinId: string;
+  actorId: string;
+  weight: number;
+}
+
+interface BenchHints {
+  title: 'LERM Horde actor/goin timeline markers';
+  sourceSchema: 'lerms.preview-bench-goin-custody.v0';
+  objectMarkers: BenchHintMarker[];
+}
+
 interface ActorTimelinePreviewBenchPayload {
   schema: typeof LERMS_ACTOR_TIMELINE_PREVIEW_BENCH_PAYLOAD_SCHEMA;
   route: typeof LERMS_ACTOR_TIMELINE_PREVIEW_BENCH_PAYLOAD_ROUTE;
@@ -124,6 +143,7 @@ interface ActorTimelineSmokeOffer {
   fields: Field[];
   downgrades: string[];
   rejectedDebugSurfaces: RejectedDebugSurface[];
+  benchHints: BenchHints;
   payloadReport: ActorTimelinePayloadReport;
 }
 
@@ -216,6 +236,7 @@ export function buildPreviewBenchActorTimelineSmokeOfferReport({
   const rejectedDebugSurfaces = buildRejectedDebugSurfaces(timeline);
   const summary = buildSummary(actorMotionTimeline);
   const fields = buildFields(actorMotionTimeline, summary);
+  const benchHints = buildBenchHints(actorMotionTimeline);
   const payloadReport = buildPayloadReport({
     outputPath,
     frameId,
@@ -252,6 +273,7 @@ export function buildPreviewBenchActorTimelineSmokeOfferReport({
         fields,
         downgrades,
         rejectedDebugSurfaces,
+        benchHints,
         payloadReport,
       },
     ],
@@ -308,6 +330,103 @@ export function runPreviewBenchActorTimelineSmokeOfferCli(argv = process.argv.sl
     writeJson(args.report, buildFailureReport(args, error));
     return 1;
   }
+}
+
+function buildBenchHints(actorMotionTimeline: PreviewBenchActorMotionTimelineReport): BenchHints {
+  const objectMarkers: BenchHintMarker[] = [];
+  for (const event of actorMotionTimeline.timeline.goinCustody.possessionEvents) {
+    const world = tuple3(event.world);
+    if (event.event === 'possession-gained') {
+      objectMarkers.push(buildMarker({
+        id: `${event.goinId}-${event.actorId}-carry-actor`,
+        kind: 'carrier_actor',
+        label: `CARRY ${event.actorId}`,
+        world,
+        event,
+        weight: 1.35,
+      }));
+      objectMarkers.push(buildMarker({
+        id: `${event.goinId}-${event.actorId}-carry-goin`,
+        kind: 'carried_goin',
+        label: `CARRY ${event.goinId}`,
+        world,
+        event,
+        weight: 1.1,
+      }));
+    } else if (event.event === 'possession-released') {
+      objectMarkers.push(buildMarker({
+        id: `${event.goinId}-${event.actorId}-drop-release`,
+        kind: 'drop_release',
+        label: `DROP ${event.actorId}`,
+        world,
+        event,
+        weight: 1.45,
+      }));
+      objectMarkers.push(buildMarker({
+        id: `${event.goinId}-${event.actorId}-loose-goin`,
+        kind: 'loose_goin',
+        label: `LOOSE ${event.goinId}`,
+        world,
+        event,
+        weight: 1.25,
+      }));
+    } else if (event.event === 'loose-target-noticed') {
+      objectMarkers.push(buildMarker({
+        id: `${event.goinId}-${event.actorId}-reroute-actor`,
+        kind: 'reroute_actor',
+        label: `TARGET ${event.actorId}`,
+        world,
+        event,
+        weight: 1.15,
+      }));
+      objectMarkers.push(buildMarker({
+        id: `${event.goinId}-${event.actorId}-reroute-target`,
+        kind: 'reroute_target',
+        label: `TARGET ${event.goinId}`,
+        world,
+        event,
+        weight: 1.35,
+      }));
+    }
+  }
+  return {
+    title: 'LERM Horde actor/goin timeline markers',
+    sourceSchema: actorMotionTimeline.timeline.goinCustody.schema,
+    objectMarkers,
+  };
+}
+
+function buildMarker({
+  id,
+  kind,
+  label,
+  world,
+  event,
+  weight,
+}: {
+  id: string;
+  kind: BenchHintMarker['kind'];
+  label: string;
+  world: [number, number, number];
+  event: PreviewBenchActorMotionTimelineReport['timeline']['goinCustody']['possessionEvents'][number];
+  weight: number;
+}): BenchHintMarker {
+  return {
+    id,
+    kind,
+    label,
+    world,
+    authority: 'fixture',
+    route: PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE,
+    frameIndex: event.frameIndex,
+    goinId: event.goinId,
+    actorId: event.actorId,
+    weight,
+  };
+}
+
+function tuple3(value: readonly number[]): [number, number, number] {
+  return [Number(value[0] ?? 0), Number(value[1] ?? 0), Number(value[2] ?? 0)];
 }
 
 function buildSource(

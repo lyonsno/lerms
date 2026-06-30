@@ -52,6 +52,12 @@ assert.ok(offer.fields.some((field) => field.label === 'actor states' && String(
 assert.ok(offer.downgrades.includes('timevarying_payload_not_live_socket_stream'));
 assert.ok(offer.downgrades.includes('forge_host_smoke_offer_is_not_source_authority'));
 assert.ok(offer.rejectedDebugSurfaces.some((surface) => surface.id === 'browser/?schnoz_3d=1'));
+assert.ok(offer.benchHints.objectMarkers.length >= 6);
+assert.ok(offer.benchHints.objectMarkers.some((marker) => marker.kind === 'carrier_actor'));
+assert.ok(offer.benchHints.objectMarkers.some((marker) => marker.kind === 'carried_goin'));
+assert.ok(offer.benchHints.objectMarkers.some((marker) => marker.kind === 'reroute_target'));
+const markerWorldKeys = offer.benchHints.objectMarkers.map((marker) => marker.world.join(':'));
+assert.ok(new Set(markerWorldKeys).size < markerWorldKeys.length, 'carried/drop actor and goin markers should preserve coincident source coordinates for Kaminos fan-out');
 assert.equal(offer.payloadReport.schema, 'kaminos.preview-bench.payload-report.v0');
 assert.equal(offer.payloadReport.payload.schema, LERMS_ACTOR_TIMELINE_PREVIEW_BENCH_PAYLOAD_SCHEMA);
 assert.equal(offer.payloadReport.payload.source.authority, 'fixture');
