@@ -83,39 +83,51 @@ state = buildGloveWellBrowserSmokeState({ previous: state, cache: snapshot(32, '
 assert.equal(state.phase, 'aiming');
 assert.equal(state.aim.active, true);
 assert.equal(state.aim.arcSamples.length, 7);
-assert.ok(state.aim.direction.x > 0);
+assert.ok(state.aim.direction.x < 0, 'operator-visible aim flips mirrored source x so right-hand fixture points left on canvas');
 assert.ok(state.aim.direction.y < 0);
 
 state = buildGloveWellBrowserSmokeState({ previous: state, cache: snapshot(33, 'release'), nowMs: 90_240 });
 assert.equal(state.phase, 'released');
 assert.equal(state.releaseCount, 1);
 assert.equal(state.goin.state, 'rolling');
-assert.equal(state.goin.velocity.x > 0, true);
+assert.equal(state.goin.velocity.x < 0, true);
 assert.equal(state.goin.velocity.y < 0, true);
 assert.equal(state.goin.desireRadius > 0.1, true);
 assert.equal(state.downgrades.length, 0);
+
+const rollingGoinPosition = state.goin.position;
+state = buildGloveWellBrowserSmokeState({ previous: state, cache: snapshot(34, 'prime'), nowMs: 90_360 });
+assert.equal(state.phase, 'priming');
+assert.equal(state.releaseCount, 1);
+assert.equal(Array.isArray(state.goins), true, 'browser smoke keeps a world goin collection instead of a single recycled goin');
+assert.equal(state.goins.some((goin) => goin.state === 'held'), true, 'repinch primes a new held goin');
+assert.equal(state.goins.some((goin) => goin.state === 'rolling'), true, 'repinch preserves the launched rolling goin in the world');
+const rollingAfterRepinch = state.goins.find((goin) => goin.state === 'rolling');
+assert.notEqual(rollingAfterRepinch, undefined);
+assert.notDeepEqual(rollingAfterRepinch!.position, state.hand.palmCenter, 'launched goin does not teleport back into the pinched hand');
+assert.notDeepEqual(rollingAfterRepinch!.position, rollingGoinPosition, 'launched goin continues advancing while a new goin is held');
 
 const emptyState = buildGloveWellBrowserSmokeState({
   previous: state,
   cache: {
     schema: 'kaminos.hand-control-sidecar-event-cache.v0',
     status: 'empty',
-    sequence: 33,
+    sequence: 34,
     stored_at_ms: null,
     age_ms: null,
     event: null
   },
-  nowMs: 90_360
+  nowMs: 90_480
 });
 assert.equal(emptyState.authority, 'live_simulation');
 assert.equal(emptyState.statusCode, 'no_new_packet');
 assert.ok(emptyState.downgrades.includes('kaminos_event_cache_no_new_packet'));
-assert.equal(emptyState.goin.state, 'rolling', 'last goin remains visible while source is stale');
+assert.equal(emptyState.goins.some((goin) => goin.state === 'rolling'), true, 'last launched goin remains visible while source is stale');
 
 const staleState = buildGloveWellBrowserSmokeState({
   previous: state,
-  cache: { ...snapshot(34, 'aim'), age_ms: 400 },
-  nowMs: 90_480
+  cache: { ...snapshot(35, 'aim'), age_ms: 400 },
+  nowMs: 90_600
 });
 assert.equal(staleState.authority, 'stale_hold');
 assert.equal(staleState.statusCode, 'stale');
@@ -124,14 +136,14 @@ assert.ok(staleState.downgrades.includes('kaminos_event_cache_stale'));
 const fallbackState = buildGloveWellBrowserSmokeState({
   previous: state,
   cache: {
-    ...snapshot(35, 'aim'),
+    ...snapshot(36, 'aim'),
     event: {
-      ...snapshot(35, 'aim').event!,
+      ...snapshot(36, 'aim').event!,
       source_backend: 'saved_wilor_fixture',
-      debug: { ...snapshot(35, 'aim').event!.debug, evidence_route: 'saved_wilor_fixture' }
+      debug: { ...snapshot(36, 'aim').event!.debug, evidence_route: 'saved_wilor_fixture' }
     }
   },
-  nowMs: 90_600
+  nowMs: 90_720
 });
 assert.equal(fallbackState.authority, 'fallback');
 assert.equal(fallbackState.statusCode, 'fallback');
@@ -140,13 +152,13 @@ assert.ok(fallbackState.downgrades.includes('kaminos_event_cache_non_live_route'
 const syntheticState = buildGloveWellBrowserSmokeState({
   previous: state,
   cache: {
-    ...snapshot(36, 'aim'),
+    ...snapshot(37, 'aim'),
     event: {
-      ...snapshot(36, 'aim').event!,
-      webcam_frame: { ...snapshot(36, 'aim').event!.webcam_frame!, synthetic: true }
+      ...snapshot(37, 'aim').event!,
+      webcam_frame: { ...snapshot(37, 'aim').event!.webcam_frame!, synthetic: true }
     }
   },
-  nowMs: 90_720
+  nowMs: 90_840
 });
 assert.equal(syntheticState.authority, 'synthetic_fixture');
 assert.equal(syntheticState.statusCode, 'synthetic');
@@ -155,7 +167,7 @@ assert.ok(syntheticState.downgrades.includes('kaminos_event_cache_synthetic_webc
 const replayState = buildGloveWellBrowserSmokeState({
   previous: state,
   cache: snapshot(32, 'aim'),
-  nowMs: 90_840
+  nowMs: 90_960
 });
 assert.equal(replayState.authority, 'stale_hold');
 assert.equal(replayState.statusCode, 'replay');

@@ -10,10 +10,20 @@ interface SmokeRuntime {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   status: HTMLElement;
+  captureButton: HTMLButtonElement;
   endpoint: string;
   state: BrowserSmokeState;
   lastCache: BrowserSmokeCacheSnapshot | null;
   lastFetchError: string | null;
+  capture: SmokeCaptureStatus;
+}
+
+interface SmokeCaptureStatus {
+  state: 'idle' | 'starting' | 'running' | 'complete' | 'failed';
+  outDir: string | null;
+  reportPath: string | null;
+  filmstripPath: string | null;
+  error: string | null;
 }
 
 export function mountGloveWellBrowserSmoke(root: HTMLElement): void {
@@ -47,7 +57,12 @@ export function mountGloveWellBrowserSmoke(root: HTMLElement): void {
   hillLink.href = '/';
   hillLink.textContent = 'Hill';
 
-  controls.append(handLink, hillLink);
+  const captureButton = document.createElement('button');
+  captureButton.className = 'glove-well-capture-button';
+  captureButton.type = 'button';
+  captureButton.textContent = 'Capture';
+
+  controls.append(captureButton, handLink, hillLink);
   root.append(canvas, handFrame, status, controls);
 
   const ctx = requireCanvasContext(canvas);
@@ -55,19 +70,34 @@ export function mountGloveWellBrowserSmoke(root: HTMLElement): void {
     canvas,
     ctx,
     status,
+    captureButton,
     endpoint,
     state: buildInitialGloveWellBrowserSmokeState(endpoint),
     lastCache: null,
-    lastFetchError: null
+    lastFetchError: null,
+    capture: {
+      state: 'idle',
+      outDir: null,
+      reportPath: null,
+      filmstripPath: null,
+      error: null
+    }
   };
 
   installSmokeStyles();
   resize(runtime);
+  captureButton.addEventListener('click', () => {
+    void startCapture(runtime);
+  });
   window.addEventListener('resize', () => resize(runtime));
   window.setInterval(() => {
     void pollKaminos(runtime);
   }, 120);
+  window.setInterval(() => {
+    void pollCaptureStatus(runtime);
+  }, 1200);
   void pollKaminos(runtime);
+  void pollCaptureStatus(runtime);
   window.requestAnimationFrame((timestampMs) => render(runtime, timestampMs));
 }
 
@@ -116,7 +146,7 @@ function render(runtime: SmokeRuntime, timestampMs: number): void {
   drawGloveWell(ctx, width, height, state);
   drawHand(ctx, width, height, state);
   drawAim(ctx, width, height, state);
-  drawGoin(ctx, width, height, state);
+  drawGoins(ctx, width, height, state);
   drawLerms(ctx, width, height, state);
   updateStatus(runtime);
 
@@ -214,29 +244,33 @@ function drawAim(ctx: CanvasRenderingContext2D, width: number, height: number, s
   ctx.globalAlpha = 1;
 }
 
-function drawGoin(ctx: CanvasRenderingContext2D, width: number, height: number, state: BrowserSmokeState): void {
-  const goin = pointToCanvas(state.goin.position, width, height);
-  const radius = state.goin.state === 'held' ? 13 : 18;
+function drawGoins(ctx: CanvasRenderingContext2D, width: number, height: number, state: BrowserSmokeState): void {
+  const goins = state.goins.length ? state.goins : [state.goin];
+  goins.forEach((item) => {
+    const goin = pointToCanvas(item.position, width, height);
+    const radius = item.state === 'held' ? 13 : 18;
 
-  if (state.goin.desireRadius > 0) {
-    ctx.strokeStyle = 'rgba(255, 231, 137, 0.2)';
-    ctx.lineWidth = 2;
+    if (item.desireRadius > 0) {
+      ctx.strokeStyle = 'rgba(255, 231, 137, 0.2)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(goin.x, goin.y, item.desireRadius * Math.min(width, height), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = item.state === 'held' ? '#ffe789' : '#f4c64f';
     ctx.beginPath();
-    ctx.arc(goin.x, goin.y, state.goin.desireRadius * Math.min(width, height), 0, Math.PI * 2);
+    ctx.ellipse(goin.x, goin.y, radius * 1.18, radius, 0.18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#6a4f19';
+    ctx.lineWidth = 3;
     ctx.stroke();
-  }
-
-  ctx.fillStyle = '#f4c64f';
-  ctx.beginPath();
-  ctx.ellipse(goin.x, goin.y, radius * 1.18, radius, 0.18, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#6a4f19';
-  ctx.lineWidth = 3;
-  ctx.stroke();
+  });
 }
 
 function drawLerms(ctx: CanvasRenderingContext2D, width: number, height: number, state: BrowserSmokeState): void {
-  const target = pointToCanvas(state.goin.position, width, height);
+  const lure = state.goins.find((goin) => goin.state === 'rolling') ?? state.goin;
+  const target = pointToCanvas(lure.position, width, height);
   const origins = [
     { x: width * 0.68, y: height * 0.68 },
     { x: width * 0.76, y: height * 0.78 },
@@ -244,14 +278,14 @@ function drawLerms(ctx: CanvasRenderingContext2D, width: number, height: number,
   ];
 
   origins.forEach((origin, index) => {
-    const mix = state.goin.state === 'rolling' ? 0.32 + index * 0.08 : 0.12;
+    const mix = lure.state === 'rolling' ? 0.32 + index * 0.08 : 0.12;
     const x = origin.x + (target.x - origin.x) * mix;
     const y = origin.y + (target.y - origin.y) * mix;
     ctx.fillStyle = ['#ce4b4b', '#b43d5c', '#e06548'][index] ?? '#ce4b4b';
     ctx.beginPath();
     ctx.arc(x, y, 11, 0, Math.PI * 2);
     ctx.fill();
-    if (state.goin.state === 'rolling') {
+    if (lure.state === 'rolling') {
       ctx.strokeStyle = 'rgba(255, 231, 137, 0.48)';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -275,10 +309,76 @@ function updateStatus(runtime: SmokeRuntime): void {
     `route: ${state.source.effectiveRoute ?? '-'}`,
     `age: ${state.source.ageMs ?? '-'} ms`,
     `pinch: ${state.hand.pinchDistance ?? '-'} / ${state.hand.pinchActive ? 'closed' : 'open'}`,
-    `goin: ${state.goin.state} / releases ${state.releaseCount}`,
+    `goin: ${state.goin.state} / count ${state.goins.length} / releases ${state.releaseCount}`,
+    `capture: ${formatCaptureStatus(runtime.capture)}`,
     `downgrades: ${state.downgrades.length ? state.downgrades.join(', ') : 'none'}`,
     `error: ${state.lastError ?? 'none'}`
   ].join('\n');
+  runtime.captureButton.disabled = runtime.capture.state === 'starting' || runtime.capture.state === 'running';
+  runtime.captureButton.textContent = runtime.capture.state === 'running' ? 'Capturing' : 'Capture';
+}
+
+async function startCapture(runtime: SmokeRuntime): Promise<void> {
+  runtime.capture = { state: 'starting', outDir: null, reportPath: null, filmstripPath: null, error: null };
+  try {
+    const response = await fetch('/__lerms/glove-well-capture/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        url: window.location.href,
+        frameCount: 24,
+        intervalMs: 300,
+        settleMs: 600,
+        viewport: `${Math.max(800, window.innerWidth)}x${Math.max(600, window.innerHeight)}`
+      })
+    });
+    const payload = (await response.json()) as Partial<SmokeCaptureStatus> & { ok?: boolean; status?: string };
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error ?? `HTTP ${response.status}`);
+    }
+    runtime.capture = normalizeCaptureStatus(payload);
+  } catch (error) {
+    runtime.capture = {
+      state: 'failed',
+      outDir: null,
+      reportPath: null,
+      filmstripPath: null,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function pollCaptureStatus(runtime: SmokeRuntime): Promise<void> {
+  try {
+    const response = await fetch('/__lerms/glove-well-capture/status');
+    if (!response.ok) return;
+    runtime.capture = normalizeCaptureStatus((await response.json()) as Partial<SmokeCaptureStatus> & { status?: string });
+  } catch {
+    if (runtime.capture.state === 'starting' || runtime.capture.state === 'running') {
+      runtime.capture = {
+        ...runtime.capture,
+        state: 'failed',
+        error: 'capture status endpoint unavailable'
+      };
+    }
+  }
+}
+
+function normalizeCaptureStatus(payload: Partial<SmokeCaptureStatus> & { status?: string }): SmokeCaptureStatus {
+  const state = payload.state ?? (payload.status === 'started' ? 'running' : payload.status === 'idle' ? 'idle' : 'idle');
+  return {
+    state,
+    outDir: payload.outDir ?? null,
+    reportPath: payload.reportPath ?? null,
+    filmstripPath: payload.filmstripPath ?? null,
+    error: payload.error ?? null
+  };
+}
+
+function formatCaptureStatus(status: SmokeCaptureStatus): string {
+  const path = status.filmstripPath ?? status.reportPath ?? status.outDir;
+  const suffix = status.error ? ` / ${status.error}` : path ? ` / ${path}` : '';
+  return `${status.state}${suffix}`;
 }
 
 function pointToCanvas(point: BrowserSmokePoint, width: number, height: number): { x: number; y: number } {
@@ -359,7 +459,8 @@ function installSmokeStyles(): void {
       display: flex;
       gap: 8px;
     }
-    .glove-well-smoke-controls a {
+    .glove-well-smoke-controls a,
+    .glove-well-smoke-controls button {
       color: #06100d;
       background: #82e2be;
       border: 1px solid rgba(255, 255, 255, 0.35);
@@ -367,6 +468,12 @@ function installSmokeStyles(): void {
       text-decoration: none;
       font-weight: 700;
       font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .glove-well-smoke-controls button:disabled {
+      cursor: progress;
+      opacity: 0.72;
     }
     @media (max-width: 820px) {
       .kaminos-hand-frame {

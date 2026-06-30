@@ -103,4 +103,14 @@ assert.match(cliHelp.stdout, /--url/);
 assert.match(cliHelp.stdout, /--out-dir/);
 assert.match(cliHelp.stdout, /--frame-count/);
 
+const viteConfig = readFileSync('vite.config.ts', 'utf8');
+assert.match(viteConfig, /__lerms\/glove-well-capture\/start/, 'dev server exposes a capture start endpoint for the browser demo');
+assert.match(viteConfig, /glove-well-browser-smoke-capture\.mjs/, 'capture start endpoint launches the existing browser smoke capture witness');
+assert.match(viteConfig, /child_process/, 'capture start endpoint runs the witness server-side instead of asking the operator to paste a terminal command');
+
+const browserSmoke = readFileSync('src/glove-well-browser-smoke.ts', 'utf8');
+assert.match(browserSmoke, /glove-well-capture-button/, 'browser smoke renders an operator capture control');
+assert.match(browserSmoke, /__lerms\/glove-well-capture\/start/, 'browser capture control posts to the dev-server capture endpoint');
+assert.match(browserSmoke, /capture:/, 'operator-visible status includes capture state');
+
 console.log('glove well browser smoke capture contracts passed');

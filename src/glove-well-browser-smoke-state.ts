@@ -70,6 +70,7 @@ export interface BrowserSmokeAim {
 }
 
 export interface BrowserSmokeGoin {
+  id: string;
   state: 'held' | 'rolling' | 'settled';
   position: BrowserSmokePoint;
   velocity: BrowserSmokePoint;
@@ -103,6 +104,7 @@ export interface BrowserSmokeState {
   };
   aim: BrowserSmokeAim;
   goin: BrowserSmokeGoin;
+  goins: BrowserSmokeGoin[];
   releaseCount: number;
   downgrades: string[];
   lastError: string | null;
@@ -119,6 +121,13 @@ export interface BuildBrowserSmokeStateOptions {
 const DEFAULT_ENDPOINT = '/kaminos-hand-control-sidecar-event';
 
 export function buildInitialGloveWellBrowserSmokeState(endpoint = DEFAULT_ENDPOINT): BrowserSmokeState {
+  const goin: BrowserSmokeGoin = {
+    id: 'primed-goin-001',
+    state: 'held',
+    position: { x: 0.5, y: 0.5 },
+    velocity: { x: 0, y: 0 },
+    desireRadius: 0
+  };
   return {
     schema: 'lerms.glove-well-browser-smoke-state.v0',
     authority: 'stale_hold',
@@ -150,12 +159,8 @@ export function buildInitialGloveWellBrowserSmokeState(endpoint = DEFAULT_ENDPOI
       direction: { x: 0.7, y: -0.45 },
       arcSamples: buildArcSamples({ x: 0.5, y: 0.5 }, normalize({ x: 0.7, y: -0.45 }))
     },
-    goin: {
-      state: 'held',
-      position: { x: 0.5, y: 0.5 },
-      velocity: { x: 0, y: 0 },
-      desireRadius: 0
-    },
+    goin,
+    goins: [goin],
     releaseCount: 0,
     downgrades: ['waiting_for_kaminos_event_cache'],
     lastError: null
@@ -170,10 +175,11 @@ export function buildGloveWellBrowserSmokeState({
   maxCacheAgeMs = 180
 }: BuildBrowserSmokeStateOptions): BrowserSmokeState {
   const prior = previous ?? buildInitialGloveWellBrowserSmokeState(endpoint);
-  const rollingGoin = advanceGoin(prior.goin, nowMs);
+  const advancedGoins = advanceGoins(worldGoins(prior), nowMs);
+  const activeGoin = pickActiveGoin(advancedGoins, prior.goin);
 
   if (!cache) {
-    return degraded(prior, rollingGoin, endpoint, 'stale_hold', 'empty', ['kaminos_event_cache_missing'], 'missing Kaminos cache snapshot');
+    return degraded(prior, advancedGoins, endpoint, 'stale_hold', 'empty', ['kaminos_event_cache_missing'], 'missing Kaminos cache snapshot');
   }
 
   if (cache.status !== 'stored' || !cache.event) {
@@ -186,20 +192,21 @@ export function buildGloveWellBrowserSmokeState({
           endpoint,
           sequence: cache.sequence
         },
-        goin: rollingGoin,
+        goin: activeGoin,
+        goins: advancedGoins,
         downgrades: prior.statusCode === 'tracking' ? ['kaminos_event_cache_no_new_packet'] : prior.downgrades,
         lastError: prior.statusCode === 'tracking' ? 'waiting for a newer Kaminos hand-control packet' : prior.lastError
       };
     }
-    return degraded(withSequence(prior, cache, endpoint), rollingGoin, endpoint, 'stale_hold', 'empty', ['kaminos_event_cache_empty'], 'Kaminos event cache is empty');
+    return degraded(withSequence(prior, cache, endpoint), advancedGoins, endpoint, 'stale_hold', 'empty', ['kaminos_event_cache_empty'], 'Kaminos event cache is empty');
   }
 
   if (prior.source.sequence !== null && cache.sequence <= prior.source.sequence && prior.statusCode !== 'empty') {
-    return degraded(withSequence(prior, cache, endpoint), rollingGoin, endpoint, 'stale_hold', 'replay', ['kaminos_event_cache_non_monotonic'], 'Kaminos event cache sequence did not advance');
+    return degraded(withSequence(prior, cache, endpoint), advancedGoins, endpoint, 'stale_hold', 'replay', ['kaminos_event_cache_non_monotonic'], 'Kaminos event cache sequence did not advance');
   }
 
   if (cache.age_ms === null || cache.age_ms > maxCacheAgeMs) {
-    return degraded(withSequence(prior, cache, endpoint), rollingGoin, endpoint, 'stale_hold', 'stale', ['kaminos_event_cache_stale'], 'Kaminos event cache is stale');
+    return degraded(withSequence(prior, cache, endpoint), advancedGoins, endpoint, 'stale_hold', 'stale', ['kaminos_event_cache_stale'], 'Kaminos event cache is stale');
   }
 
   const event = cache.event;
@@ -218,20 +225,20 @@ export function buildGloveWellBrowserSmokeState({
   };
 
   if (event.schema !== 'perceptasia.hand-control.v0') {
-    return degraded({ ...prior, source: sourceBase }, rollingGoin, endpoint, 'invalid', 'invalid', ['kaminos_event_cache_wrong_schema'], 'Kaminos event schema is not perceptasia.hand-control.v0');
+    return degraded({ ...prior, source: sourceBase }, advancedGoins, endpoint, 'invalid', 'invalid', ['kaminos_event_cache_wrong_schema'], 'Kaminos event schema is not perceptasia.hand-control.v0');
   }
 
   if (backend !== BROWSER_SMOKE_LIVE_BACKEND || effectiveRoute !== BROWSER_SMOKE_LIVE_BACKEND) {
-    return degraded({ ...prior, source: sourceBase }, rollingGoin, endpoint, 'fallback', 'fallback', ['kaminos_event_cache_non_live_route'], 'Kaminos event is not from the live WiLoR-MLX route');
+    return degraded({ ...prior, source: sourceBase }, advancedGoins, endpoint, 'fallback', 'fallback', ['kaminos_event_cache_non_live_route'], 'Kaminos event is not from the live WiLoR-MLX route');
   }
 
   if (event.webcam_frame?.visible !== true || event.webcam_frame.synthetic !== false) {
-    return degraded({ ...prior, source: sourceBase }, rollingGoin, endpoint, 'synthetic_fixture', 'synthetic', ['kaminos_event_cache_synthetic_webcam'], 'Kaminos event webcam frame is synthetic or not visible');
+    return degraded({ ...prior, source: sourceBase }, advancedGoins, endpoint, 'synthetic_fixture', 'synthetic', ['kaminos_event_cache_synthetic_webcam'], 'Kaminos event webcam frame is synthetic or not visible');
   }
 
   const landmarks = event.landmarks_2d ?? [];
   if (landmarks.length < 21) {
-    return degraded({ ...prior, source: sourceBase }, rollingGoin, endpoint, 'invalid', 'invalid', ['kaminos_event_cache_missing_landmarks'], 'Kaminos event has fewer than 21 landmarks');
+    return degraded({ ...prior, source: sourceBase }, advancedGoins, endpoint, 'invalid', 'invalid', ['kaminos_event_cache_missing_landmarks'], 'Kaminos event has fewer than 21 landmarks');
   }
 
   const wrist = landmarks[0];
@@ -242,14 +249,16 @@ export function buildGloveWellBrowserSmokeState({
   const palmCenter = event.palm_center ?? average([landmarks[5], landmarks[9], landmarks[13], landmarks[17]]);
   const pinchDistance = distance(thumbTip, indexTip);
   const pinchActive = pinchDistance <= 0.07;
-  const pinkyDirection = normalize(subtract(pinkyTip, pinkyBase));
+  const rawPinkyDirection = subtract(pinkyTip, pinkyBase);
+  const pinkyDirection = normalize({ x: -rawPinkyDirection.x, y: rawPinkyDirection.y });
   const pinkyLength = distance(pinkyTip, pinkyBase);
   const referenceLength = Math.max(0.08, distance(wrist, landmarks[9]));
   const pinkyActive = pinkyLength / referenceLength >= 0.7;
 
   let phase: BrowserSmokePhase = 'waiting';
   let aim = prior.aim;
-  let goin = rollingGoin;
+  let goin = activeGoin;
+  let goins = advancedGoins;
   let releaseCount = prior.releaseCount;
 
   if (pinchActive && (prior.phase === 'priming' || prior.phase === 'aiming') && pinkyActive) {
@@ -260,34 +269,31 @@ export function buildGloveWellBrowserSmokeState({
       direction: pinkyDirection,
       arcSamples: buildArcSamples(pinkyTip, pinkyDirection)
     };
-    goin = {
-      state: 'held',
-      position: palmCenter,
-      velocity: { x: 0, y: 0 },
-      desireRadius: 0
-    };
+    goin = buildHeldGoin(palmCenter, releaseCount + 1);
+    goins = [...advancedGoins.filter((candidate) => candidate.state !== 'held'), goin];
   } else if (pinchActive) {
     phase = 'priming';
-    goin = {
-      state: 'held',
-      position: palmCenter,
-      velocity: { x: 0, y: 0 },
-      desireRadius: 0
-    };
+    goin = buildHeldGoin(palmCenter, releaseCount + 1);
+    goins = [...advancedGoins.filter((candidate) => candidate.state !== 'held'), goin];
   } else if (!pinchActive && (prior.phase === 'aiming' || prior.phase === 'released')) {
     phase = 'released';
     releaseCount = prior.phase === 'released' ? prior.releaseCount : prior.releaseCount + 1;
-    goin = prior.phase === 'released'
-      ? rollingGoin
-      : {
-          state: 'rolling',
-          position: aim.origin,
-          velocity: {
-            x: round3(aim.direction.x * 0.022),
-            y: round3(aim.direction.y * 0.022)
-          },
-          desireRadius: 0.18
-        };
+    if (prior.phase === 'released') {
+      goin = pickRollingGoin(advancedGoins, activeGoin);
+      goins = advancedGoins;
+    } else {
+      goin = {
+        id: `launched-goin-${String(releaseCount).padStart(3, '0')}`,
+        state: 'rolling',
+        position: aim.origin,
+        velocity: {
+          x: round3(aim.direction.x * 0.022),
+          y: round3(aim.direction.y * 0.022)
+        },
+        desireRadius: 0.18
+      };
+      goins = [...advancedGoins.filter((candidate) => candidate.state !== 'held'), goin];
+    }
   } else {
     phase = 'waiting';
   }
@@ -309,15 +315,26 @@ export function buildGloveWellBrowserSmokeState({
     },
     aim,
     goin,
+    goins,
     releaseCount,
     downgrades: [],
     lastError: null
   };
 }
 
+function buildHeldGoin(position: BrowserSmokePoint, ordinal: number): BrowserSmokeGoin {
+  return {
+    id: `primed-goin-${String(ordinal).padStart(3, '0')}`,
+    state: 'held',
+    position,
+    velocity: { x: 0, y: 0 },
+    desireRadius: 0
+  };
+}
+
 function degraded(
   prior: BrowserSmokeState,
-  goin: BrowserSmokeGoin,
+  goins: BrowserSmokeGoin[],
   endpoint: string,
   authority: BrowserSmokeAuthority,
   statusCode: BrowserSmokeStatusCode,
@@ -332,7 +349,8 @@ function degraded(
       ...prior.source,
       endpoint
     },
-    goin,
+    goin: pickActiveGoin(goins, prior.goin),
+    goins,
     downgrades,
     lastError
   };
@@ -363,11 +381,34 @@ function advanceGoin(goin: BrowserSmokeGoin, nowMs: number): BrowserSmokeGoin {
   };
   const speed = Math.hypot(nextVelocity.x, nextVelocity.y);
   return {
+    ...goin,
     state: speed < 0.002 ? 'settled' : 'rolling',
     position: nextPosition,
     velocity: nextVelocity,
     desireRadius: round3(Math.max(0.08, goin.desireRadius * 0.995))
   };
+}
+
+function advanceGoins(goins: BrowserSmokeGoin[], nowMs: number): BrowserSmokeGoin[] {
+  return goins.map((goin) => advanceGoin(goin, nowMs));
+}
+
+function worldGoins(state: BrowserSmokeState): BrowserSmokeGoin[] {
+  const goins = state.goins?.length ? state.goins : [state.goin];
+  const seen = new Set<string>();
+  return goins.filter((goin) => {
+    if (seen.has(goin.id)) return false;
+    seen.add(goin.id);
+    return true;
+  });
+}
+
+function pickActiveGoin(goins: BrowserSmokeGoin[], fallback: BrowserSmokeGoin): BrowserSmokeGoin {
+  return goins.find((goin) => goin.state === 'held') ?? pickRollingGoin(goins, fallback);
+}
+
+function pickRollingGoin(goins: BrowserSmokeGoin[], fallback: BrowserSmokeGoin): BrowserSmokeGoin {
+  return goins.find((goin) => goin.state === 'rolling') ?? goins.at(-1) ?? fallback;
 }
 
 function buildArcSamples(origin: BrowserSmokePoint, direction: BrowserSmokePoint): Array<BrowserSmokePoint & { t: number }> {
