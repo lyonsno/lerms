@@ -26,6 +26,26 @@ function livePacket() {
   });
 }
 
+function liveMeshPacket() {
+  const packet = livePacket();
+  packet.mano = {
+    schema: 'kaminos.wilor-mlx.mano-surface.v0',
+    coordinate_space: 'wilor_mlx_hand_local',
+    vertices: [
+      { x: 0.1, y: 0.1, z: 0.0 },
+      { x: 0.9, y: 0.1, z: 0.1 },
+      { x: 0.1, y: 0.9, z: 0.2 },
+      { x: 0.9, y: 0.9, z: 0.3 },
+    ],
+    faces: [
+      [0, 1, 2],
+      [1, 3, 2],
+    ],
+  };
+  packet.dense_mano = packet.mano;
+  return packet;
+}
+
 function liveOptions(overrides = {}) {
   return {
     requestedRoute,
@@ -203,6 +223,43 @@ test('empty Kaminos event cache cannot pretend to contain a hand surface', () =>
   assertDowngrade(report, 'missing_hand_surface_frame');
 });
 
+test('actual WiLoR MANO mesh supports barycentric lerms on mesh triangles', () => {
+  const report = composeHandSurfaceLerms(
+    liveMeshPacket(),
+    liveOptions({
+      attachmentMode: 'hand_mesh',
+      lermAnchors: [{ id: 'mesh-red-lerm', meshFaceIndex: 1, barycentric: [0.25, 0.5, 0.25], behaviorHint: 'cling' }],
+    }),
+  );
+
+  assert.equal(report.authority, 'live_hand_surface');
+  assert.equal(report.surfaceFrame.mesh.status, 'valid');
+  assert.equal(report.surfaceFrame.mesh.vertices.length, 4);
+  assert.equal(report.surfaceFrame.mesh.faces.length, 2);
+  assert.equal(report.attachments[0].surfaceSource, 'mano_mesh');
+  assert.equal(report.attachments[0].meshFaceIndex, 1);
+  assert.deepEqual(report.attachments[0].face, [1, 3, 2]);
+  assert.equal(report.attachments[0].screen.x, 0.75);
+  assert.equal(report.attachments[0].screen.y, 0.75);
+  assert.equal(report.attachments[0].depth, 0.225);
+});
+
+test('hand mesh mode rejects landmark-only packets instead of silently falling back to stickers', () => {
+  const report = composeHandSurfaceLerms(
+    livePacket(),
+    liveOptions({
+      attachmentMode: 'hand_mesh',
+      lermAnchors: [{ id: 'mesh-only-lerm', meshFaceIndex: 0, barycentric: [0.3, 0.3, 0.4] }],
+    }),
+  );
+
+  assert.equal(report.authority, 'invalid');
+  assert.equal(report.surfaceFrame.mesh.status, 'missing');
+  assertDowngrade(report, 'missing_hand_mesh');
+  assert.equal(report.attachments[0].surfaceSource, 'missing_mesh');
+  assert.equal(report.attachments[0].mode, 'hand_surface');
+});
+
 test('browser prototype owns the Kaminos frame-posting loop in the same viewport as lerm rendering', () => {
   const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 
@@ -211,6 +268,15 @@ test('browser prototype owns the Kaminos frame-posting loop in the same viewport
   assert.match(mainSource, /postKaminosNativeFrameLoop/);
   assert.match(mainSource, /X-Kaminos-Hand-Surface-Client-Build/);
   assert.doesNotMatch(mainSource, /window\.setTimeout\(resolve,\s*250\)/, 'packet polling must not bake in the old two-tab quarter-second cache lag');
+});
+
+test('browser prototype exposes a crude Underhill ghost shell for mesh mode', () => {
+  const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+
+  assert.match(mainSource, /handMeshMode/);
+  assert.match(mainSource, /drawUnderhillGhostShell/);
+  assert.match(mainSource, /drawMeshGhostHand/);
+  assert.match(mainSource, /attachmentMode:\s*handMeshMode\s*\?\s*'hand_mesh'\s*:\s*'hand_surface'/);
 });
 
 for (const { name, fn } of tests) {

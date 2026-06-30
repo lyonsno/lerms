@@ -26,6 +26,7 @@ const ctx = context;
 const params = new URLSearchParams(window.location.search);
 const requestedRoute = params.get('hand_surface_route') ?? 'native_wilor_mini_mlx_detector_sidecar_live';
 const useFixture = params.get('fixture') === '1';
+const handMeshMode = params.get('hand_mesh') === '1';
 const defaultKaminosPacketUrl = '/kaminos-hand-control/hand-control-sidecar-event';
 const defaultKaminosNativeFrameUrl = '/kaminos-hand-control/hand-control-native-frame';
 const defaultKaminosSidecarLaunchUrl = '/kaminos-hand-control/hand-control-sidecar-launch';
@@ -36,7 +37,7 @@ const packetPollMs = Math.max(30, Number(params.get('packet_poll_ms') ?? 45));
 const framePostMs = Math.max(45, Number(params.get('frame_post_ms') ?? 60));
 const sidecarPollMs = Math.max(10, Number(params.get('sidecar_poll_ms') ?? 30));
 const sidecarHandConf = Number(params.get('hand_conf') ?? 0.18);
-const sidecarIncludeVertices = params.get('include_vertices') === '1';
+const sidecarIncludeVertices = handMeshMode || params.get('include_vertices') === '1';
 const encodedFrameWidth = Math.max(160, Number(params.get('frame_width') ?? 320));
 const postKaminosFrames = params.get('post_kaminos_frames') !== '0';
 const lermsClientBuild = 'lerms-hand-surface-live-20260630';
@@ -92,17 +93,21 @@ function render(timestampMs: number): void {
     nowMs,
     maxFreshnessMs: 180,
     webcam: currentWebcamTruth(width, height),
-    attachmentMode: 'hand_surface',
+    attachmentMode: handMeshMode ? 'hand_mesh' : 'hand_surface',
     lermAnchors: [
-      { id: 'red-lerm-palm', face: [0, 5, 9], barycentric: [0.22, 0.34, 0.44], behaviorHint: 'cling' },
-      { id: 'yellow-lerm-index', face: [5, 6, 10], barycentric: [0.18, 0.48, 0.34], behaviorHint: 'finger_walk' },
-      { id: 'blue-lerm-ring', face: [13, 14, 18], barycentric: [0.24, 0.46, 0.3], behaviorHint: 'curious' },
+      { id: 'red-lerm-palm', face: [0, 5, 9], meshFaceIndex: 240, barycentric: [0.22, 0.34, 0.44], behaviorHint: 'cling' },
+      { id: 'yellow-lerm-index', face: [5, 6, 10], meshFaceIndex: 360, barycentric: [0.18, 0.48, 0.34], behaviorHint: 'finger_walk' },
+      { id: 'blue-lerm-ring', face: [13, 14, 18], meshFaceIndex: 520, barycentric: [0.24, 0.46, 0.3], behaviorHint: 'curious' },
     ],
     moge: { requested: params.get('moge') === '1', effectiveRoute: null, ageMs: null },
     requestedEndpoint: packetUrl ?? undefined,
     effectiveEndpoint: packetUrl ? effectiveKaminosEndpoint(packetUrl) : undefined,
   });
-  drawGroundTruth(width, height, timestampMs);
+  if (handMeshMode) {
+    drawUnderhillGhostShell(width, height, timestampMs);
+  } else {
+    drawGroundTruth(width, height, timestampMs);
+  }
   drawHandSurface(report, width, height);
   drawReceipt(report, width, height);
 
@@ -270,6 +275,19 @@ function drawHandSurface(report: HandSurfaceReport, width: number, height: numbe
   if (report.surfaceFrame.status !== 'valid') return;
 
   ctx.save();
+  if (handMeshMode) {
+    drawMeshGhostHand(report, width, height);
+  } else {
+    drawLandmarkHandSurface(report, width, height);
+  }
+  for (const attachment of report.attachments) {
+    if (attachment.mode !== 'hand_surface') continue;
+    drawLerm(attachment.id, attachment.screen, attachment.behavior, width, height);
+  }
+  ctx.restore();
+}
+
+function drawLandmarkHandSurface(report: HandSurfaceReport, width: number, height: number): void {
   ctx.lineWidth = 1.2;
   for (const face of HAND_SURFACE_FACES.slice(0, 16)) {
     const points = face.map((index) => report.surfaceFrame.landmarks2d[index]).filter(Boolean);
@@ -287,17 +305,109 @@ function drawHandSurface(report: HandSurfaceReport, width: number, height: numbe
     ctx.fill();
     ctx.stroke();
   }
+}
 
-  for (const attachment of report.attachments) {
-    if (attachment.mode !== 'hand_surface') continue;
-    drawLerm(attachment.id, attachment.screen, attachment.behavior, width, height);
+function drawUnderhillGhostShell(width: number, height: number, timestampMs: number): void {
+  const gradient = ctx.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, '#080b0b');
+  gradient.addColorStop(0.55, '#141915');
+  gradient.addColorStop(1, '#070807');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = 'rgba(62, 74, 65, 0.72)';
+  ctx.fillRect(0, height * 0.72, width, height * 0.28);
+  ctx.strokeStyle = 'rgba(174, 214, 176, 0.22)';
+  ctx.lineWidth = 1;
+  for (let x = -80; x < width + 80; x += 72) {
+    ctx.beginPath();
+    ctx.moveTo(x, height * 0.72);
+    ctx.lineTo(x + 120, height);
+    ctx.stroke();
+  }
+
+  const kilnPulse = 0.46 + Math.sin(timestampMs / 420) * 0.12;
+  ctx.fillStyle = '#161210';
+  ctx.fillRect(width * 0.07, height * 0.2, width * 0.18, height * 0.34);
+  ctx.fillStyle = `rgba(255, 106, 50, ${kilnPulse})`;
+  ctx.fillRect(width * 0.095, height * 0.285, width * 0.13, height * 0.2);
+  ctx.strokeStyle = 'rgba(240, 198, 142, 0.38)';
+  ctx.strokeRect(width * 0.07, height * 0.2, width * 0.18, height * 0.34);
+
+  drawSymbolSign(width * 0.32, height * 0.68, 'palm');
+  drawSymbolSign(width * 0.39, height * 0.68, 'pinch');
+  drawSymbolSign(width * 0.46, height * 0.68, 'throw');
+}
+
+function drawSymbolSign(x: number, y: number, kind: 'palm' | 'pinch' | 'throw'): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = 'rgba(25, 31, 28, 0.92)';
+  ctx.strokeStyle = 'rgba(216, 232, 192, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.fillRect(-18, -30, 36, 30);
+  ctx.strokeRect(-18, -30, 36, 30);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, 28);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(240, 226, 154, 0.82)';
+  if (kind === 'palm') {
+    ctx.strokeRect(-9, -24, 18, 14);
+    for (let xOffset = -8; xOffset <= 8; xOffset += 4) {
+      ctx.beginPath();
+      ctx.moveTo(xOffset, -24);
+      ctx.lineTo(xOffset, -31);
+      ctx.stroke();
+    }
+  } else if (kind === 'pinch') {
+    ctx.beginPath();
+    ctx.arc(-6, -17, 5, 0, Math.PI * 2);
+    ctx.arc(7, -17, 5, 0, Math.PI * 2);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(-10, -14);
+    ctx.lineTo(8, -24);
+    ctx.lineTo(4, -16);
+    ctx.moveTo(8, -24);
+    ctx.lineTo(-1, -25);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawMeshGhostHand(report: HandSurfaceReport, width: number, height: number): void {
+  const mesh = report.surfaceFrame.mesh;
+  if (mesh.status !== 'valid') return;
+  const frame = meshGhostFrame(width, height);
+
+  ctx.save();
+  ctx.translate(frame.offsetX, frame.offsetY);
+  ctx.lineWidth = 0.7;
+  for (const face of mesh.faces.slice(0, 180)) {
+    const points = face.map((index) => mesh.projected2d[index]).filter(Boolean);
+    if (points.length !== 3) continue;
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      const x = point.x * frame.scale;
+      const y = point.y * frame.scale;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(90, 231, 207, 0.08)';
+    ctx.strokeStyle = 'rgba(138, 246, 227, 0.18)';
+    ctx.fill();
+    ctx.stroke();
   }
   ctx.restore();
 }
 
 function drawLerm(id: string, screen: Vec2, behavior: string, width: number, height: number): void {
-  const x = screen.x * width;
-  const y = screen.y * height;
+  const frame = handMeshMode ? meshGhostFrame(width, height) : null;
+  const x = frame ? frame.offsetX + screen.x * frame.scale : screen.x * width;
+  const y = frame ? frame.offsetY + screen.y * frame.scale : screen.y * height;
   const pulse = behavior === 'finger_walk' ? 1.12 : behavior === 'curious' ? 0.92 : 1;
   ctx.save();
   ctx.translate(x, y);
@@ -319,6 +429,15 @@ function drawLerm(id: string, screen: Vec2, behavior: string, width: number, hei
   ctx.quadraticCurveTo(-2, 14, 12, 5);
   ctx.stroke();
   ctx.restore();
+}
+
+function meshGhostFrame(width: number, height: number): { offsetX: number; offsetY: number; scale: number } {
+  const drawWidth = Math.max(180, Math.min(width * 0.62, width - 420));
+  return {
+    offsetX: width * 0.3,
+    offsetY: height * 0.12,
+    scale: Math.min(drawWidth, height * 0.7),
+  };
 }
 
 function drawReceipt(report: HandSurfaceReport, width: number, height: number): void {

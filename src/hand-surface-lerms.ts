@@ -9,7 +9,8 @@ export type DowngradeCode =
   | 'moge_stale'
   | 'blank_or_hidden_webcam'
   | 'synthetic_webcam_frame'
-  | 'missing_kaminos_hand_event';
+  | 'missing_kaminos_hand_event'
+  | 'missing_hand_mesh';
 
 export type WitnessAuthority =
   | 'live_hand_surface'
@@ -28,6 +29,8 @@ export type WilorHandPacket = {
   landmarks_2d?: Vec2[];
   landmarks_3d?: Vec3[];
   world_landmarks?: Vec3[];
+  mano?: ManoSurface | null;
+  dense_mano?: ManoSurface | null;
   palm_normal_proxy?: Vec3;
   hand_frame_basis?: {
     source?: string;
@@ -40,6 +43,13 @@ export type WilorHandPacket = {
     model_route?: string;
     device_route?: string;
   };
+};
+
+export type ManoSurface = {
+  schema?: string;
+  coordinate_space?: string;
+  vertices?: Vec3[] | number[][];
+  faces?: number[][];
 };
 
 export type KaminosHandEventCache = {
@@ -71,6 +81,7 @@ export type MogeTruthInput = {
 export type LermAnchor = {
   id: string;
   face?: number[];
+  meshFaceIndex?: number;
   barycentric?: number[];
   behaviorHint?: 'cling' | 'slide' | 'finger_walk' | 'curious';
   screen?: Vec2;
@@ -81,7 +92,7 @@ export type ComposeHandSurfaceOptions = {
   nowMs: number;
   maxFreshnessMs: number;
   webcam: WebcamTruth;
-  attachmentMode: 'hand_surface' | 'screen_space';
+  attachmentMode: 'hand_surface' | 'hand_mesh' | 'screen_space';
   lermAnchors: LermAnchor[];
   moge: MogeTruthInput;
   requestedEndpoint?: string;
@@ -132,6 +143,13 @@ export type HandSurfaceReport = {
     landmarks2d: Vec2[];
     worldLandmarks: Vec3[];
     faces: number[][];
+    mesh: {
+      status: 'valid' | 'missing';
+      coordinateSpace: string | null;
+      vertices: Vec3[];
+      faces: number[][];
+      projected2d: Vec2[];
+    };
     basis: {
       source: string;
       xAxis: Vec3;
@@ -144,9 +162,11 @@ export type HandSurfaceReport = {
     id: string;
     mode: 'hand_surface' | 'screen_space_rejected';
     face: number[] | null;
+    meshFaceIndex: number | null;
     barycentric: number[] | null;
     screen: Vec2;
     depth: number;
+    surfaceSource: 'mano_mesh' | 'landmark_proxy' | 'missing_mesh' | 'screen_space';
     behavior: 'cling' | 'slide' | 'finger_walk' | 'curious' | 'rejected';
     reason: string;
   }>;
@@ -176,6 +196,7 @@ export function createFixtureWilorHandPacket(overrides: Partial<{
   palmNormal: Vec3;
   landmarks2d: Vec2[];
   worldLandmarks: Vec3[];
+  mano?: ManoSurface | null;
 }> = {}): WilorHandPacket {
   const landmarks2d = overrides.landmarks2d ?? [
     { x: 0.51, y: 0.66 },
@@ -235,6 +256,8 @@ export function createFixtureWilorHandPacket(overrides: Partial<{
     landmarks_2d: landmarks2d,
     landmarks_3d: worldLandmarks,
     world_landmarks: worldLandmarks,
+    mano: overrides.mano ?? null,
+    dense_mano: overrides.mano ?? null,
     palm_normal_proxy: palmNormal,
     hand_frame_basis: {
       source: effectiveRoute,
@@ -306,10 +329,18 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
   const landmarks2d = validVec2List(handPacket.landmarks_2d);
   const worldLandmarks = validVec3List(handPacket.world_landmarks ?? handPacket.landmarks_3d);
   const surfaceValid = landmarks2d.length >= 21 && worldLandmarks.length >= 21;
+  const mesh = normalizeManoSurface(handPacket.mano ?? handPacket.dense_mano);
+  const meshRequested = options.attachmentMode === 'hand_mesh';
   if (!surfaceValid) {
     downgrades.push({
       code: 'missing_hand_surface_frame',
       detail: `need 21 2d and world landmarks, got ${landmarks2d.length} 2d and ${worldLandmarks.length} world`,
+    });
+  }
+  if (meshRequested && mesh.status !== 'valid') {
+    downgrades.push({
+      code: 'missing_hand_mesh',
+      detail: `hand_mesh attachment requires MANO vertices and faces, got ${mesh.vertices.length} vertices and ${mesh.faces.length} faces`,
     });
   }
 
@@ -337,7 +368,7 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
     : null;
 
   const attachments = options.lermAnchors.map((anchor, index) => {
-    if (options.attachmentMode !== 'hand_surface') {
+    if (options.attachmentMode === 'screen_space') {
       downgrades.push({
         code: 'screen_space_attachment_rejected',
         detail: `anchor ${anchor.id} used screen-space coordinates`,
@@ -346,11 +377,37 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
         id: anchor.id,
         mode: 'screen_space_rejected' as const,
         face: null,
+        meshFaceIndex: null,
         barycentric: null,
         screen: anchor.screen ?? { x: 0.5, y: 0.5 },
         depth: 0,
+        surfaceSource: 'screen_space' as const,
         behavior: 'rejected' as const,
         reason: 'screen-space stickers do not satisfy hand-surface attachment',
+      };
+    }
+
+    if (meshRequested) {
+      const meshFaceIndex = anchor.meshFaceIndex ?? index % Math.max(1, mesh.faces.length);
+      const face = mesh.faces[meshFaceIndex] ?? null;
+      const barycentric = anchor.barycentric ?? [0.33, 0.34, 0.33];
+      const screen = mesh.status === 'valid' && face
+        ? roundVec2(barycentricPoint2(mesh.projected2d, face, barycentric))
+        : { x: 0, y: 0 };
+      const world = mesh.status === 'valid' && face
+        ? barycentricPoint3(mesh.vertices, face, barycentric)
+        : { x: 0, y: 0, z: 0 };
+      return {
+        id: anchor.id,
+        mode: 'hand_surface' as const,
+        face,
+        meshFaceIndex: face ? meshFaceIndex : null,
+        barycentric,
+        screen,
+        depth: roundForReport(world.z),
+        surfaceSource: mesh.status === 'valid' && face ? 'mano_mesh' as const : 'missing_mesh' as const,
+        behavior: chooseBehavior(anchor, palmNormal),
+        reason: mesh.status === 'valid' && face ? 'anchored to MANO mesh triangle' : 'MANO mesh missing or invalid',
       };
     }
 
@@ -366,9 +423,11 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
       id: anchor.id,
       mode: 'hand_surface' as const,
       face,
+      meshFaceIndex: null,
       barycentric,
       screen,
       depth: world.z,
+      surfaceSource: 'landmark_proxy' as const,
       behavior: chooseBehavior(anchor, palmNormal),
       reason: surfaceValid ? 'anchored to interpolated hand surface face' : 'surface frame invalid',
     };
@@ -382,9 +441,10 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
   }
 
   const invalid = !surfaceValid
+    || (meshRequested && mesh.status !== 'valid')
     || webcamStatus === 'blank_or_hidden'
     || webcamStatus === 'missing'
-    || options.attachmentMode !== 'hand_surface';
+    || options.attachmentMode === 'screen_space';
   let authority: WitnessAuthority = 'synthetic_fixture';
   if (invalid) {
     authority = 'invalid';
@@ -438,6 +498,7 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
       landmarks2d,
       worldLandmarks,
       faces: surfaceValid ? HAND_SURFACE_FACES.map((face) => [...face]) : [],
+      mesh,
       basis,
       palmNormal: palmNormal ?? null,
     },
@@ -452,17 +513,28 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
   const height = Math.max(220, Math.floor(size.height));
   const frameWidth = Math.floor(width / 2);
   const panelWidth = width - frameWidth;
+  const meshMode = report.surfaceFrame.mesh.status === 'valid'
+    && report.attachments.some((attachment) => attachment.surfaceSource === 'mano_mesh');
   const points = report.surfaceFrame.landmarks2d
     .map((point) => `${scaleX(point.x, frameWidth).toFixed(1)},${scaleY(point.y, height).toFixed(1)}`)
     .join(' ');
-  const handFaces = report.surfaceFrame.faces.slice(0, 10).map((face) => {
-    const polygon = face
-      .map((index) => report.surfaceFrame.landmarks2d[index])
-      .filter(Boolean)
-      .map((point) => `${scaleX(point.x, frameWidth).toFixed(1)},${scaleY(point.y, height).toFixed(1)}`)
-      .join(' ');
-    return `<polygon class="hand-surface-face" points="${polygon}" />`;
-  }).join('');
+  const handFaces = meshMode
+    ? report.surfaceFrame.mesh.faces.slice(0, 90).map((face) => {
+        const polygon = face
+          .map((index) => report.surfaceFrame.mesh.projected2d[index])
+          .filter(Boolean)
+          .map((point) => `${scaleX(point.x, frameWidth).toFixed(1)},${scaleY(point.y, height).toFixed(1)}`)
+          .join(' ');
+        return `<polygon class="mesh-ghost-face" points="${polygon}" />`;
+      }).join('')
+    : report.surfaceFrame.faces.slice(0, 10).map((face) => {
+        const polygon = face
+          .map((index) => report.surfaceFrame.landmarks2d[index])
+          .filter(Boolean)
+          .map((point) => `${scaleX(point.x, frameWidth).toFixed(1)},${scaleY(point.y, height).toFixed(1)}`)
+          .join(' ');
+        return `<polygon class="hand-surface-face" points="${polygon}" />`;
+      }).join('');
   const lerms = report.attachments.map((attachment) => {
     const x = scaleX(attachment.screen.x, frameWidth);
     const y = scaleY(attachment.screen.y, height);
@@ -489,6 +561,7 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
     `freshness: ${report.freshness.status} age=${report.freshness.ageMs ?? 'unknown'}ms`,
     `webcam: ${report.webcam.status} frame=${report.webcam.frameId}`,
     `surface: ${report.surfaceFrame.status} landmarks=${report.surfaceFrame.landmarks2d.length}`,
+    `mesh: ${report.surfaceFrame.mesh.status} vertices=${report.surfaceFrame.mesh.vertices.length} faces=${report.surfaceFrame.mesh.faces.length}`,
     `moge: ${report.moge.status}`,
     ...downgradeText.slice(0, 8),
   ].map((line) => truncateReceiptLine(line, 44));
@@ -505,14 +578,23 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
     '<stop offset="48%" stop-color="#b98b74" />',
     '<stop offset="100%" stop-color="#161a20" />',
     '</linearGradient>',
+    '<linearGradient id="underhill-ghost-shell" x1="0" y1="0" x2="1" y2="1">',
+    '<stop offset="0%" stop-color="#080b0b" />',
+    '<stop offset="55%" stop-color="#141915" />',
+    '<stop offset="100%" stop-color="#070807" />',
+    '</linearGradient>',
     '<style>',
-    '.receipt-line{font:14px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#dce8dc}.hand-surface-face{fill:rgba(101,226,191,0.20);stroke:rgba(235,255,240,0.62);stroke-width:1.4}.surface-lerm{filter:drop-shadow(0 3px 3px rgba(0,0,0,.42))}.label{font:700 13px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#f2fff6}',
+    '.receipt-line{font:14px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#dce8dc}.hand-surface-face{fill:rgba(101,226,191,0.20);stroke:rgba(235,255,240,0.62);stroke-width:1.4}.mesh-ghost-face{fill:rgba(90,231,207,0.08);stroke:rgba(138,246,227,0.22);stroke-width:.8}.surface-lerm{filter:drop-shadow(0 3px 3px rgba(0,0,0,.42))}.label{font:700 13px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#f2fff6}',
     '</style>',
     '</defs>',
-    `<rect id="webcam-ground-truth-frame" x="0" y="0" width="${frameWidth}" height="${height}" fill="url(#webcam-ground-truth)" />`,
+    meshMode
+      ? `<rect id="underhill-ghost-shell-frame" x="0" y="0" width="${frameWidth}" height="${height}" fill="url(#underhill-ghost-shell)" />`
+      : `<rect id="webcam-ground-truth-frame" x="0" y="0" width="${frameWidth}" height="${height}" fill="url(#webcam-ground-truth)" />`,
     `<rect x="0" y="0" width="${frameWidth}" height="${height}" fill="rgba(0,0,0,0.10)" />`,
-    `<path d="M ${frameWidth * 0.17} ${height * 0.88} C ${frameWidth * 0.28} ${height * 0.42}, ${frameWidth * 0.49} ${height * 0.29}, ${frameWidth * 0.76} ${height * 0.47} C ${frameWidth * 0.86} ${height * 0.57}, ${frameWidth * 0.77} ${height * 0.78}, ${frameWidth * 0.58} ${height * 0.84} C ${frameWidth * 0.43} ${height * 0.91}, ${frameWidth * 0.27} ${height * 0.94}, ${frameWidth * 0.17} ${height * 0.88} Z" fill="rgba(222,171,136,0.68)" stroke="rgba(255,227,200,0.64)" stroke-width="3" />`,
-    `<g id="hand-surface-frame">${handFaces}<polyline points="${points}" fill="none" stroke="rgba(220,255,238,0.36)" stroke-width="1" /></g>`,
+    meshMode
+      ? `<g id="underhill-kiln-stub"><rect x="${frameWidth * 0.07}" y="${height * 0.18}" width="${frameWidth * 0.2}" height="${height * 0.34}" fill="#161210" stroke="rgba(240,198,142,.42)" /><rect x="${frameWidth * 0.1}" y="${height * 0.27}" width="${frameWidth * 0.14}" height="${height * 0.2}" fill="rgba(255,106,50,.54)" /></g>`
+      : `<path d="M ${frameWidth * 0.17} ${height * 0.88} C ${frameWidth * 0.28} ${height * 0.42}, ${frameWidth * 0.49} ${height * 0.29}, ${frameWidth * 0.76} ${height * 0.47} C ${frameWidth * 0.86} ${height * 0.57}, ${frameWidth * 0.77} ${height * 0.78}, ${frameWidth * 0.58} ${height * 0.84} C ${frameWidth * 0.43} ${height * 0.91}, ${frameWidth * 0.27} ${height * 0.94}, ${frameWidth * 0.17} ${height * 0.88} Z" fill="rgba(222,171,136,0.68)" stroke="rgba(255,227,200,0.64)" stroke-width="3" />`,
+    `<g id="${meshMode ? 'mano-mesh-ghost-frame' : 'hand-surface-frame'}">${handFaces}${meshMode ? '' : `<polyline points="${points}" fill="none" stroke="rgba(220,255,238,0.36)" stroke-width="1" />`}</g>`,
     lerms,
     `<rect x="${frameWidth}" y="0" width="${panelWidth}" height="${height}" fill="#111817" />`,
     `<text x="${frameWidth + 18}" y="18" class="label">LERMS hand-surface witness</text>`,
@@ -545,11 +627,61 @@ function validVec3List(value: unknown): Vec3[] {
 }
 
 function validVec3(value: unknown): Vec3 | null {
+  if (Array.isArray(value)) {
+    const x = finite(value[0]);
+    const y = finite(value[1]);
+    const z = finite(value[2]);
+    return x !== null && y !== null && z !== null ? { x, y, z } : null;
+  }
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<Vec3>;
   return finite(candidate.x) !== null && finite(candidate.y) !== null && finite(candidate.z) !== null
     ? { x: candidate.x as number, y: candidate.y as number, z: candidate.z as number }
     : null;
+}
+
+function normalizeManoSurface(value: unknown): HandSurfaceReport['surfaceFrame']['mesh'] {
+  if (!value || typeof value !== 'object') {
+    return { status: 'missing', coordinateSpace: null, vertices: [], faces: [], projected2d: [] };
+  }
+  const candidate = value as ManoSurface;
+  const vertices = validVec3List(candidate.vertices);
+  const faces = validFaceList(candidate.faces, vertices.length);
+  const coordinateSpace = typeof candidate.coordinate_space === 'string' ? candidate.coordinate_space : null;
+  if (!vertices.length || !faces.length) {
+    return { status: 'missing', coordinateSpace, vertices, faces, projected2d: [] };
+  }
+  return {
+    status: 'valid',
+    coordinateSpace,
+    vertices,
+    faces,
+    projected2d: projectMeshVertices(vertices),
+  };
+}
+
+function validFaceList(value: unknown, vertexCount: number): number[][] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!Array.isArray(entry) || entry.length < 3) return [];
+    const face = entry.slice(0, 3).map((item) => Number.isInteger(item) ? item as number : -1);
+    return face.every((index) => index >= 0 && index < vertexCount) ? [face] : [];
+  });
+}
+
+function projectMeshVertices(vertices: Vec3[]): Vec2[] {
+  const xs = vertices.map((vertex) => vertex.x);
+  const ys = vertices.map((vertex) => vertex.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const spanX = Math.max(1e-6, maxX - minX);
+  const spanY = Math.max(1e-6, maxY - minY);
+  return vertices.map((vertex) => ({
+    x: roundForReport((vertex.x - minX) / spanX),
+    y: roundForReport((vertex.y - minY) / spanY),
+  }));
 }
 
 function webcamTruthStatus(webcam: WebcamTruth): HandSurfaceReport['webcam']['status'] {
@@ -653,6 +785,14 @@ function barycentricPoint3(points: Vec3[], face: number[], barycentric: number[]
       z: acc.z + point.z * weight,
     };
   }, { x: 0, y: 0, z: 0 });
+}
+
+function roundVec2(point: Vec2): Vec2 {
+  return { x: roundForReport(point.x), y: roundForReport(point.y) };
+}
+
+function roundForReport(value: number): number {
+  return Number(value.toFixed(6));
 }
 
 function dedupeDowngrades(downgrades: HandSurfaceReport['downgrades']): HandSurfaceReport['downgrades'] {

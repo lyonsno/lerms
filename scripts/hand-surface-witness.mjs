@@ -17,6 +17,26 @@ const packet = createFixtureWilorHandPacket({
   sourceBackend: 'wilor_hand_surface_synthetic_fixture',
   timestampMs: 1168,
   palmNormal: { x: 0.08, y: -0.28, z: 0.92 },
+  mano: {
+    schema: 'kaminos.wilor-mlx.mano-surface.v0',
+    coordinate_space: 'wilor_mlx_hand_local',
+    vertices: [
+      { x: 0.12, y: 0.18, z: 0.0 },
+      { x: 0.86, y: 0.16, z: 0.05 },
+      { x: 0.18, y: 0.84, z: 0.12 },
+      { x: 0.82, y: 0.88, z: 0.2 },
+      { x: 0.46, y: 0.02, z: -0.04 },
+      { x: 0.48, y: 0.98, z: 0.26 },
+    ],
+    faces: [
+      [0, 1, 2],
+      [1, 3, 2],
+      [0, 4, 1],
+      [2, 3, 5],
+      [0, 2, 5],
+      [1, 4, 3],
+    ],
+  },
 });
 const cache = createFixtureKaminosHandEventCache({
   event: packet,
@@ -38,17 +58,17 @@ const report = composeHandSurfaceLerms(cache, {
     width: 1280,
     height: 720,
   },
-  attachmentMode: 'hand_surface',
+  attachmentMode: 'hand_mesh',
   lermAnchors: [
-    { id: 'red-lerm-palm', face: [0, 5, 9], barycentric: [0.22, 0.34, 0.44], behaviorHint: 'cling' },
-    { id: 'yellow-lerm-index', face: [5, 6, 10], barycentric: [0.18, 0.48, 0.34], behaviorHint: 'finger_walk' },
-    { id: 'blue-lerm-ring', face: [13, 14, 18], barycentric: [0.24, 0.46, 0.3], behaviorHint: 'curious' },
+    { id: 'red-lerm-palm', meshFaceIndex: 1, barycentric: [0.22, 0.34, 0.44], behaviorHint: 'cling' },
+    { id: 'yellow-lerm-index', meshFaceIndex: 3, barycentric: [0.18, 0.48, 0.34], behaviorHint: 'finger_walk' },
+    { id: 'blue-lerm-ring', meshFaceIndex: 4, barycentric: [0.24, 0.46, 0.3], behaviorHint: 'curious' },
   ],
   moge: { requested: true, effectiveRoute: null, ageMs: null },
 });
 const witness = {
   ok: report.surfaceFrame.status === 'valid' && report.attachments.every((attachment) => attachment.mode === 'hand_surface'),
-  visibleDeltaAssessment: 'Synthetic fixture filmstrip shows a webcam-ground-truth panel, WiLoR-shaped hand-surface triangulation, and three lerm placeholders attached by barycentric hand-face coordinates; it does not prove live operator webcam/WiLoR authority.',
+  visibleDeltaAssessment: 'Synthetic fixture filmstrip shows an Underhill ghost-shell panel, a MANO-shaped mesh frame, and three lerm placeholders attached by barycentric mesh-triangle coordinates; it does not prove live operator webcam/WiLoR authority.',
   handSurfaceAttachment: report.authority,
   requestedRoute: report.routeTruth.requestedRoute,
   effectiveRoute: report.routeTruth.effectiveRoute,
