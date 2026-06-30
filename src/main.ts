@@ -19,6 +19,7 @@ import {
   shouldBreakHillTrailStroke,
   type HillOverlayStrokeStyle
 } from './terrain/hill-of-hills-overlay-style.js';
+import { hillMaterialFrayColor } from './terrain/hill-of-hills-material-fray.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -61,6 +62,32 @@ const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
   'trail-accent',
   'growth-cluster',
   'stone-scatter'
+];
+const MATERIAL_FRAY_NEIGHBOR_OFFSETS: readonly (readonly [number, number])[] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [1, 1],
+  [-1, 1],
+  [1, -1],
+  [-1, -1],
+  [2, 0],
+  [-2, 0],
+  [0, 2],
+  [0, -2],
+  [2, 2],
+  [-2, 2],
+  [2, -2],
+  [-2, -2],
+  [3, 0],
+  [-3, 0],
+  [0, 3],
+  [0, -3],
+  [3, 3],
+  [-3, 3],
+  [3, -3],
+  [-3, -3]
 ];
 let params: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
@@ -731,10 +758,81 @@ function colorForBufferSample(
   const light = Math.max(0.36, Math.min(1.18, 0.6 + sideLight * 0.32 + t * 0.16 + routeLift + growthLift - wetShadow));
   const base = colorAt(buffer, index);
   const lift = 12 + t * 24 + metricAt(buffer, index, 'routePressure') * 14;
-  const r = Math.round(Math.min(245, base[0] * light + lift));
-  const g = Math.round(Math.min(245, base[1] * light + lift));
-  const b = Math.round(Math.min(245, base[2] * light + lift));
+  const shadedBase = shadeMaterialColor(base, light, lift);
+  const neighbor = materialFrayNeighbor(buffer, index, light, lift);
+  const frayed = hillMaterialFrayColor({
+    baseColor: shadedBase,
+    neighborColor: neighbor.color,
+    edgeKind: materialEdgeAt(buffer, index),
+    anchor: surfaceAnchorAt(buffer, index),
+    strength: metricAt(buffer, index, 'materialEdgeStrength'),
+    dissolve: metricAt(buffer, index, 'materialEdgeDissolve'),
+    jitter: materialFrayJitter(buffer, index),
+    materialContrast: neighbor.contrast
+  });
+  const [r, g, b] = frayed.color;
   return `rgb(${r}, ${g}, ${b})`;
+}
+
+function shadeMaterialColor(color: readonly [number, number, number], light: number, lift: number): readonly [number, number, number] {
+  return [
+    Math.round(Math.min(245, color[0] * light + lift)),
+    Math.round(Math.min(245, color[1] * light + lift)),
+    Math.round(Math.min(245, color[2] * light + lift))
+  ];
+}
+
+function materialFrayNeighbor(
+  buffer: HillOfHillsTerrainBuffer,
+  index: number,
+  light: number,
+  lift: number
+): { color: readonly [number, number, number]; contrast: number } {
+  const gridResolutionX = buffer.gridResolution.x;
+  const gridResolutionZ = buffer.gridResolution.z;
+  const xi = index % gridResolutionX;
+  const zi = Math.floor(index / gridResolutionX);
+  const baseColor = colorAt(buffer, index);
+  const baseMaterialCode = buffer.materialCodes[index];
+  let neighborColor = baseColor;
+  let strongestContrast = 0;
+  const offsets = MATERIAL_FRAY_NEIGHBOR_OFFSETS;
+
+  for (const [dx, dz] of offsets) {
+    const nx = xi + dx;
+    const nz = zi + dz;
+    if (nx < 0 || nz < 0 || nx >= gridResolutionX || nz >= gridResolutionZ) {
+      continue;
+    }
+
+    const neighborIndex = nz * gridResolutionX + nx;
+    if (buffer.materialCodes[neighborIndex] === baseMaterialCode) {
+      continue;
+    }
+
+    const candidate = colorAt(buffer, neighborIndex);
+    const contrast = colorContrast(baseColor, candidate);
+    if (contrast > strongestContrast) {
+      strongestContrast = contrast;
+      neighborColor = candidate;
+    }
+  }
+
+  return {
+    color: shadeMaterialColor(neighborColor, light, lift),
+    contrast: strongestContrast
+  };
+}
+
+function colorContrast(a: readonly [number, number, number], b: readonly [number, number, number]): number {
+  return Math.min(1, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) / 255);
+}
+
+function materialFrayJitter(buffer: HillOfHillsTerrainBuffer, index: number): number {
+  const x = buffer.positions[index * 3];
+  const z = buffer.positions[index * 3 + 2];
+  const raw = Math.sin(x * 41.681 + z * 17.173 + buffer.params.seed * 0.037 + index * 0.097) * 24634.6345;
+  return raw - Math.floor(raw);
 }
 
 function metricAt(buffer: HillOfHillsTerrainBuffer, index: number, channel: HillOfHillsTerrainBufferMetricChannel): number {
