@@ -23,9 +23,12 @@ import {
 import { hillMaterialFrayColor } from './terrain/hill-of-hills-material-fray.js';
 import {
   hillMaterialTransitionLawFor,
-  type HillMaterialTransitionDescriptor,
-  type HillMaterialTransitionLaw
+  type HillMaterialTransitionDescriptor
 } from './terrain/hill-of-hills-transition-law.js';
+import {
+  hillMaterialTransitionPreviewStyleFor,
+  type HillMaterialTransitionPreviewStyle
+} from './terrain/hill-of-hills-transition-preview-style.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -420,30 +423,20 @@ function drawMaterialTransitionEdge(
   });
   const style = transitionFragmentStyle(descriptor, currentBuffer, fromIndex, toIndex);
   const side = jitter > 0.5 ? 1 : -1;
-  const length = 4 + descriptor.intensity * 11;
-  const cross = 1.4 + descriptor.intensity * 4.6;
+  const length = style.fragmentLength;
+  const cross = style.crossOffset;
   const center = {
     x: middle.x + tangent.x * (jitter - 0.5) * length * 0.9,
     y: middle.y + tangent.y * (jitter - 0.5) * length * 0.9
   };
+  const normalSide = side + style.normalBias;
 
-  ctx.strokeStyle = style.stroke;
+  ctx.strokeStyle = rgba(style.strokeRgb, style.alpha);
   ctx.lineWidth = style.lineWidth;
-  ctx.beginPath();
-  ctx.moveTo(center.x - tangent.x * length * 0.5 - normal.x * cross * side, center.y - tangent.y * length * 0.5 - normal.y * cross * side);
-  ctx.quadraticCurveTo(
-    center.x + normal.x * cross * 0.3 * side,
-    center.y + normal.y * cross * 0.3 * side,
-    center.x + tangent.x * length * 0.5 + normal.x * cross * side,
-    center.y + tangent.y * length * 0.5 + normal.y * cross * side
-  );
-  ctx.stroke();
+  drawTransitionMotifStroke(style, center, tangent, normal, length, cross, normalSide);
 
-  if (style.fill) {
-    ctx.fillStyle = style.fill;
-    ctx.beginPath();
-    ctx.arc(center.x + normal.x * cross * side, center.y + normal.y * cross * side, 0.9 + descriptor.intensity * 1.8, 0, Math.PI * 2);
-    ctx.fill();
+  if (style.fillRgb && style.fillAlpha > 0) {
+    drawTransitionMotifClusters(style, center, tangent, normal, length, cross, normalSide, jitter);
   }
 }
 
@@ -471,49 +464,111 @@ function transitionFragmentStyle(
   buffer: HillOfHillsTerrainBuffer,
   fromIndex: number,
   toIndex: number
-): { stroke: string; fill?: string; lineWidth: number } {
-  const intensity = descriptor.intensity;
-  const alpha = 0.08 + intensity * 0.24;
-  const lawColor = transitionLawColor(descriptor.law, buffer, fromIndex, toIndex);
-  const stroke = `rgba(${lawColor[0]}, ${lawColor[1]}, ${lawColor[2]}, ${alpha.toFixed(3)})`;
-  const fillAlpha = descriptor.law === 'growth-thicket' || descriptor.law === 'stone-break' ? alpha * 0.85 : 0;
-  return {
-    stroke,
-    fill: fillAlpha > 0 ? `rgba(${lawColor[0]}, ${lawColor[1]}, ${lawColor[2]}, ${fillAlpha.toFixed(3)})` : undefined,
-    lineWidth: 0.9 + intensity * 1.7
-  };
+): HillMaterialTransitionPreviewStyle {
+  return hillMaterialTransitionPreviewStyleFor({
+    law: descriptor.law,
+    intensity: descriptor.intensity,
+    averageColor: averageColor(colorAt(buffer, fromIndex), colorAt(buffer, toIndex))
+  });
 }
 
-function transitionLawColor(
-  law: HillMaterialTransitionLaw,
-  buffer: HillOfHillsTerrainBuffer,
-  fromIndex: number,
-  toIndex: number
-): readonly [number, number, number] {
-  switch (law) {
-    case 'wet-bank-shadow':
-      return [40, 47, 78];
-    case 'route-wear-feather':
-      return [202, 181, 112];
-    case 'growth-thicket':
-    case 'vegetation-creep':
-      return [50, 126, 66];
-    case 'dry-crust-chip':
-      return [174, 145, 90];
-    case 'stone-break':
-      return [93, 88, 89];
-    case 'soft-ground-fray': {
-      const a = colorAt(buffer, fromIndex);
-      const b = colorAt(buffer, toIndex);
-      return [
-        Math.round((a[0] + b[0]) * 0.5),
-        Math.round((a[1] + b[1]) * 0.5),
-        Math.round((a[2] + b[2]) * 0.5)
-      ];
-    }
-    case 'none':
-      return [0, 0, 0];
+function drawTransitionMotifStroke(
+  style: HillMaterialTransitionPreviewStyle,
+  center: { x: number; y: number },
+  tangent: { x: number; y: number },
+  normal: { x: number; y: number },
+  length: number,
+  cross: number,
+  normalSide: number
+): void {
+  if (style.segmentCount <= 1) {
+    drawTransitionStrokeSegment(style, center, tangent, normal, length, cross, normalSide, 0);
+    return;
   }
+
+  const segmentLength = length / (style.segmentCount + 0.8);
+  for (let index = 0; index < style.segmentCount; index += 1) {
+    const offset = (index - (style.segmentCount - 1) * 0.5) * segmentLength * 1.15;
+    const sideOffset = (index % 2 === 0 ? 1 : -1) * cross * 0.28;
+    drawTransitionStrokeSegment(
+      style,
+      {
+        x: center.x + tangent.x * offset + normal.x * sideOffset,
+        y: center.y + tangent.y * offset + normal.y * sideOffset
+      },
+      tangent,
+      normal,
+      segmentLength,
+      cross * 0.58,
+      normalSide,
+      index
+    );
+  }
+}
+
+function drawTransitionStrokeSegment(
+  style: HillMaterialTransitionPreviewStyle,
+  center: { x: number; y: number },
+  tangent: { x: number; y: number },
+  normal: { x: number; y: number },
+  length: number,
+  cross: number,
+  normalSide: number,
+  index: number
+): void {
+  const bend = style.curveBias + index * 0.05;
+  ctx.beginPath();
+  ctx.moveTo(
+    center.x - tangent.x * length * 0.5 - normal.x * cross * normalSide,
+    center.y - tangent.y * length * 0.5 - normal.y * cross * normalSide
+  );
+  ctx.quadraticCurveTo(
+    center.x + normal.x * cross * bend * normalSide,
+    center.y + normal.y * cross * bend * normalSide,
+    center.x + tangent.x * length * 0.5 + normal.x * cross * normalSide,
+    center.y + tangent.y * length * 0.5 + normal.y * cross * normalSide
+  );
+  ctx.stroke();
+}
+
+function drawTransitionMotifClusters(
+  style: HillMaterialTransitionPreviewStyle,
+  center: { x: number; y: number },
+  tangent: { x: number; y: number },
+  normal: { x: number; y: number },
+  length: number,
+  cross: number,
+  normalSide: number,
+  jitter: number
+): void {
+  ctx.fillStyle = rgba(style.fillRgb ?? style.strokeRgb, style.fillAlpha);
+  const count = Math.max(1, style.clusterCount);
+  for (let index = 0; index < count; index += 1) {
+    const along = count === 1 ? 0 : (index / (count - 1) - 0.5) * length * 0.8;
+    const stagger = ((index * 0.37 + jitter) % 1 - 0.5) * cross * 0.9;
+    const radius = style.motif === 'growth-cluster' ? 1.05 + style.lineWidth * 0.55 : 0.75 + style.lineWidth * 0.35;
+    ctx.beginPath();
+    ctx.arc(
+      center.x + tangent.x * along + normal.x * (cross * normalSide + stagger),
+      center.y + tangent.y * along + normal.y * (cross * normalSide + stagger),
+      radius,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+  }
+}
+
+function averageColor(a: readonly [number, number, number], b: readonly [number, number, number]): readonly [number, number, number] {
+  return [
+    Math.round((a[0] + b[0]) * 0.5),
+    Math.round((a[1] + b[1]) * 0.5),
+    Math.round((a[2] + b[2]) * 0.5)
+  ];
+}
+
+function rgba(rgb: readonly [number, number, number], alpha: number): string {
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha.toFixed(3)})`;
 }
 
 function transitionTangent(
