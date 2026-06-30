@@ -3,6 +3,7 @@ import {
   createFixtureWilorHandPacket,
   HAND_SURFACE_FACES,
   type HandSurfaceReport,
+  type KaminosHandEventCache,
   type Vec2,
   type WebcamTruth,
   type WilorHandPacket,
@@ -24,14 +25,16 @@ const appCanvas = canvas;
 const ctx = context;
 const params = new URLSearchParams(window.location.search);
 const requestedRoute = params.get('hand_surface_route') ?? 'native_wilor_mini_mlx_detector_sidecar_live';
-const packetUrl = params.get('hand_packet_url');
+const useFixture = params.get('fixture') === '1';
+const defaultKaminosPacketUrl = '/kaminos-hand-control/hand-control-sidecar-event';
+const packetUrl = useFixture ? null : (params.get('hand_packet_url') ?? params.get('kaminos_hand_endpoint') ?? defaultKaminosPacketUrl);
 const video = document.createElement('video');
 let videoReady = false;
 let webcamSource: WebcamTruth['source'] = 'missing';
 let webcamError: string | null = null;
-let latestPacket: WilorHandPacket = createFixtureWilorHandPacket({
-  effectiveRoute: 'wilor_hand_surface_synthetic_fixture',
-  sourceBackend: 'wilor_hand_surface_synthetic_fixture',
+let latestPacket: WilorHandPacket | KaminosHandEventCache = createFixtureWilorHandPacket({
+  effectiveRoute: packetUrl ? 'kaminos_live_waiting_for_packet' : 'wilor_hand_surface_synthetic_fixture',
+  sourceBackend: packetUrl ? 'kaminos_live_waiting_for_packet' : 'wilor_hand_surface_synthetic_fixture',
   timestampMs: performance.now(),
 });
 let latestFetchError: string | null = null;
@@ -78,6 +81,8 @@ function render(timestampMs: number): void {
       { id: 'blue-lerm-ring', face: [13, 14, 18], barycentric: [0.24, 0.46, 0.3], behaviorHint: 'curious' },
     ],
     moge: { requested: params.get('moge') === '1', effectiveRoute: null, ageMs: null },
+    requestedEndpoint: packetUrl ?? undefined,
+    effectiveEndpoint: packetUrl ? effectiveKaminosEndpoint(packetUrl) : undefined,
   });
   drawGroundTruth(width, height, timestampMs);
   drawHandSurface(report, width, height);
@@ -122,7 +127,7 @@ async function fetchPacketLoop(url: string): Promise<void> {
     try {
       const response = await fetch(url, { cache: 'no-store' });
       if (!response.ok) throw new Error(`packet fetch failed ${response.status}`);
-      latestPacket = await response.json() as WilorHandPacket;
+      latestPacket = await response.json() as WilorHandPacket | KaminosHandEventCache;
       latestFetchError = null;
     } catch (error) {
       latestFetchError = error instanceof Error ? error.message : String(error);
@@ -240,6 +245,10 @@ function drawReceipt(report: HandSurfaceReport, width: number, height: number): 
     `requested ${report.routeTruth.requestedRoute}`,
     `effective ${report.routeTruth.effectiveRoute}`,
     `backend ${report.routeTruth.backendIdentity}`,
+    `endpoint ${report.routeTruth.endpoint.effective ?? 'none'}`,
+    report.routeTruth.kaminosCache.sequence === null
+      ? null
+      : `cache seq ${report.routeTruth.kaminosCache.sequence} age ${report.routeTruth.kaminosCache.ageMs ?? 'unknown'}ms`,
     `freshness ${report.freshness.status} age ${report.freshness.ageMs ?? 'unknown'}ms`,
     `webcam ${report.webcam.status}`,
     `surface ${report.surfaceFrame.status} landmarks ${report.surfaceFrame.landmarks2d.length}`,
@@ -252,4 +261,11 @@ function drawReceipt(report: HandSurfaceReport, width: number, height: number): 
   lines.slice(0, Math.floor(height / 18) - 1).forEach((line, index) => {
     ctx.fillText(line, x + 18, 28 + index * 18);
   });
+}
+
+function effectiveKaminosEndpoint(url: string): string {
+  if (url.startsWith('/kaminos-hand-control/')) {
+    return `http://127.0.0.1:8096/${url.slice('/kaminos-hand-control/'.length)}`;
+  }
+  return url;
 }

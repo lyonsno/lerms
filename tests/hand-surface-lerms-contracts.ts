@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   composeHandSurfaceLerms,
+  createFixtureKaminosHandEventCache,
   createFixtureWilorHandPacket,
   renderHandSurfaceWitnessSvg,
 } from '../src/hand-surface-lerms.ts';
@@ -149,6 +150,56 @@ test('witness svg preserves webcam ground truth and renders lerms as surface inh
   assert.match(svg, /red-lerm-palm/);
   assert.match(svg, /yellow-lerm-index/);
   assert.doesNotMatch(svg, /screen-space-sticker-success/);
+});
+
+test('Kaminos event cache unwraps event and uses cache age for freshness', () => {
+  const staleRemoteTimestampPacket = livePacket();
+  staleRemoteTimestampPacket.timestamp = -100000;
+  const cache = createFixtureKaminosHandEventCache({
+    event: staleRemoteTimestampPacket,
+    ageMs: 42,
+    sequence: 77,
+    effectiveEndpoint: 'http://127.0.0.1:8096/hand-control-sidecar-event',
+  });
+
+  const report = composeHandSurfaceLerms(cache, liveOptions({
+    requestedEndpoint: '/kaminos-hand-control/hand-control-sidecar-event',
+    effectiveEndpoint: 'http://127.0.0.1:8096/hand-control-sidecar-event',
+    nowMs: 1040,
+  }));
+
+  assert.equal(report.authority, 'live_hand_surface');
+  assert.equal(report.freshness.status, 'fresh');
+  assert.equal(report.freshness.ageMs, 42);
+  assert.equal(report.routeTruth.endpoint.effective, 'http://127.0.0.1:8096/hand-control-sidecar-event');
+  assert.equal(report.routeTruth.kaminosCache.sequence, 77);
+});
+
+test('stale Kaminos event cache downgrades even when the inner packet timestamp looks fresh', () => {
+  const cache = createFixtureKaminosHandEventCache({
+    event: livePacket(),
+    ageMs: 1500,
+  });
+
+  const report = composeHandSurfaceLerms(cache, liveOptions({ maxFreshnessMs: 120 }));
+
+  assert.notEqual(report.authority, 'live_hand_surface');
+  assert.equal(report.freshness.status, 'stale');
+  assertDowngrade(report, 'stale_hand_packet');
+});
+
+test('empty Kaminos event cache cannot pretend to contain a hand surface', () => {
+  const cache = createFixtureKaminosHandEventCache({
+    event: null,
+    status: 'empty',
+    ageMs: null,
+  });
+
+  const report = composeHandSurfaceLerms(cache, liveOptions());
+
+  assert.equal(report.authority, 'invalid');
+  assertDowngrade(report, 'missing_kaminos_hand_event');
+  assertDowngrade(report, 'missing_hand_surface_frame');
 });
 
 for (const { name, fn } of tests) {

@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 
 import {
   composeHandSurfaceLerms,
+  createFixtureKaminosHandEventCache,
   createFixtureWilorHandPacket,
   renderHandSurfaceWitnessSvg,
 } from '../src/hand-surface-lerms.ts';
@@ -17,10 +18,18 @@ const packet = createFixtureWilorHandPacket({
   timestampMs: 1168,
   palmNormal: { x: 0.08, y: -0.28, z: 0.92 },
 });
-const report = composeHandSurfaceLerms(packet, {
+const cache = createFixtureKaminosHandEventCache({
+  event: packet,
+  sequence: 12,
+  ageMs: 32,
+  effectiveEndpoint: 'http://127.0.0.1:8096/hand-control-sidecar-event',
+});
+const report = composeHandSurfaceLerms(cache, {
   requestedRoute,
   nowMs,
   maxFreshnessMs: 180,
+  requestedEndpoint: '/kaminos-hand-control/hand-control-sidecar-event',
+  effectiveEndpoint: 'http://127.0.0.1:8096/hand-control-sidecar-event',
   webcam: {
     source: 'synthetic_fixture',
     visible: true,

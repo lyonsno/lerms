@@ -8,7 +8,8 @@ export type DowngradeCode =
   | 'moge_requested_unavailable'
   | 'moge_stale'
   | 'blank_or_hidden_webcam'
-  | 'synthetic_webcam_frame';
+  | 'synthetic_webcam_frame'
+  | 'missing_kaminos_hand_event';
 
 export type WitnessAuthority =
   | 'live_hand_surface'
@@ -39,6 +40,16 @@ export type WilorHandPacket = {
     model_route?: string;
     device_route?: string;
   };
+};
+
+export type KaminosHandEventCache = {
+  schema?: 'kaminos.hand-control-sidecar-event-cache.v0' | string;
+  status?: string;
+  sequence?: number;
+  stored_at_ms?: number;
+  age_ms?: number | null;
+  event?: WilorHandPacket | null;
+  effective_endpoint?: string;
 };
 
 export type WebcamTruth = {
@@ -73,6 +84,8 @@ export type ComposeHandSurfaceOptions = {
   attachmentMode: 'hand_surface' | 'screen_space';
   lermAnchors: LermAnchor[];
   moge: MogeTruthInput;
+  requestedEndpoint?: string;
+  effectiveEndpoint?: string;
 };
 
 export type HandSurfaceReport = {
@@ -85,6 +98,19 @@ export type HandSurfaceReport = {
     modelRoute: string;
     deviceRoute: string;
     fallback: boolean;
+    endpoint: {
+      requested: string | null;
+      effective: string | null;
+      fallback: boolean;
+    };
+    kaminosCache: {
+      schema: string | null;
+      status: string | null;
+      sequence: number | null;
+      storedAtMs: number | null;
+      ageMs: number | null;
+      eventPresent: boolean;
+    };
   };
   freshness: {
     nowMs: number;
@@ -224,14 +250,42 @@ export function createFixtureWilorHandPacket(overrides: Partial<{
   };
 }
 
-export function composeHandSurfaceLerms(packet: WilorHandPacket, options: ComposeHandSurfaceOptions): HandSurfaceReport {
+export function createFixtureKaminosHandEventCache(overrides: Partial<{
+  event: WilorHandPacket | null;
+  status: string;
+  sequence: number;
+  storedAtMs: number;
+  ageMs: number | null;
+  effectiveEndpoint: string;
+}> = {}): KaminosHandEventCache {
+  return {
+    schema: 'kaminos.hand-control-sidecar-event-cache.v0',
+    status: overrides.status ?? (overrides.event === null ? 'empty' : 'stored'),
+    sequence: overrides.sequence ?? 1,
+    stored_at_ms: overrides.storedAtMs ?? 1000,
+    age_ms: overrides.ageMs ?? 0,
+    effective_endpoint: overrides.effectiveEndpoint,
+    event: overrides.event === undefined ? createFixtureWilorHandPacket() : overrides.event,
+  };
+}
+
+export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEventCache, options: ComposeHandSurfaceOptions): HandSurfaceReport {
   const downgrades: HandSurfaceReport['downgrades'] = [];
-  const effectiveRoute = packet.debug?.evidence_route ?? packet.source_backend ?? 'unknown';
-  const backendIdentity = packet.source_backend ?? 'unknown';
-  const modelRoute = packet.debug?.model_route ?? 'unknown';
-  const deviceRoute = packet.debug?.device_route ?? 'unknown';
-  const timestampMs = finite(packet.timestamp_ms) ?? finite(packet.timestamp) ?? null;
-  const ageMs = timestampMs === null ? null : Math.max(0, options.nowMs - timestampMs);
+  const envelope = normalizeHandPacketEnvelope(packet, options);
+  const handPacket = envelope.packet;
+  if (envelope.missingKaminosEvent) {
+    downgrades.push({
+      code: 'missing_kaminos_hand_event',
+      detail: `Kaminos event cache status ${envelope.cache.status ?? 'unknown'} did not include an event`,
+    });
+  }
+
+  const effectiveRoute = handPacket.debug?.evidence_route ?? handPacket.source_backend ?? 'unknown';
+  const backendIdentity = handPacket.source_backend ?? 'unknown';
+  const modelRoute = handPacket.debug?.model_route ?? 'unknown';
+  const deviceRoute = handPacket.debug?.device_route ?? 'unknown';
+  const timestampMs = finite(handPacket.timestamp_ms) ?? finite(handPacket.timestamp) ?? null;
+  const ageMs = envelope.cache.ageMs ?? (timestampMs === null ? null : Math.max(0, options.nowMs - timestampMs));
   const freshnessStatus = ageMs === null ? 'unknown' : ageMs <= options.maxFreshnessMs ? 'fresh' : 'stale';
   const isLiveWilor = /^native_wilor_mini_.*sidecar_live$/.test(effectiveRoute)
     && /^native_wilor_mini_.*sidecar_live$/.test(backendIdentity);
@@ -249,8 +303,8 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket, options: Compos
     });
   }
 
-  const landmarks2d = validVec2List(packet.landmarks_2d);
-  const worldLandmarks = validVec3List(packet.world_landmarks ?? packet.landmarks_3d);
+  const landmarks2d = validVec2List(handPacket.landmarks_2d);
+  const worldLandmarks = validVec3List(handPacket.world_landmarks ?? handPacket.landmarks_3d);
   const surfaceValid = landmarks2d.length >= 21 && worldLandmarks.length >= 21;
   if (!surfaceValid) {
     downgrades.push({
@@ -272,12 +326,12 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket, options: Compos
     });
   }
 
-  const palmNormal = validVec3(packet.palm_normal_proxy) ?? validVec3(packet.hand_frame_basis?.z_axis);
+  const palmNormal = validVec3(handPacket.palm_normal_proxy) ?? validVec3(handPacket.hand_frame_basis?.z_axis);
   const basis = surfaceValid
     ? {
-        source: packet.hand_frame_basis?.source ?? effectiveRoute,
-        xAxis: validVec3(packet.hand_frame_basis?.x_axis) ?? { x: 1, y: 0, z: 0 },
-        yAxis: validVec3(packet.hand_frame_basis?.y_axis) ?? { x: 0, y: 1, z: 0 },
+        source: handPacket.hand_frame_basis?.source ?? effectiveRoute,
+        xAxis: validVec3(handPacket.hand_frame_basis?.x_axis) ?? { x: 1, y: 0, z: 0 },
+        yAxis: validVec3(handPacket.hand_frame_basis?.y_axis) ?? { x: 0, y: 1, z: 0 },
         zAxis: palmNormal ?? fallbackVec3,
       }
     : null;
@@ -350,6 +404,19 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket, options: Compos
       modelRoute,
       deviceRoute,
       fallback: !isLiveWilor || effectiveRoute !== options.requestedRoute,
+      endpoint: {
+        requested: envelope.endpoint.requested,
+        effective: envelope.endpoint.effective,
+        fallback: envelope.endpoint.requested !== envelope.endpoint.effective,
+      },
+      kaminosCache: {
+        schema: envelope.cache.schema,
+        status: envelope.cache.status,
+        sequence: envelope.cache.sequence,
+        storedAtMs: envelope.cache.storedAtMs,
+        ageMs: envelope.cache.ageMs,
+        eventPresent: !envelope.missingKaminosEvent,
+      },
     },
     freshness: {
       nowMs: options.nowMs,
@@ -366,8 +433,8 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket, options: Compos
     },
     surfaceFrame: {
       status: surfaceValid ? 'valid' : 'invalid',
-      handedness: packet.handedness ?? 'unknown',
-      confidence: finite(packet.confidence),
+      handedness: handPacket.handedness ?? 'unknown',
+      confidence: finite(handPacket.confidence),
       landmarks2d,
       worldLandmarks,
       faces: surfaceValid ? HAND_SURFACE_FACES.map((face) => [...face]) : [],
@@ -417,6 +484,7 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
     `authority: ${report.authority}`,
     `requested: ${report.routeTruth.requestedRoute}`,
     `effective: ${report.routeTruth.effectiveRoute}`,
+    `endpoint: ${report.routeTruth.endpoint.effective ?? 'none'}`,
     `backend: ${report.routeTruth.backendIdentity}`,
     `freshness: ${report.freshness.status} age=${report.freshness.ageMs ?? 'unknown'}ms`,
     `webcam: ${report.webcam.status} frame=${report.webcam.frameId}`,
@@ -503,6 +571,61 @@ function evaluateMoge(moge: MogeTruthInput): HandSurfaceReport['moge'] {
     status: moge.ageMs <= maxFreshnessMs ? 'fresh_effective' : 'stale',
     effectiveRoute: moge.effectiveRoute,
     ageMs: moge.ageMs,
+  };
+}
+
+function normalizeHandPacketEnvelope(packet: WilorHandPacket | KaminosHandEventCache, options: ComposeHandSurfaceOptions): {
+  packet: WilorHandPacket;
+  endpoint: {
+    requested: string | null;
+    effective: string | null;
+  };
+  cache: {
+    schema: string | null;
+    status: string | null;
+    sequence: number | null;
+    storedAtMs: number | null;
+    ageMs: number | null;
+  };
+  missingKaminosEvent: boolean;
+} {
+  const maybeCache = packet as KaminosHandEventCache;
+  const isKaminosCache = maybeCache.schema === 'kaminos.hand-control-sidecar-event-cache.v0'
+    || Object.prototype.hasOwnProperty.call(maybeCache, 'event')
+    || Object.prototype.hasOwnProperty.call(maybeCache, 'age_ms');
+  if (!isKaminosCache) {
+    return {
+      packet: packet as WilorHandPacket,
+      endpoint: {
+        requested: options.requestedEndpoint ?? null,
+        effective: options.effectiveEndpoint ?? options.requestedEndpoint ?? null,
+      },
+      cache: {
+        schema: null,
+        status: null,
+        sequence: null,
+        storedAtMs: null,
+        ageMs: null,
+      },
+      missingKaminosEvent: false,
+    };
+  }
+
+  const event = maybeCache.event && typeof maybeCache.event === 'object' ? maybeCache.event : null;
+  return {
+    packet: event ?? {},
+    endpoint: {
+      requested: options.requestedEndpoint ?? null,
+      effective: options.effectiveEndpoint ?? maybeCache.effective_endpoint ?? options.requestedEndpoint ?? null,
+    },
+    cache: {
+      schema: typeof maybeCache.schema === 'string' ? maybeCache.schema : null,
+      status: typeof maybeCache.status === 'string' ? maybeCache.status : null,
+      sequence: finite(maybeCache.sequence),
+      storedAtMs: finite(maybeCache.stored_at_ms),
+      ageMs: finite(maybeCache.age_ms),
+    },
+    missingKaminosEvent: event === null,
   };
 }
 
