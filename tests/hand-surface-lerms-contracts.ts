@@ -283,8 +283,11 @@ test('browser mesh smoke renders all MANO faces and starts through an explicit w
   const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 
   assert.match(mainSource, /start-hand-surface-smoke/);
+  assert.match(mainSource, /stop-hand-surface-smoke/);
   assert.match(mainSource, /beginLiveSmoke/);
+  assert.match(mainSource, /stopLiveSmoke/);
   assert.match(mainSource, /startWitnessSampler/);
+  assert.match(mainSource, /hand-control-sidecar-stop/);
   assert.match(mainSource, /__lermsHandSurfaceFilmstrip/);
   assert.match(mainSource, /cameraFilmstripDataUrl/);
   assert.match(mainSource, /screenFilmstripDataUrl/);

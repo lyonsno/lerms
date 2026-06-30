@@ -30,9 +30,11 @@ const handMeshMode = params.get('hand_mesh') === '1';
 const defaultKaminosPacketUrl = '/kaminos-hand-control/hand-control-sidecar-event';
 const defaultKaminosNativeFrameUrl = '/kaminos-hand-control/hand-control-native-frame';
 const defaultKaminosSidecarLaunchUrl = '/kaminos-hand-control/hand-control-sidecar-launch';
+const defaultKaminosSidecarStopUrl = '/kaminos-hand-control/hand-control-sidecar-stop';
 const packetUrl = useFixture ? null : (params.get('hand_packet_url') ?? params.get('kaminos_hand_endpoint') ?? defaultKaminosPacketUrl);
 const kaminosNativeFrameUrl = useFixture ? null : (params.get('kaminos_native_frame_url') ?? defaultKaminosNativeFrameUrl);
 const kaminosSidecarLaunchUrl = useFixture ? null : (params.get('kaminos_sidecar_launch_url') ?? defaultKaminosSidecarLaunchUrl);
+const kaminosSidecarStopUrl = useFixture ? null : (params.get('kaminos_sidecar_stop_url') ?? defaultKaminosSidecarStopUrl);
 const packetPollMs = Math.max(30, Number(params.get('packet_poll_ms') ?? 45));
 const framePostMs = Math.max(45, Number(params.get('frame_post_ms') ?? 60));
 const witnessIntervalMs = Math.max(120, Number(params.get('witness_interval_ms') ?? 420));
@@ -63,6 +65,7 @@ let latestSidecarStatus: string | null = null;
 let latestWitnessStatus: string | null = null;
 let postedFrameCount = 0;
 let liveSmokeStarted = false;
+let liveSmokeActive = false;
 let packetLoopStarted = false;
 let framePostLoopStarted = false;
 let witnessStarted = false;
@@ -89,10 +92,14 @@ video.autoplay = true;
 video.playsInline = true;
 
 const startButton = createStartButton();
+const stopButton = createStopButton();
 const witnessPanel = createWitnessPanel();
-document.body.append(startButton, witnessPanel);
+document.body.append(startButton, stopButton, witnessPanel);
 startButton.addEventListener('click', () => {
   void beginLiveSmoke();
+});
+stopButton.addEventListener('click', () => {
+  void stopLiveSmoke();
 });
 
 window.__lermsHandSurfaceFilmstrip = createEmptyFilmstripWitness();
@@ -126,6 +133,29 @@ function createStartButton(): HTMLButtonElement {
     borderRadius: '6px',
     background: 'rgba(18, 25, 22, 0.92)',
     color: 'rgba(241, 246, 223, 0.96)',
+    font: '13px ui-monospace, SFMono-Regular, Menlo, monospace',
+    cursor: 'pointer',
+  });
+  return button;
+}
+
+function createStopButton(): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.id = 'stop-hand-surface-smoke';
+  button.type = 'button';
+  button.textContent = 'Stop Smoke';
+  button.disabled = true;
+  Object.assign(button.style, {
+    position: 'fixed',
+    left: '176px',
+    top: '14px',
+    zIndex: '20',
+    minHeight: '36px',
+    padding: '0 14px',
+    border: '1px solid rgba(248, 151, 119, 0.55)',
+    borderRadius: '6px',
+    background: 'rgba(34, 18, 15, 0.92)',
+    color: 'rgba(255, 235, 226, 0.96)',
     font: '13px ui-monospace, SFMono-Regular, Menlo, monospace',
     cursor: 'pointer',
   });
@@ -207,8 +237,10 @@ declare global {
 async function beginLiveSmoke(): Promise<void> {
   if (liveSmokeStarted) return;
   liveSmokeStarted = true;
+  liveSmokeActive = true;
   startButton.disabled = true;
   startButton.textContent = 'Smoke running';
+  stopButton.disabled = false;
   latestSidecarStatus = 'starting live smoke';
   startWitnessSampler();
   if (packetUrl && !packetLoopStarted) {
@@ -216,6 +248,23 @@ async function beginLiveSmoke(): Promise<void> {
     void fetchPacketLoop(packetUrl);
   }
   await startWebcam();
+}
+
+async function stopLiveSmoke(): Promise<void> {
+  if (!liveSmokeStarted && !liveSmokeActive) return;
+  liveSmokeActive = false;
+  liveSmokeStarted = false;
+  startButton.disabled = false;
+  startButton.textContent = handMeshMode ? 'Start Mesh Smoke' : 'Start Hand Smoke';
+  stopButton.disabled = true;
+  stopWebcamTracks();
+  latestFramePostStatus = 'frame posting stopped';
+  packetLoopStarted = false;
+  framePostLoopStarted = false;
+  completeWitnessSampler('witness stopped by operator');
+  if (kaminosSidecarStopUrl) {
+    await stopKaminosSidecar(kaminosSidecarStopUrl);
+  }
 }
 
 async function startWebcam(): Promise<void> {
@@ -245,7 +294,7 @@ async function startWebcam(): Promise<void> {
 }
 
 async function fetchPacketLoop(url: string): Promise<void> {
-  while (true) {
+  while (liveSmokeActive) {
     try {
       const response = await fetch(url, { cache: 'no-store' });
       if (!response.ok) throw new Error(`packet fetch failed ${response.status}`);
@@ -256,6 +305,7 @@ async function fetchPacketLoop(url: string): Promise<void> {
     }
     await new Promise((resolve) => window.setTimeout(resolve, packetPollMs));
   }
+  packetLoopStarted = false;
 }
 
 async function launchKaminosSidecar(url: string): Promise<void> {
@@ -274,13 +324,25 @@ async function launchKaminosSidecar(url: string): Promise<void> {
   }
 }
 
+async function stopKaminosSidecar(url: string): Promise<void> {
+  try {
+    const response = await fetch(url, { method: 'POST' });
+    const body = await response.json().catch(() => null) as { running?: boolean; stopped?: boolean } | null;
+    if (!response.ok) throw new Error(`sidecar stop failed ${response.status}`);
+    latestSidecarStatus = body?.stopped || body?.running === false ? 'sidecar stopped' : 'sidecar stop requested';
+  } catch (error) {
+    latestSidecarStatus = `sidecar_stop ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
 async function postKaminosNativeFrameLoop(url: string): Promise<void> {
-  while (true) {
+  while (liveSmokeActive) {
     if (videoReady) {
       await postKaminosNativeFrame(url);
     }
     await new Promise((resolve) => window.setTimeout(resolve, framePostMs));
   }
+  framePostLoopStarted = false;
 }
 
 async function postKaminosNativeFrame(url: string): Promise<void> {
@@ -335,6 +397,10 @@ function startWitnessSampler(): void {
   const capture = (): void => {
     const current = window.__lermsHandSurfaceFilmstrip;
     if (!current || current.status === 'complete') return;
+    if (!liveSmokeActive) {
+      completeWitnessSampler('witness stopped by operator');
+      return;
+    }
     captured += 1;
     current.cameraFrames.push(captureCameraWitnessFrame(captured));
     current.screenFrames.push(captureScreenWitnessFrame(captured));
@@ -348,9 +414,29 @@ function startWitnessSampler(): void {
     renderWitnessPanel(current);
     if (current.status !== 'complete') {
       window.setTimeout(capture, witnessIntervalMs);
+    } else {
+      witnessStarted = false;
     }
   };
   window.setTimeout(capture, 250);
+}
+
+function completeWitnessSampler(status: string): void {
+  const current = window.__lermsHandSurfaceFilmstrip;
+  if (!current) return;
+  current.status = 'complete';
+  latestWitnessStatus = status;
+  renderWitnessPanel(current);
+  witnessStarted = false;
+}
+
+function stopWebcamTracks(): void {
+  const stream = video.srcObject instanceof MediaStream ? video.srcObject : null;
+  stream?.getTracks().forEach((track) => track.stop());
+  video.pause();
+  video.srcObject = null;
+  videoReady = false;
+  webcamSource = 'missing';
 }
 
 function createEmptyFilmstripWitness(): FilmstripWitness {
