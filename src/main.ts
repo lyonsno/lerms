@@ -4,6 +4,7 @@ import {
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
   type HillOfHillsMaterialEdgeKind,
+  type HillOfHillsProxyMaterialKind,
   type HillOfHillsSurfaceDetailKind,
   type HillOfHillsSurfaceAnchorKind,
   type HillOfHillsTerrainBuffer,
@@ -20,6 +21,11 @@ import {
   type HillOverlayStrokeStyle
 } from './terrain/hill-of-hills-overlay-style.js';
 import { hillMaterialFrayColor } from './terrain/hill-of-hills-material-fray.js';
+import {
+  hillMaterialTransitionLawFor,
+  type HillMaterialTransitionDescriptor,
+  type HillMaterialTransitionLaw
+} from './terrain/hill-of-hills-transition-law.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -53,6 +59,17 @@ const MATERIAL_EDGE_CODEBOOK: readonly HillOfHillsMaterialEdgeKind[] = [
   'route-wear',
   'growth-cluster',
   'slope-break'
+];
+const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
+  'crown-warmth',
+  'approach-clay',
+  'slope-moss',
+  'basin-meadow',
+  'basin-dust',
+  'basin-pool',
+  'ditch-shadow',
+  'rim-crust',
+  'growth-lip'
 ];
 const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
   'none',
@@ -327,6 +344,7 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
     }
   }
 
+  drawMaterialTransitionFragments(currentBuffer, width, height);
   drawMaterialEdgeDissolves(currentBuffer, width, height);
   drawSurfaceDetails(currentBuffer, width, height);
   drawTopologyOverlays(currentBuffer, width, height);
@@ -342,6 +360,225 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
     }
     ctx.stroke();
   }
+}
+
+function drawMaterialTransitionFragments(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const gridResolutionX = currentBuffer.gridResolution.x;
+  const gridResolutionZ = currentBuffer.gridResolution.z;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (let zi = 1; zi < gridResolutionZ - 1; zi += 1) {
+    for (let xi = 1; xi < gridResolutionX - 1; xi += 1) {
+      const index = zi * gridResolutionX + xi;
+      if (xi < gridResolutionX - 2) {
+        drawMaterialTransitionEdge(currentBuffer, index, index + 1, width, height, 'x');
+      }
+      if (zi < gridResolutionZ - 2) {
+        drawMaterialTransitionEdge(currentBuffer, index, index + gridResolutionX, width, height, 'z');
+      }
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawMaterialTransitionEdge(
+  currentBuffer: HillOfHillsTerrainBuffer,
+  fromIndex: number,
+  toIndex: number,
+  width: number,
+  height: number,
+  axis: 'x' | 'z'
+): void {
+  if (currentBuffer.materialCodes[fromIndex] === currentBuffer.materialCodes[toIndex]) {
+    return;
+  }
+
+  const descriptor = materialTransitionDescriptor(currentBuffer, fromIndex, toIndex);
+  if (descriptor.law === 'none' || descriptor.intensity <= 0) {
+    return;
+  }
+
+  const jitter = transitionJitter(currentBuffer, fromIndex, toIndex, descriptor.seedKey);
+  if (jitter > 0.36 + descriptor.intensity * 0.58) {
+    return;
+  }
+
+  const from = projectSample(currentBuffer, fromIndex, width, height, 0.105);
+  const to = projectSample(currentBuffer, toIndex, width, height, 0.105);
+  const middle = {
+    x: (from.x + to.x) * 0.5,
+    y: (from.y + to.y) * 0.5
+  };
+  const tangent = transitionTangent(currentBuffer, fromIndex, axis, width, height);
+  const normal = normalize2d({
+    x: to.x - from.x,
+    y: to.y - from.y
+  });
+  const style = transitionFragmentStyle(descriptor, currentBuffer, fromIndex, toIndex);
+  const side = jitter > 0.5 ? 1 : -1;
+  const length = 4 + descriptor.intensity * 11;
+  const cross = 1.4 + descriptor.intensity * 4.6;
+  const center = {
+    x: middle.x + tangent.x * (jitter - 0.5) * length * 0.9,
+    y: middle.y + tangent.y * (jitter - 0.5) * length * 0.9
+  };
+
+  ctx.strokeStyle = style.stroke;
+  ctx.lineWidth = style.lineWidth;
+  ctx.beginPath();
+  ctx.moveTo(center.x - tangent.x * length * 0.5 - normal.x * cross * side, center.y - tangent.y * length * 0.5 - normal.y * cross * side);
+  ctx.quadraticCurveTo(
+    center.x + normal.x * cross * 0.3 * side,
+    center.y + normal.y * cross * 0.3 * side,
+    center.x + tangent.x * length * 0.5 + normal.x * cross * side,
+    center.y + tangent.y * length * 0.5 + normal.y * cross * side
+  );
+  ctx.stroke();
+
+  if (style.fill) {
+    ctx.fillStyle = style.fill;
+    ctx.beginPath();
+    ctx.arc(center.x + normal.x * cross * side, center.y + normal.y * cross * side, 0.9 + descriptor.intensity * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function materialTransitionDescriptor(
+  buffer: HillOfHillsTerrainBuffer,
+  fromIndex: number,
+  toIndex: number
+): HillMaterialTransitionDescriptor {
+  return hillMaterialTransitionLawFor({
+    fromMaterial: proxyMaterialAt(buffer, fromIndex),
+    toMaterial: proxyMaterialAt(buffer, toIndex),
+    edgeKind: strongerMaterialEdgeAt(buffer, fromIndex, toIndex),
+    anchor: strongerSurfaceAnchorAt(buffer, fromIndex, toIndex),
+    strength: Math.max(metricAt(buffer, fromIndex, 'materialEdgeStrength'), metricAt(buffer, toIndex, 'materialEdgeStrength')),
+    dissolve: Math.max(metricAt(buffer, fromIndex, 'materialEdgeDissolve'), metricAt(buffer, toIndex, 'materialEdgeDissolve')),
+    wetness: Math.max(metricAt(buffer, fromIndex, 'wetness'), metricAt(buffer, toIndex, 'wetness')),
+    growth: Math.max(metricAt(buffer, fromIndex, 'growthTint'), metricAt(buffer, toIndex, 'growthTint')),
+    routePressure: Math.max(metricAt(buffer, fromIndex, 'routePressure'), metricAt(buffer, toIndex, 'routePressure')),
+    materialContrast: colorContrast(colorAt(buffer, fromIndex), colorAt(buffer, toIndex))
+  });
+}
+
+function transitionFragmentStyle(
+  descriptor: HillMaterialTransitionDescriptor,
+  buffer: HillOfHillsTerrainBuffer,
+  fromIndex: number,
+  toIndex: number
+): { stroke: string; fill?: string; lineWidth: number } {
+  const intensity = descriptor.intensity;
+  const alpha = 0.08 + intensity * 0.24;
+  const lawColor = transitionLawColor(descriptor.law, buffer, fromIndex, toIndex);
+  const stroke = `rgba(${lawColor[0]}, ${lawColor[1]}, ${lawColor[2]}, ${alpha.toFixed(3)})`;
+  const fillAlpha = descriptor.law === 'growth-thicket' || descriptor.law === 'stone-break' ? alpha * 0.85 : 0;
+  return {
+    stroke,
+    fill: fillAlpha > 0 ? `rgba(${lawColor[0]}, ${lawColor[1]}, ${lawColor[2]}, ${fillAlpha.toFixed(3)})` : undefined,
+    lineWidth: 0.9 + intensity * 1.7
+  };
+}
+
+function transitionLawColor(
+  law: HillMaterialTransitionLaw,
+  buffer: HillOfHillsTerrainBuffer,
+  fromIndex: number,
+  toIndex: number
+): readonly [number, number, number] {
+  switch (law) {
+    case 'wet-bank-shadow':
+      return [40, 47, 78];
+    case 'route-wear-feather':
+      return [202, 181, 112];
+    case 'growth-thicket':
+    case 'vegetation-creep':
+      return [50, 126, 66];
+    case 'dry-crust-chip':
+      return [174, 145, 90];
+    case 'stone-break':
+      return [93, 88, 89];
+    case 'soft-ground-fray': {
+      const a = colorAt(buffer, fromIndex);
+      const b = colorAt(buffer, toIndex);
+      return [
+        Math.round((a[0] + b[0]) * 0.5),
+        Math.round((a[1] + b[1]) * 0.5),
+        Math.round((a[2] + b[2]) * 0.5)
+      ];
+    }
+    case 'none':
+      return [0, 0, 0];
+  }
+}
+
+function transitionTangent(
+  buffer: HillOfHillsTerrainBuffer,
+  index: number,
+  axis: 'x' | 'z',
+  width: number,
+  height: number
+): { x: number; y: number } {
+  const gridResolutionX = buffer.gridResolution.x;
+  const gridResolutionZ = buffer.gridResolution.z;
+  const xi = index % gridResolutionX;
+  const zi = Math.floor(index / gridResolutionX);
+  const beforeIndex =
+    axis === 'x'
+      ? Math.max(0, zi - 1) * gridResolutionX + xi
+      : zi * gridResolutionX + Math.max(0, xi - 1);
+  const afterIndex =
+    axis === 'x'
+      ? Math.min(gridResolutionZ - 1, zi + 1) * gridResolutionX + xi
+      : zi * gridResolutionX + Math.min(gridResolutionX - 1, xi + 1);
+  const before = projectSample(buffer, beforeIndex, width, height, 0.105);
+  const after = projectSample(buffer, afterIndex, width, height, 0.105);
+  return normalize2d({
+    x: after.x - before.x,
+    y: after.y - before.y
+  });
+}
+
+function normalize2d(vector: { x: number; y: number }): { x: number; y: number } {
+  const length = Math.hypot(vector.x, vector.y);
+  if (length < 0.001) {
+    return { x: 1, y: 0 };
+  }
+  return {
+    x: vector.x / length,
+    y: vector.y / length
+  };
+}
+
+function transitionJitter(buffer: HillOfHillsTerrainBuffer, fromIndex: number, toIndex: number, seedKey: string): number {
+  const fromOffset = fromIndex * 3;
+  const toOffset = toIndex * 3;
+  const x = (buffer.positions[fromOffset] + buffer.positions[toOffset]) * 0.5;
+  const z = (buffer.positions[fromOffset + 2] + buffer.positions[toOffset + 2]) * 0.5;
+  const hash = stringHash(seedKey);
+  const raw = Math.sin(x * 26.331 + z * 57.119 + hash * 0.00013 + buffer.params.seed * 0.031) * 32721.9187;
+  return raw - Math.floor(raw);
+}
+
+function stringHash(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function strongerMaterialEdgeAt(buffer: HillOfHillsTerrainBuffer, a: number, b: number): HillOfHillsMaterialEdgeKind {
+  return metricAt(buffer, a, 'materialEdgeStrength') >= metricAt(buffer, b, 'materialEdgeStrength') ? materialEdgeAt(buffer, a) : materialEdgeAt(buffer, b);
+}
+
+function strongerSurfaceAnchorAt(buffer: HillOfHillsTerrainBuffer, a: number, b: number): HillOfHillsSurfaceAnchorKind {
+  return metricAt(buffer, a, 'materialEdgeStrength') >= metricAt(buffer, b, 'materialEdgeStrength') ? surfaceAnchorAt(buffer, a) : surfaceAnchorAt(buffer, b);
 }
 
 function drawMaterialEdgeDissolves(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
@@ -661,6 +898,10 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
 
 function surfaceDetailAt(buffer: HillOfHillsTerrainBuffer, index: number): HillOfHillsSurfaceDetailKind {
   return SURFACE_DETAIL_CODEBOOK[buffer.surfaceDetailCodes[index]] ?? 'none';
+}
+
+function proxyMaterialAt(buffer: HillOfHillsTerrainBuffer, index: number): HillOfHillsProxyMaterialKind {
+  return PROXY_MATERIAL_CODEBOOK[buffer.materialCodes[index]] ?? 'approach-clay';
 }
 
 function materialEdgeAt(buffer: HillOfHillsTerrainBuffer, index: number): HillOfHillsMaterialEdgeKind {
