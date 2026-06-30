@@ -198,6 +198,32 @@ npm run witness:glove-well-live-throw -- --packets /tmp/wilor-packets.json --rep
 
 Fresh non-fallback packets through `native_wilor_mini_mlx_detector_sidecar_live` can make the input-to-command-to-throw path `live_simulation`. Saved packets still do not prove that a sidecar process is running now, and this witness still does not claim full first-vertical success or carrier-drop/juice-hit merge. Stale release packets fail instead of silently producing throw evidence.
 
+### `lerms.glove-well-kaminos-live-throw-witness.v0`
+
+The Kaminos live throw witness is the live transport bridge for Glove Well throwing. It consumes Kaminos hand-control sidecar event-cache payloads, validates that they contain fresh non-fallback `perceptasia.hand-control.v0` packets from the live WiLoR-MLX route, converts the nested hand event into the existing WiLoR glove-input adapter shape, and then reuses `lerms.glove-well-live-throw-composition-witness.v0`.
+
+It records:
+
+- `lerms.kaminos-hand-control-event-cache-transport.v0` transport evidence: sidecar event URL, optional file path, Kaminos branch/commit when supplied, event-cache schema, sequence range, packet frame ids, webcam frame refs, cache age, camera age, source backends, effective routes, and model routes;
+- source-truth split between underlying live hand input and transport authority. Direct/file-injected event-cache fixtures remain `synthetic_fixture`; live URL fetches can be `live_simulation` when freshness, route, webcam, and monotonic sequence checks pass;
+- Glove Well command phase trace and release source frame id from the existing live throw witness;
+- throw physics and Preview Bench throw summary with fixture/saved-packet downgrades replaced by Kaminos transport-specific downgrades;
+- loud failure before primary output when the cache is empty, stale, fallback, synthetic webcam, missing route/config identity, missing landmarks, or non-monotonic.
+
+Fixture/file route:
+
+```sh
+npm run witness:glove-well-kaminos-live-throw -- --event-cache /tmp/kaminos-hand-control-event-caches.json --report /tmp/lerms-glove-well-kaminos-live-throw.json
+```
+
+Live Kaminos route after the operator starts live hand control:
+
+```sh
+npm run witness:glove-well-kaminos-live-throw -- --kaminos-sidecar-event-url http://127.0.0.1:8096/hand-control-sidecar-event --report /tmp/lerms-glove-well-kaminos-live-throw.json
+```
+
+This proves only the Kaminos hand-event-cache-to-Glove-Well-throw path. Full first-vertical acceptance still needs the broader live terrain/lerm/juice/carrier-drop chain and Palm Daddy's source-truth gate.
+
 ### `lerms.goin-ecology-merge-witness.v0`
 
 The goin ecology merge witness is Greedy's first shared-desire receipt. It composes the existing stolen carrier-drop goin evidence with the Glove Well thrown-sacrifice goin evidence in one `lerms.first-vertical-frame.v0`, so the first vertical can stop treating dropped stolen wealth and launched bait wealth as separate toy worlds.
