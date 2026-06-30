@@ -28,7 +28,7 @@ import {
 } from './schnoz-motion-adapter.ts';
 
 export const SCHNOZ_SIM_ROUTE = 'lerms/schnoz-lerm-simulation/witness-file' as const;
-export const SCHNOZ_SIM_CONFIG_ID = 'schnoz-sim-steal-drop-reroute-v0' as const;
+export const SCHNOZ_SIM_CONFIG_ID = 'schnoz-sim-contested-loose-goin-v0' as const;
 export const SCHNOZ_PROXY_BODY_IDENTITY = 'proxy_schnoz_sphere' as const;
 
 export type SchnozTimelineFrame = {
@@ -139,7 +139,7 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
       goin('goin-hoard-001', [1.95, 0.58, 0.05], 'hoarded', { custodyRole: 'hoard_source' }),
       goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded', { custodyRole: 'hoard_source' }),
     ], evidence(0, 0, 'approach / commit', 'uphill approach')),
-    frame(1, 'steal', 520, ['goin-stolen'], [
+    frame(1, 'steal', 900, ['goin-stolen'], [
       lerm('red-lerm-001', [0.95, 0.58, 0.02], [1, 0, 0], 'stealing_goin', 'goin-hoard-001'),
       lerm('red-lerm-002', [-1.5, 0.43, -0.1], [1, 0, 0.05], 'approaching_hoard'),
       lerm('red-lerm-003', [-1.92, 0.41, 0.28], [1, 0, -0.12], 'approaching_hoard'),
@@ -152,8 +152,8 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
         carrierLermId: 'red-lerm-001',
       }),
       goin('goin-loose-001', [1.7, 0.5, -0.22], 'hoarded', { custodyRole: 'hoard_source' }),
-    ], evidence(1, 520, 'reach / steal', 'grab lunge')),
-    frame(2, 'flee', 1100, ['carrier-fleeing'], [
+    ], evidence(1, 900, 'reach / steal', 'grab lunge')),
+    frame(2, 'flee', 1900, ['carrier-fleeing'], [
       lerm('red-lerm-001', [0.3, 0.55, -0.18], [-1, 0, -0.2], 'fleeing_with_goin', 'goin-hoard-001'),
       lerm('red-lerm-002', [-0.95, 0.45, -0.18], [1, 0, 0], 'approaching_hoard'),
       lerm('red-lerm-003', [0.35, 0.56, 0.38], [-1, 0, 0.2], 'fleeing_with_goin', 'goin-loose-001'),
@@ -169,8 +169,8 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
         custodyRole: 'carried_attachment',
         carrierLermId: 'red-lerm-003',
       }),
-    ], evidence(2, 1100, 'turn / flee', 'panic carry')),
-    frame(3, 'hit', 1750, ['juice-hit-carrier', 'possession-released'], [
+    ], evidence(2, 1900, 'turn / flee', 'panic carry')),
+    frame(3, 'hit', 3100, ['juice-hit-carrier', 'possession-released'], [
       lerm('red-lerm-001', [-0.35, 0.56, -0.05], [-1, 0, -0.1], 'hit_reacting', undefined, undefined, 180),
       lerm('red-lerm-002', [-0.75, 0.45, -0.18], [1, 0, 0], 'approaching_hoard'),
       lerm('red-lerm-003', [0.22, 0.56, 0.37], [-1, 0, 0.2], 'fleeing_with_goin', 'goin-loose-001'),
@@ -186,8 +186,8 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
         custodyRole: 'carried_attachment',
         carrierLermId: 'red-lerm-003',
       }),
-    ], evidence(3, 1750, 'brake / compress', 'hit reaction'), { world: [-0.35, 0.72, -0.05], radius: 0.42 }),
-    frame(4, 'drop', 2450, ['drop-started', 'goin-loose-on-field'], [
+    ], evidence(3, 3100, 'brake / compress', 'hit reaction'), { world: [-0.35, 0.72, -0.05], radius: 0.42 }),
+    frame(4, 'drop', 4300, ['drop-started', 'goin-loose-on-field'], [
       lerm('red-lerm-001', [-0.95, 0.62, -0.05], [-1, 0, -0.3], 'tumbling', undefined, undefined, 260),
       lerm('red-lerm-002', [-1.25, 0.44, -0.18], [1, 0, -0.05], 'approaching_hoard'),
       lerm('red-lerm-003', [0.1, 0.55, 0.42], [-1, 0, 0.1], 'fleeing_with_goin', 'goin-loose-001'),
@@ -203,8 +203,8 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
         custodyRole: 'carried_attachment',
         carrierLermId: 'red-lerm-003',
       }),
-    ], evidence(4, 2450, 'drop / recover', 'tumble drop')),
-    frame(5, 'reroute', 3300, ['loose-goin-reroute', 'loose-goin-noticed'], [
+    ], evidence(4, 4300, 'drop / recover', 'tumble drop')),
+    frame(5, 'notice', 5600, ['loose-goin-reroute', 'loose-goin-noticed'], [
       lerm('red-lerm-001', [-2, 0.42, -0.1], [1, 0, -0.2], 'rerouting_to_goin', undefined, 'goin-dropped-001'),
       lerm('red-lerm-002', [0.75, 0.55, 0.24], [-1, 0, 0], 'carrying_goin', 'goin-carried-001'),
       lerm('red-lerm-003', [0.35, 0.56, 0.38], [-1, 0, 0.2], 'fleeing_with_goin', 'goin-flee-001'),
@@ -229,16 +229,63 @@ export function buildSchnozTimeline(): SchnozTimelineFrame[] {
       from: [-2, 0.42, -0.1],
       to: [-1.05, 0.38, -0.85],
     }),
+    frame(6, 'contest', 6900, ['loose-goin-contested'], [
+      lerm('red-lerm-001', [-1.55, 0.4, -0.44], [1, 0, -0.55], 'rerouting_to_goin', undefined, 'goin-dropped-001'),
+      lerm('red-lerm-002', [0.66, 0.55, 0.2], [-1, 0, -0.06], 'carrying_goin', 'goin-carried-001'),
+      lerm('red-lerm-003', [0.16, 0.55, 0.38], [-1, 0, 0.1], 'fleeing_with_goin', 'goin-flee-001'),
+      lerm('red-lerm-004', [-0.4, 0.55, -0.18], [-1, 0, -0.2], 'tumbling', undefined, undefined, 180),
+      lerm('red-lerm-005', [-0.86, 0.52, -0.36], [-1, 0, -0.18], 'tumbling', undefined, undefined, 160),
+      lerm('red-lerm-006', [-1.48, 0.4, -0.08], [1, 0, -0.5], 'rerouting_to_goin', undefined, 'goin-dropped-001'),
+    ], [
+      goin('goin-carried-001', [0.74, 0.57, 0.22], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-002',
+      }),
+      goin('goin-flee-001', [0.08, 0.56, 0.38], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-003',
+      }),
+      goin('goin-dropped-001', [-1.05, 0.38, -0.85], 'rolling', {
+        custodyRole: 'reroute_target',
+        droppedByActorId: 'red-lerm-001',
+        targetedByActorIds: ['red-lerm-001', 'red-lerm-006'],
+      }),
+    ], evidence(6, 6900, 'claim / contest', 'contested loose goin'), undefined, {
+      from: [-1.48, 0.4, -0.08],
+      to: [-1.05, 0.38, -0.85],
+    }),
+    frame(7, 'award', 8200, ['possession-awarded', 'loser-rerouted'], [
+      lerm('red-lerm-001', [-1.12, 0.42, -0.78], [1, 0, 0.1], 'carrying_goin', 'goin-dropped-001'),
+      lerm('red-lerm-002', [0.54, 0.55, 0.16], [-1, 0, -0.08], 'carrying_goin', 'goin-carried-001'),
+      lerm('red-lerm-003', [-0.02, 0.54, 0.4], [-1, 0, 0.08], 'fleeing_with_goin', 'goin-flee-001'),
+      lerm('red-lerm-004', [-0.6, 0.5, -0.12], [1, 0, -0.1], 'approaching_hoard'),
+      lerm('red-lerm-005', [-1.02, 0.46, -0.28], [1, 0, 0.04], 'approaching_hoard'),
+      lerm('red-lerm-006', [-1.22, 0.42, -0.02], [1, 0, 0.15], 'approaching_hoard', undefined, 'goin-hoard-001'),
+    ], [
+      goin('goin-hoard-001', [1.8, 0.55, 0.04], 'hoarded', { custodyRole: 'hoard_source' }),
+      goin('goin-carried-001', [0.62, 0.57, 0.18], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-002',
+      }),
+      goin('goin-flee-001', [-0.1, 0.55, 0.4], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-003',
+      }),
+      goin('goin-dropped-001', [-1.02, 0.48, -0.8], 'carried', {
+        custodyRole: 'carried_attachment',
+        carrierLermId: 'red-lerm-001',
+      }),
+    ], evidence(7, 8200, 'award / peel away', 'claimed loose goin')),
   ];
 }
 
 export function buildFirstVerticalFrameFromSchnozSimulation(timeline = buildSchnozTimeline()): FirstVerticalFrame {
-  const timestampMs = 3300;
+  const final = timeline.find((frame) => frame.label === 'notice') ?? timeline[timeline.length - 1];
+  const timestampMs = final?.timeMs ?? 0;
   const frameId = 'schnoz-lerm-live-sim-frame-001';
   const frameSource = source(frameId, `${SCHNOZ_SIM_ROUTE}/frame`, timestampMs);
   const terrain = terrainSamples(frameId, timestampMs);
   const terrainById = new Map(terrain.map((sample) => [sample.id, sample]));
-  const final = timeline[timeline.length - 1];
   const sourceForPackets = source(frameId, `${SCHNOZ_SIM_ROUTE}/packets`, timestampMs);
   const lerms: LermState[] = final.lerms.map((item) => ({
     schema: LERM_STATE_SCHEMA,
@@ -265,12 +312,7 @@ export function buildFirstVerticalFrameFromSchnozSimulation(timeline = buildSchn
     state: item.state,
     world: item.world,
     velocity: item.state === 'rolling' ? [-0.42, -0.05, -0.7] : [0, 0, 0],
-    carrierLermId:
-      item.id === 'goin-carried-001'
-        ? 'red-lerm-002'
-        : item.id === 'goin-flee-001'
-          ? 'red-lerm-003'
-          : undefined,
+    carrierLermId: item.carrierLermId,
     desireRadius: item.state === 'rolling' ? 1.8 : 0.65,
     mass: 1,
   }));

@@ -21,6 +21,7 @@ export const PREVIEW_BENCH_ACTOR_MOTION_PLAYBACK_SCHEMA = 'lerms.preview-bench-a
 export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_STATE_SCHEMA = 'lerms.preview-bench-actor-motion-timeline-state.v0' as const;
 export const PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA = 'lerms.preview-bench-actor-continuity.v0' as const;
 export const PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA = 'lerms.preview-bench-goin-custody.v0' as const;
+export const PREVIEW_BENCH_CONTESTED_GOIN_BEHAVIOR_SCHEMA = 'lerms.preview-bench-contested-goin-behavior.v0' as const;
 export const PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE = 'lerms/preview-bench/actor-motion-timeline-file' as const;
 
 type PreviewBenchTimelineDowngrade =
@@ -111,6 +112,74 @@ type PreviewBenchGoinCustody = {
   }[];
 };
 
+type PreviewBenchContestedGoinBehavior = {
+  schema: typeof PREVIEW_BENCH_CONTESTED_GOIN_BEHAVIOR_SCHEMA;
+  slowReadable: true;
+  minimumBeatSpacingMs: 1000;
+  contestedGoinId: 'goin-dropped-001';
+  claimants: {
+    actorId: string;
+    goinId: string;
+    claimId: string;
+    noticedAtMs: number;
+    claimStartedAtMs: number;
+    world: Vec3;
+    priority: number;
+    reason: string;
+  }[];
+  decision: {
+    schema: 'lerms.preview-bench-contested-goin-decision.v0';
+    rule: 'nearest_then_recovery_fixture';
+    winnerActorId: string;
+    loserActorIds: string[];
+    decidedAtMs: number;
+    reason: string;
+  };
+  beats: {
+    frameIndex: number;
+    timeMs: number;
+    event:
+      | 'goin_released'
+      | 'loose_goin_noticed'
+      | 'claim_started'
+      | 'claim_contested'
+      | 'possession_awarded'
+      | 'loser_rerouted';
+    actorId?: string;
+    goinId: string;
+    claimId?: string;
+    intent: string;
+    reason: string;
+    visibleActivityCue: {
+      style: 'partial-ground-ring';
+      label: string;
+      world: Vec3;
+    };
+  }[];
+  actorActivities: {
+    actorId: string;
+    intent:
+      | 'claiming_loose_goin'
+      | 'contesting_claim'
+      | 'carrying_awarded_goin'
+      | 'rerouting_after_loss';
+    targetGoinId: string;
+    claimId?: string;
+    outcome: 'winner' | 'loser';
+    reason: string;
+    currentMotionLabel: string;
+    readoutStyle: 'partial-ground-ring';
+  }[];
+  goinClaim: {
+    goinId: string;
+    custody: 'awarded_after_contest';
+    claimants: string[];
+    winnerActorId: string;
+    loserActorIds: string[];
+    awardedAtMs: number;
+  };
+};
+
 export type PreviewBenchActorMotionTimeline = {
   schema: typeof PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_SCHEMA;
   route: typeof PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE;
@@ -127,6 +196,7 @@ export type PreviewBenchActorMotionTimeline = {
   durationMs: number;
   timeline: PreviewBenchTimelineFrame[];
   goinCustody: PreviewBenchGoinCustody;
+  behaviorLedger: PreviewBenchContestedGoinBehavior;
   continuity: {
     schema: typeof PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA;
     stableActorIdentities: boolean;
@@ -155,6 +225,8 @@ export type PreviewBenchActorMotionTimeline = {
     frameCount: number;
     actorIds: string[];
     states: LermState['state'][];
+    contestedBehavior: true;
+    behaviorLedgerSchema: typeof PREVIEW_BENCH_CONTESTED_GOIN_BEHAVIOR_SCHEMA;
     outputsVisualPreview: false;
   };
   downgrades: PreviewBenchTimelineDowngrade[];
@@ -201,6 +273,7 @@ export function buildPreviewBenchActorMotionTimeline(
     return frameActorIds.length === actorIds.length && frameActorIds.every((actorId, index) => actorId === actorIds[index]);
   }).length;
   const goinCustody = buildGoinCustody(timeline);
+  const behaviorLedger = buildContestedGoinBehavior(timeline);
 
   return {
     schema: PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_SCHEMA,
@@ -221,6 +294,7 @@ export function buildPreviewBenchActorMotionTimeline(
     durationMs: timeline[timeline.length - 1]?.timeMs ?? 0,
     timeline,
     goinCustody,
+    behaviorLedger,
     continuity: {
       schema: PREVIEW_BENCH_ACTOR_CONTINUITY_SCHEMA,
       stableActorIdentities: framesWithCompleteActorSet === timeline.length,
@@ -249,6 +323,8 @@ export function buildPreviewBenchActorMotionTimeline(
       frameCount: timeline.length,
       actorIds,
       states,
+      contestedBehavior: true,
+      behaviorLedgerSchema: behaviorLedger.schema,
       outputsVisualPreview: false,
     },
     downgrades: [
@@ -264,12 +340,14 @@ export function buildPreviewBenchActorMotionTimeline(
         'actor state transitions',
         'goin carry/drop/reroute sequencing',
         'red-lerm timeline goin custody readability',
+        'contested loose-goin behavior ledger',
       ],
       mushfingerOwns: basePayload.custody.mushfingerOwns,
       gutterglassOwns: [
         ...basePayload.custody.gutterglassOwns,
         'Preview Bench playback and camera witness mechanics',
         'browser motion sampling evidence',
+        'Preview Bench smoke-offer activity marker fan-out',
       ],
       minionOwns: basePayload.custody.minionOwns,
     },
@@ -319,7 +397,7 @@ function buildGoinCustody(timeline: PreviewBenchTimelineFrame[]): PreviewBenchGo
     }))));
   const possessionEvents: PreviewBenchGoinCustody['possessionEvents'] = [
     ...attachments
-      .filter((attachment) => attachment.frameIndex === 1)
+      .filter((attachment) => attachment.frameIndex === 1 || (attachment.goinId === 'goin-dropped-001' && attachment.frameIndex === timeline[timeline.length - 1]?.frameIndex))
       .map((attachment) => ({
         frameIndex: attachment.frameIndex,
         event: 'possession-gained' as const,
@@ -364,10 +442,153 @@ function buildGoinCustody(timeline: PreviewBenchTimelineFrame[]): PreviewBenchGo
   };
 }
 
+function buildContestedGoinBehavior(timeline: PreviewBenchTimelineFrame[]): PreviewBenchContestedGoinBehavior {
+  const drop = frameByLabel(timeline, 'drop');
+  const notice = frameByLabel(timeline, 'notice');
+  const contest = frameByLabel(timeline, 'contest');
+  const award = frameByLabel(timeline, 'award');
+  const goinId = 'goin-dropped-001' as const;
+  const winnerActorId = 'red-lerm-001';
+  const loserActorId = 'red-lerm-006';
+  const winnerClaimId = `${goinId}:${winnerActorId}:claim`;
+  const loserClaimId = `${goinId}:${loserActorId}:claim`;
+  const contestedGoinWorld = goinWorld(contest, goinId);
+  const winnerWorld = actorWorld(contest, winnerActorId);
+  const loserWorld = actorWorld(contest, loserActorId);
+  const winnerDistance = distanceXZ(winnerWorld, contestedGoinWorld);
+  const loserDistance = distanceXZ(loserWorld, contestedGoinWorld);
+  return {
+    schema: PREVIEW_BENCH_CONTESTED_GOIN_BEHAVIOR_SCHEMA,
+    slowReadable: true,
+    minimumBeatSpacingMs: 1000,
+    contestedGoinId: goinId,
+    claimants: [
+      {
+        actorId: winnerActorId,
+        goinId,
+        claimId: winnerClaimId,
+        noticedAtMs: notice.timeMs,
+        claimStartedAtMs: notice.timeMs,
+        world: actorWorld(notice, winnerActorId),
+        priority: 1,
+        reason: 'first visible claimant after drop',
+      },
+      {
+        actorId: loserActorId,
+        goinId,
+        claimId: loserClaimId,
+        noticedAtMs: contest.timeMs,
+        claimStartedAtMs: contest.timeMs,
+        world: loserWorld,
+        priority: 2,
+        reason: 'second visible claimant enters the loose-goin pull radius',
+      },
+    ],
+    decision: {
+      schema: 'lerms.preview-bench-contested-goin-decision.v0',
+      rule: 'nearest_then_recovery_fixture',
+      winnerActorId,
+      loserActorIds: [loserActorId],
+      decidedAtMs: award.timeMs,
+      reason: `nearest claimant wins; ${winnerActorId} ${winnerDistance.toFixed(2)} XZ units from ${goinId} beats ${loserActorId} at ${loserDistance.toFixed(2)}`,
+    },
+    beats: [
+      behaviorBeat(drop.frameIndex, drop.timeMs, 'goin_released', winnerActorId, goinId, undefined, 'drop loose', 'juice hit releases the carried goin', goinWorld(drop, 'goin-hoard-001')),
+      behaviorBeat(notice.frameIndex, notice.timeMs, 'loose_goin_noticed', winnerActorId, goinId, winnerClaimId, 'CLAIM red-lerm-001', 'first claimant notices loose goin', goinWorld(notice, goinId)),
+      behaviorBeat(notice.frameIndex, notice.timeMs, 'claim_started', winnerActorId, goinId, winnerClaimId, 'CLAIM red-lerm-001', 'claimant commits to the loose goin', actorWorld(notice, winnerActorId)),
+      behaviorBeat(contest.frameIndex, contest.timeMs, 'claim_contested', loserActorId, goinId, loserClaimId, 'CONTEST goin-dropped-001', 'second claimant contests the same loose goin', contestedGoinWorld),
+      behaviorBeat(award.frameIndex, award.timeMs, 'possession_awarded', winnerActorId, goinId, winnerClaimId, 'WIN red-lerm-001', 'nearest claimant receives the awarded loose goin', goinWorld(award, goinId)),
+      behaviorBeat(award.frameIndex, award.timeMs, 'loser_rerouted', loserActorId, goinId, loserClaimId, 'REROUTE red-lerm-006', 'losing claimant peels back toward the hoard', actorWorld(award, loserActorId)),
+    ],
+    actorActivities: [
+      {
+        actorId: winnerActorId,
+        intent: 'claiming_loose_goin',
+        targetGoinId: goinId,
+        claimId: winnerClaimId,
+        outcome: 'winner',
+        reason: 'wins deterministic contested loose-goin fixture',
+        currentMotionLabel: 'claim / contest',
+        readoutStyle: 'partial-ground-ring',
+      },
+      {
+        actorId: loserActorId,
+        intent: 'rerouting_after_loss',
+        targetGoinId: goinId,
+        claimId: loserClaimId,
+        outcome: 'loser',
+        reason: 'loses nearest-claimant decision and redirects to hoard source',
+        currentMotionLabel: 'award / peel away',
+        readoutStyle: 'partial-ground-ring',
+      },
+    ],
+    goinClaim: {
+      goinId,
+      custody: 'awarded_after_contest',
+      claimants: [winnerActorId, loserActorId],
+      winnerActorId,
+      loserActorIds: [loserActorId],
+      awardedAtMs: award.timeMs,
+    },
+  };
+}
+
+function behaviorBeat(
+  frameIndex: number,
+  timeMs: number,
+  event: PreviewBenchContestedGoinBehavior['beats'][number]['event'],
+  actorId: string | undefined,
+  goinId: string,
+  claimId: string | undefined,
+  label: string,
+  reason: string,
+  world: Vec3,
+): PreviewBenchContestedGoinBehavior['beats'][number] {
+  return {
+    frameIndex,
+    timeMs,
+    event,
+    actorId,
+    goinId,
+    claimId,
+    intent: label,
+    reason,
+    visibleActivityCue: {
+      style: 'partial-ground-ring',
+      label,
+      world,
+    },
+  };
+}
+
+function frameByLabel(timeline: PreviewBenchTimelineFrame[], label: string): PreviewBenchTimelineFrame {
+  const frame = timeline.find((item) => item.label === label);
+  if (!frame) throw new Error(`missing preview bench frame ${label}`);
+  return frame;
+}
+
+function actorWorld(frame: PreviewBenchTimelineFrame, actorId: string): Vec3 {
+  const actor = frame.actorMotion.find((item) => item.actorId === actorId);
+  if (!actor) throw new Error(`missing actor ${actorId} in frame ${frame.label}`);
+  return actor.world;
+}
+
+function goinWorld(frame: PreviewBenchTimelineFrame, goinId: string): Vec3 {
+  const goin = frame.goins.find((item) => item.id === goinId);
+  if (!goin) throw new Error(`missing goin ${goinId} in frame ${frame.label}`);
+  return goin.world;
+}
+
+function distanceXZ(a: Vec3, b: Vec3): number {
+  return Math.hypot(a[0] - b[0], a[2] - b[2]);
+}
+
 function primaryGoinCustodyFrameLabel(frame: PreviewBenchTimelineFrame): string {
-  const primary = frame.goins.find((goin) => goin.id === 'goin-hoard-001')
-    ?? frame.goins.find((goin) => goin.id === 'goin-dropped-001')
-    ?? frame.goins[0];
+  const primary = frame.label === 'award'
+    ? frame.goins.find((goin) => goin.id === 'goin-dropped-001') ?? frame.goins[0]
+    : frame.goins.find((goin) => goin.id === 'goin-hoard-001')
+      ?? frame.goins.find((goin) => goin.id === 'goin-dropped-001')
+      ?? frame.goins[0];
   if (!primary) return `${frame.label}:no_goin`;
   if (primary.targetedByActorIds?.length) {
     return `${primary.id}:reroute_target_for:${primary.targetedByActorIds[0]}`;

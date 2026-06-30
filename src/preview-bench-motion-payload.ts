@@ -102,8 +102,9 @@ export type PreviewBenchActorMotionPayloadReport = {
 export function buildPreviewBenchActorMotionPayload(
   snapshot = buildSchnozSimulationSnapshot(),
 ): PreviewBenchActorMotionPayload {
-  const finalFrame = snapshot.timeline[snapshot.timeline.length - 1];
-  const timelineById = new Map(finalFrame.lerms.map((lerm) => [lerm.id, lerm]));
+  const payloadFrame = snapshot.timeline.find((frame) => frame.timeMs === snapshot.frame.source.timestampMs)
+    ?? snapshot.timeline[snapshot.timeline.length - 1];
+  const timelineById = new Map(payloadFrame.lerms.map((lerm) => [lerm.id, lerm]));
   const actorMotion = snapshot.frame.lerms.map((lerm) => {
     const renderLerm = timelineById.get(lerm.id);
     if (!renderLerm?.motionAdapter) {

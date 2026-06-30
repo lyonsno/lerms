@@ -83,10 +83,12 @@ assert.ok(states.has('hit_reacting'));
 assert.ok(states.has('tumbling'));
 assert.ok(states.has('rerouting_to_goin'));
 
-assert.equal(report.timeline.length, 6);
+assert.equal(report.timeline.length, 8);
 assert.ok(report.timeline.some((frame) => frame.events.includes('goin-stolen')));
 assert.ok(report.timeline.some((frame) => frame.events.includes('juice-hit-carrier')));
 assert.ok(report.timeline.some((frame) => frame.events.includes('loose-goin-reroute')));
+assert.ok(report.timeline.some((frame) => frame.events.includes('loose-goin-contested')));
+assert.ok(report.timeline.some((frame) => frame.events.includes('possession-awarded')));
 
 assert.ok(report.renderMetrics.nonBackgroundPixelCount > 20000, 'visual witness has visible content');
 assert.ok(report.renderMetrics.lermPixelCount > 3000, 'visual witness draws schnoz lerms');

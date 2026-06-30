@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import {
   PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE,
   PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_SCHEMA,
+  PREVIEW_BENCH_CONTESTED_GOIN_BEHAVIOR_SCHEMA,
+  PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA,
   buildPreviewBenchActorMotionTimeline,
   type PreviewBenchActorMotionTimelineReport,
 } from './preview-bench-motion-timeline.ts';
@@ -66,7 +68,17 @@ interface RejectedDebugSurface {
 
 interface BenchHintMarker {
   id: string;
-  kind: 'carrier_actor' | 'carried_goin' | 'drop_release' | 'loose_goin' | 'reroute_actor' | 'reroute_target';
+  kind:
+    | 'carrier_actor'
+    | 'carried_goin'
+    | 'drop_release'
+    | 'loose_goin'
+    | 'reroute_actor'
+    | 'reroute_target'
+    | 'activity_lure_claim'
+    | 'activity_lure_contest'
+    | 'activity_lure_winner'
+    | 'activity_reroute_loser';
   label: string;
   world: [number, number, number];
   authority: 'fixture';
@@ -75,11 +87,17 @@ interface BenchHintMarker {
   goinId: string;
   actorId: string;
   weight: number;
+  timeMs?: number;
+  claimId?: string;
+  intent?: string;
+  activityReadoutStyle?: 'partial-ground-ring';
 }
 
 interface BenchHints {
   title: 'LERM Horde actor/goin timeline markers';
-  sourceSchema: 'lerms.preview-bench-goin-custody.v0';
+  sourceSchema: typeof PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA;
+  sourceSchemas: readonly [typeof PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA, typeof PREVIEW_BENCH_CONTESTED_GOIN_BEHAVIOR_SCHEMA];
+  activityReadoutStyle: 'partial-ground-ring';
   objectMarkers: BenchHintMarker[];
 }
 
@@ -124,6 +142,9 @@ interface ActorTimelineSummary {
   actorCount: number;
   goinCount: number;
   possessionEventCount: number;
+  contestedClaimantCount: number;
+  contestedGoinId: string;
+  behaviorBeatCount: number;
   durationMs: number;
   stableActorIdentities: boolean;
   stateCount: number;
@@ -389,9 +410,15 @@ function buildBenchHints(actorMotionTimeline: PreviewBenchActorMotionTimelineRep
       }));
     }
   }
+  for (const beat of actorMotionTimeline.timeline.behaviorLedger.beats) {
+    const marker = markerForBehaviorBeat(beat);
+    if (marker) objectMarkers.push(marker);
+  }
   return {
     title: 'LERM Horde actor/goin timeline markers',
     sourceSchema: actorMotionTimeline.timeline.goinCustody.schema,
+    sourceSchemas: [PREVIEW_BENCH_GOIN_CUSTODY_SCHEMA, PREVIEW_BENCH_CONTESTED_GOIN_BEHAVIOR_SCHEMA],
+    activityReadoutStyle: 'partial-ground-ring',
     objectMarkers,
   };
 }
@@ -425,6 +452,35 @@ function buildMarker({
   };
 }
 
+function markerForBehaviorBeat(
+  beat: PreviewBenchActorMotionTimelineReport['timeline']['behaviorLedger']['beats'][number],
+): BenchHintMarker | null {
+  const markerKindByEvent: Partial<Record<PreviewBenchActorMotionTimelineReport['timeline']['behaviorLedger']['beats'][number]['event'], BenchHintMarker['kind']>> = {
+    claim_started: 'activity_lure_claim',
+    claim_contested: 'activity_lure_contest',
+    possession_awarded: 'activity_lure_winner',
+    loser_rerouted: 'activity_reroute_loser',
+  };
+  const kind = markerKindByEvent[beat.event];
+  if (!kind) return null;
+  return {
+    id: `${beat.goinId}-${beat.actorId ?? 'goin'}-${beat.event}`,
+    kind,
+    label: beat.visibleActivityCue.label,
+    world: tuple3(beat.visibleActivityCue.world),
+    authority: 'fixture',
+    route: PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE,
+    frameIndex: beat.frameIndex,
+    goinId: beat.goinId,
+    actorId: beat.actorId ?? '',
+    weight: kind === 'activity_lure_contest' ? 1.6 : 1.45,
+    timeMs: beat.timeMs,
+    claimId: beat.claimId,
+    intent: beat.intent,
+    activityReadoutStyle: beat.visibleActivityCue.style,
+  };
+}
+
 function tuple3(value: readonly number[]): [number, number, number] {
   return [Number(value[0] ?? 0), Number(value[1] ?? 0), Number(value[2] ?? 0)];
 }
@@ -451,6 +507,9 @@ function buildSummary(actorMotionTimeline: PreviewBenchActorMotionTimelineReport
     actorCount: timeline.continuity.actorIds.length,
     goinCount: timeline.goinCustody.goinIds.length,
     possessionEventCount: timeline.goinCustody.possessionEvents.length,
+    contestedClaimantCount: timeline.behaviorLedger.claimants.length,
+    contestedGoinId: timeline.behaviorLedger.contestedGoinId,
+    behaviorBeatCount: timeline.behaviorLedger.beats.length,
     durationMs: timeline.durationMs,
     stableActorIdentities: timeline.continuity.stableActorIdentities,
     stateCount: timeline.witnessState.states.length,
@@ -469,6 +528,11 @@ function buildFields(
     { label: 'stable identities', value: summary.stableActorIdentities },
     { label: 'actor states', value: timeline.witnessState.states.join(', ') },
     { label: 'possession events', value: summary.possessionEventCount },
+    { label: 'contested goin', value: summary.contestedGoinId },
+    { label: 'contest claimants', value: summary.contestedClaimantCount },
+    { label: 'contest winner', value: timeline.behaviorLedger.decision.winnerActorId },
+    { label: 'contest loser', value: timeline.behaviorLedger.decision.loserActorIds.join(', ') },
+    { label: 'behavior beats', value: summary.behaviorBeatCount },
     { label: 'primary goin custody', value: timeline.goinCustody.primaryCustodyChain.join(' -> ') },
   ];
 }
