@@ -65,6 +65,10 @@ assert.ok(offer.benchHints.objectMarkers.some((marker) => marker.kind === 'activ
 assert.ok(offer.benchHints.objectMarkers.some((marker) => marker.kind === 'activity_lure_contest' && marker.label.includes('CONTEST')));
 assert.ok(offer.benchHints.objectMarkers.some((marker) => marker.kind === 'activity_lure_winner' && marker.label.includes('WIN red-lerm-001')));
 assert.ok(offer.benchHints.objectMarkers.some((marker) => marker.kind === 'activity_reroute_loser' && marker.label.includes('REROUTE red-lerm-006')));
+const activityMarkers = offer.benchHints.objectMarkers.filter((marker) => marker.kind.startsWith('activity_'));
+assert.ok(activityMarkers.every((marker) => Array.isArray(marker.sourceWorld)), 'activity markers keep sourceWorld separate from display world');
+assert.equal(new Set(activityMarkers.map((marker) => marker.world.join(':'))).size, activityMarkers.length, 'activity marker display worlds should be separated enough for ring labels');
+assert.ok(activityMarkers.some((marker) => marker.sourceWorld?.join(':') !== marker.world.join(':')));
 const markerWorldKeys = offer.benchHints.objectMarkers.map((marker) => marker.world.join(':'));
 assert.ok(new Set(markerWorldKeys).size < markerWorldKeys.length, 'carried/drop actor and goin markers should preserve coincident source coordinates for Kaminos fan-out');
 assert.equal(offer.payloadReport.schema, 'kaminos.preview-bench.payload-report.v0');

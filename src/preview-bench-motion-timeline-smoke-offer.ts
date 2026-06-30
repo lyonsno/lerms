@@ -81,6 +81,7 @@ interface BenchHintMarker {
     | 'activity_reroute_loser';
   label: string;
   world: [number, number, number];
+  sourceWorld?: [number, number, number];
   authority: 'fixture';
   route: typeof PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE;
   frameIndex: number;
@@ -463,11 +464,13 @@ function markerForBehaviorBeat(
   };
   const kind = markerKindByEvent[beat.event];
   if (!kind) return null;
+  const sourceWorld = tuple3(beat.visibleActivityCue.world);
   return {
     id: `${beat.goinId}-${beat.actorId ?? 'goin'}-${beat.event}`,
     kind,
     label: beat.visibleActivityCue.label,
-    world: tuple3(beat.visibleActivityCue.world),
+    world: offsetActivityMarkerWorld(sourceWorld, kind),
+    sourceWorld,
     authority: 'fixture',
     route: PREVIEW_BENCH_ACTOR_MOTION_TIMELINE_ROUTE,
     frameIndex: beat.frameIndex,
@@ -479,6 +482,17 @@ function markerForBehaviorBeat(
     intent: beat.intent,
     activityReadoutStyle: beat.visibleActivityCue.style,
   };
+}
+
+function offsetActivityMarkerWorld(
+  world: [number, number, number],
+  kind: BenchHintMarker['kind'],
+): [number, number, number] {
+  if (kind === 'activity_lure_claim') return [world[0] - 0.5, world[1], world[2] + 0.38];
+  if (kind === 'activity_lure_contest') return [world[0] - 0.15, world[1], world[2] - 0.64];
+  if (kind === 'activity_lure_winner') return [world[0] + 0.55, world[1], world[2] + 0.4];
+  if (kind === 'activity_reroute_loser') return [world[0] + 0.45, world[1], world[2] + 0.28];
+  return world;
 }
 
 function tuple3(value: readonly number[]): [number, number, number] {
