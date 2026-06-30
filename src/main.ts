@@ -4,7 +4,13 @@ import {
   type HillOfHillsTerrain,
   type HillOfHillsTerrainParams
 } from './terrain/hill-of-hills.js';
+import { mountGloveWellBrowserSmoke } from './glove-well-browser-smoke.js';
 
+const route = new URLSearchParams(window.location.search).get('smoke');
+
+if (route === 'glove-well') {
+  mountGloveWellBrowserSmoke(document.body);
+} else {
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
 if (!canvas) {
@@ -323,4 +329,5 @@ function createWitnessPanel(): HTMLElement {
   const element = document.createElement('pre');
   element.className = 'terrain-witness';
   return element;
+}
 }

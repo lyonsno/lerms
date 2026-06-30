@@ -16,6 +16,7 @@
     "test:goin-ecology-merge": "node --experimental-strip-types tests/goin-ecology-merge-witness-contracts.ts",
     "test:goin-ecology-smoke-offer": "node --experimental-strip-types tests/goin-ecology-smoke-offer-contracts.ts",
     "test:glove-wealth-custody": "node --experimental-strip-types tests/glove-wealth-custody-witness-contracts.ts",
+    "test:glove-well-browser-smoke": "node --experimental-strip-types tests/glove-well-browser-smoke-state-contracts.ts",
     "test:glove-input-wilor": "node --experimental-strip-types tests/glove-input-wilor-adapter-contracts.ts",
     "test:glove-well-kaminos-live-throw": "node --experimental-strip-types tests/glove-well-kaminos-live-throw-witness-contracts.ts",
     "test:glove-well-live-compare": "node --experimental-strip-types tests/glove-well-live-comparison-witness-contracts.ts",
