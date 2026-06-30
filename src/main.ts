@@ -27,8 +27,22 @@ const params = new URLSearchParams(window.location.search);
 const requestedRoute = params.get('hand_surface_route') ?? 'native_wilor_mini_mlx_detector_sidecar_live';
 const useFixture = params.get('fixture') === '1';
 const defaultKaminosPacketUrl = '/kaminos-hand-control/hand-control-sidecar-event';
+const defaultKaminosNativeFrameUrl = '/kaminos-hand-control/hand-control-native-frame';
+const defaultKaminosSidecarLaunchUrl = '/kaminos-hand-control/hand-control-sidecar-launch';
 const packetUrl = useFixture ? null : (params.get('hand_packet_url') ?? params.get('kaminos_hand_endpoint') ?? defaultKaminosPacketUrl);
+const kaminosNativeFrameUrl = useFixture ? null : (params.get('kaminos_native_frame_url') ?? defaultKaminosNativeFrameUrl);
+const kaminosSidecarLaunchUrl = useFixture ? null : (params.get('kaminos_sidecar_launch_url') ?? defaultKaminosSidecarLaunchUrl);
+const packetPollMs = Math.max(30, Number(params.get('packet_poll_ms') ?? 45));
+const framePostMs = Math.max(45, Number(params.get('frame_post_ms') ?? 60));
+const sidecarPollMs = Math.max(10, Number(params.get('sidecar_poll_ms') ?? 30));
+const sidecarHandConf = Number(params.get('hand_conf') ?? 0.18);
+const sidecarIncludeVertices = params.get('include_vertices') === '1';
+const encodedFrameWidth = Math.max(160, Number(params.get('frame_width') ?? 320));
+const postKaminosFrames = params.get('post_kaminos_frames') !== '0';
+const lermsClientBuild = 'lerms-hand-surface-live-20260630';
 const video = document.createElement('video');
+const frameCanvas = document.createElement('canvas');
+const frameContext = frameCanvas.getContext('2d', { alpha: false, willReadFrequently: false });
 let videoReady = false;
 let webcamSource: WebcamTruth['source'] = 'missing';
 let webcamError: string | null = null;
@@ -38,6 +52,10 @@ let latestPacket: WilorHandPacket | KaminosHandEventCache = createFixtureWilorHa
   timestampMs: performance.now(),
 });
 let latestFetchError: string | null = null;
+let latestFramePostError: string | null = null;
+let latestFramePostStatus: string | null = null;
+let latestSidecarStatus: string | null = null;
+let postedFrameCount = 0;
 
 video.muted = true;
 video.autoplay = true;
@@ -115,6 +133,12 @@ async function startWebcam(): Promise<void> {
     await video.play();
     webcamSource = 'live_webcam';
     videoReady = true;
+    if (kaminosSidecarLaunchUrl) {
+      void launchKaminosSidecar(kaminosSidecarLaunchUrl);
+    }
+    if (postKaminosFrames && kaminosNativeFrameUrl) {
+      void postKaminosNativeFrameLoop(kaminosNativeFrameUrl);
+    }
   } catch (error) {
     webcamError = error instanceof Error ? error.message : String(error);
     webcamSource = 'missing';
@@ -132,7 +156,71 @@ async function fetchPacketLoop(url: string): Promise<void> {
     } catch (error) {
       latestFetchError = error instanceof Error ? error.message : String(error);
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    await new Promise((resolve) => window.setTimeout(resolve, packetPollMs));
+  }
+}
+
+async function launchKaminosSidecar(url: string): Promise<void> {
+  try {
+    const launchParams = new URLSearchParams({
+      poll_ms: String(sidecarPollMs),
+      hand_conf: String(sidecarHandConf),
+      include_vertices: sidecarIncludeVertices ? '1' : '0',
+    });
+    const response = await fetch(`${url}?${launchParams.toString()}`, { method: 'POST' });
+    const body = await response.json().catch(() => null) as { running?: boolean; effective_config?: { include_vertices?: boolean } } | null;
+    if (!response.ok) throw new Error(`sidecar launch failed ${response.status}`);
+    latestSidecarStatus = `sidecar ${body?.running ? 'running' : 'launched'} vertices ${body?.effective_config?.include_vertices ? 'on' : 'off'}`;
+  } catch (error) {
+    latestSidecarStatus = `sidecar_launch ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+async function postKaminosNativeFrameLoop(url: string): Promise<void> {
+  while (true) {
+    if (videoReady) {
+      await postKaminosNativeFrame(url);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, framePostMs));
+  }
+}
+
+async function postKaminosNativeFrame(url: string): Promise<void> {
+  if (!frameContext || video.videoWidth <= 0 || video.videoHeight <= 0) return;
+  const encodedWidth = Math.min(encodedFrameWidth, video.videoWidth);
+  const encodedHeight = Math.max(1, Math.round((encodedWidth / video.videoWidth) * video.videoHeight));
+  frameCanvas.width = encodedWidth;
+  frameCanvas.height = encodedHeight;
+  frameContext.drawImage(video, 0, 0, encodedWidth, encodedHeight);
+  const blob = await new Promise<Blob | null>((resolve) => {
+    frameCanvas.toBlob(resolve, 'image/jpeg', 0.55);
+  });
+  if (!blob) {
+    latestFramePostError = 'frame encode failed';
+    return;
+  }
+  const frameId = String(++postedFrameCount);
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'image/jpeg',
+        'X-Kaminos-Hand-Surface-Client-Build': lermsClientBuild,
+        'X-Capture-Timestamp-Ms': String(performance.now()),
+        'X-Capture-Epoch-Ms': String(Date.now()),
+        'X-Frame-Id': frameId,
+        'X-Source-Video-Width': String(video.videoWidth),
+        'X-Source-Video-Height': String(video.videoHeight),
+        'X-Encoded-Frame-Width': String(encodedWidth),
+        'X-Encoded-Frame-Height': String(encodedHeight),
+      },
+      body: blob,
+    });
+    if (!response.ok) throw new Error(`native frame post failed ${response.status}`);
+    latestFramePostStatus = `posted frame ${frameId} ${encodedWidth}x${encodedHeight}`;
+    latestFramePostError = null;
+  } catch (error) {
+    latestFramePostError = error instanceof Error ? error.message : String(error);
   }
 }
 
@@ -253,6 +341,9 @@ function drawReceipt(report: HandSurfaceReport, width: number, height: number): 
     `webcam ${report.webcam.status}`,
     `surface ${report.surfaceFrame.status} landmarks ${report.surfaceFrame.landmarks2d.length}`,
     `moge ${report.moge.status}`,
+    latestSidecarStatus,
+    latestFramePostStatus,
+    latestFramePostError ? `frame_post ${latestFramePostError}` : null,
     latestFetchError ? `packet_fetch ${latestFetchError}` : null,
     webcamError ? `webcam ${webcamError}` : null,
     ...report.downgrades.map((entry) => `downgrade ${entry.code}`),

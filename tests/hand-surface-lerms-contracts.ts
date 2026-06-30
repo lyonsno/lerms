@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   composeHandSurfaceLerms,
@@ -200,6 +201,16 @@ test('empty Kaminos event cache cannot pretend to contain a hand surface', () =>
   assert.equal(report.authority, 'invalid');
   assertDowngrade(report, 'missing_kaminos_hand_event');
   assertDowngrade(report, 'missing_hand_surface_frame');
+});
+
+test('browser prototype owns the Kaminos frame-posting loop in the same viewport as lerm rendering', () => {
+  const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+
+  assert.match(mainSource, /defaultKaminosNativeFrameUrl\s*=\s*'\/kaminos-hand-control\/hand-control-native-frame'/);
+  assert.match(mainSource, /defaultKaminosSidecarLaunchUrl\s*=\s*'\/kaminos-hand-control\/hand-control-sidecar-launch'/);
+  assert.match(mainSource, /postKaminosNativeFrameLoop/);
+  assert.match(mainSource, /X-Kaminos-Hand-Surface-Client-Build/);
+  assert.doesNotMatch(mainSource, /window\.setTimeout\(resolve,\s*250\)/, 'packet polling must not bake in the old two-tab quarter-second cache lag');
 });
 
 for (const { name, fn } of tests) {
