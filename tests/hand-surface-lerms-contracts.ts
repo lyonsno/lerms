@@ -279,6 +279,18 @@ test('browser prototype exposes a crude Underhill ghost shell for mesh mode', ()
   assert.match(mainSource, /attachmentMode:\s*handMeshMode\s*\?\s*'hand_mesh'\s*:\s*'hand_surface'/);
 });
 
+test('browser mesh smoke renders all MANO faces and starts through an explicit witness button', () => {
+  const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+
+  assert.match(mainSource, /start-hand-surface-smoke/);
+  assert.match(mainSource, /beginLiveSmoke/);
+  assert.match(mainSource, /startWitnessSampler/);
+  assert.match(mainSource, /__lermsHandSurfaceFilmstrip/);
+  assert.match(mainSource, /cameraFilmstripDataUrl/);
+  assert.match(mainSource, /screenFilmstripDataUrl/);
+  assert.doesNotMatch(mainSource, /mesh\.faces\.slice\(0,\s*180\)/, 'live MANO mesh rendering must not drop most faces');
+});
+
 for (const { name, fn } of tests) {
   fn();
   console.log(`ok - ${name}`);
