@@ -78,6 +78,15 @@ assert.equal(state.statusCode, 'tracking');
 assert.equal(state.releaseCount, 0);
 assert.equal(state.source.sequence, 31);
 assert.equal(state.source.frameId, 'browser-smoke-prime-31');
+assert.equal(state.handSkeleton.visible, true);
+assert.equal(state.handSkeleton.schema, 'lerms.glove-well-hand-skeleton-overlay.v0');
+assert.equal(state.handSkeleton.landmarkCount, 21);
+assert.equal(state.handSkeleton.segments.length >= 20, true, 'skeleton overlay exposes full hand bone segments');
+assert.equal(state.handSkeleton.debugPoints.some((point) => point.id === 'thumb_tip' && point.landmarkIndex === 4), true);
+assert.equal(state.handSkeleton.debugPoints.some((point) => point.id === 'index_tip' && point.landmarkIndex === 8), true);
+assert.equal(state.handSkeleton.debugPoints.some((point) => point.id === 'pinky_base' && point.landmarkIndex === 17), true);
+assert.equal(state.handSkeleton.debugPoints.some((point) => point.id === 'pinky_tip' && point.landmarkIndex === 20), true);
+assert.equal(state.handSkeleton.debugPoints.some((point) => point.id === 'palm_center'), true);
 
 state = buildGloveWellBrowserSmokeState({ previous: state, cache: snapshot(32, 'aim'), nowMs: 90_120 });
 assert.equal(state.phase, 'aiming');
@@ -85,6 +94,10 @@ assert.equal(state.aim.active, true);
 assert.equal(state.aim.arcSamples.length, 7);
 assert.ok(state.aim.direction.x < 0, 'operator-visible aim flips mirrored source x so right-hand fixture points left on canvas');
 assert.ok(state.aim.direction.y < 0);
+assert.deepEqual(state.handSkeleton.aimVector, {
+  origin: state.aim.origin,
+  direction: state.aim.direction
+});
 
 state = buildGloveWellBrowserSmokeState({ previous: state, cache: snapshot(33, 'release'), nowMs: 90_240 });
 assert.equal(state.phase, 'released');
@@ -132,6 +145,7 @@ const staleState = buildGloveWellBrowserSmokeState({
 assert.equal(staleState.authority, 'stale_hold');
 assert.equal(staleState.statusCode, 'stale');
 assert.ok(staleState.downgrades.includes('kaminos_event_cache_stale'));
+assert.equal(staleState.handSkeleton.visible, true, 'stale state preserves last trustworthy skeleton overlay with stale authority');
 
 const fallbackState = buildGloveWellBrowserSmokeState({
   previous: state,

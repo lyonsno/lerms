@@ -112,5 +112,7 @@ const browserSmoke = readFileSync('src/glove-well-browser-smoke.ts', 'utf8');
 assert.match(browserSmoke, /glove-well-capture-button/, 'browser smoke renders an operator capture control');
 assert.match(browserSmoke, /__lerms\/glove-well-capture\/start/, 'browser capture control posts to the dev-server capture endpoint');
 assert.match(browserSmoke, /capture:/, 'operator-visible status includes capture state');
+assert.match(browserSmoke, /drawHandSkeleton/, 'browser smoke renders the live hand skeleton overlay');
+assert.match(browserSmoke, /skeleton:/, 'operator-visible status includes skeleton tracking state');
 
 console.log('glove well browser smoke capture contracts passed');

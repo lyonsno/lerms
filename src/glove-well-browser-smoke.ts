@@ -144,6 +144,7 @@ function render(runtime: SmokeRuntime, timestampMs: number): void {
   ctx.clearRect(0, 0, width, height);
   drawBackground(ctx, width, height, timestampMs);
   drawGloveWell(ctx, width, height, state);
+  drawHandSkeleton(ctx, width, height, state);
   drawHand(ctx, width, height, state);
   drawAim(ctx, width, height, state);
   drawGoins(ctx, width, height, state);
@@ -231,6 +232,65 @@ function drawHand(ctx: CanvasRenderingContext2D, width: number, height: number, 
   }
 }
 
+function drawHandSkeleton(ctx: CanvasRenderingContext2D, width: number, height: number, state: BrowserSmokeState): void {
+  const skeleton = state.handSkeleton;
+  if (!skeleton.visible || !skeleton.landmarks.length) return;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const segment of skeleton.segments) {
+    const start = pointToCanvas(segment.start, width, height);
+    const end = pointToCanvas(segment.end, width, height);
+    ctx.strokeStyle = segment.group === 'pinky' || segment.group === 'thumb' ? 'rgba(130, 226, 190, 0.52)' : 'rgba(130, 226, 190, 0.28)';
+    ctx.lineWidth = segment.group === 'palm' ? 1.6 : 2.4;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = 'rgba(130, 226, 190, 0.42)';
+  skeleton.landmarks.forEach((point) => {
+    const p = pointToCanvas(point, width, height);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  skeleton.debugPoints.forEach((debugPoint) => {
+    const p = pointToCanvas(debugPoint.point, width, height);
+    ctx.fillStyle = debugPoint.role === 'load_bearing' ? '#ffe789' : 'rgba(223, 231, 255, 0.72)';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, debugPoint.role === 'load_bearing' ? 6 : 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillStyle = 'rgba(237, 246, 232, 0.86)';
+    ctx.fillText(debugPoint.label, p.x + 7, p.y - 7);
+  });
+
+  if (skeleton.aimVector) {
+    const origin = pointToCanvas(skeleton.aimVector.origin, width, height);
+    const end = pointToCanvas(
+      {
+        x: skeleton.aimVector.origin.x + skeleton.aimVector.direction.x * 0.18,
+        y: skeleton.aimVector.origin.y + skeleton.aimVector.direction.y * 0.18
+      },
+      width,
+      height
+    );
+    ctx.strokeStyle = 'rgba(223, 231, 255, 0.82)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(origin.x, origin.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function drawAim(ctx: CanvasRenderingContext2D, width: number, height: number, state: BrowserSmokeState): void {
   if (!state.aim.active && state.phase !== 'released') return;
   ctx.fillStyle = '#dfe7ff';
@@ -309,6 +369,7 @@ function updateStatus(runtime: SmokeRuntime): void {
     `route: ${state.source.effectiveRoute ?? '-'}`,
     `age: ${state.source.ageMs ?? '-'} ms`,
     `pinch: ${state.hand.pinchDistance ?? '-'} / ${state.hand.pinchActive ? 'closed' : 'open'}`,
+    `skeleton: ${state.handSkeleton.visible ? `${state.handSkeleton.landmarkCount} landmarks / ${state.handSkeleton.segments.length} bones` : 'hidden'}`,
     `goin: ${state.goin.state} / count ${state.goins.length} / releases ${state.releaseCount}`,
     `capture: ${formatCaptureStatus(runtime.capture)}`,
     `downgrades: ${state.downgrades.length ? state.downgrades.join(', ') : 'none'}`,

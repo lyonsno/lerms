@@ -77,6 +77,35 @@ export interface BrowserSmokeGoin {
   desireRadius: number;
 }
 
+export interface BrowserSmokeHandSkeletonSegment {
+  from: number;
+  to: number;
+  start: BrowserSmokePoint;
+  end: BrowserSmokePoint;
+  group: 'palm' | 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
+}
+
+export interface BrowserSmokeHandSkeletonDebugPoint {
+  id: 'wrist' | 'palm_center' | 'thumb_tip' | 'index_tip' | 'pinky_base' | 'pinky_tip';
+  label: string;
+  point: BrowserSmokePoint;
+  landmarkIndex: number | null;
+  role: 'context' | 'load_bearing';
+}
+
+export interface BrowserSmokeHandSkeleton {
+  schema: 'lerms.glove-well-hand-skeleton-overlay.v0';
+  visible: boolean;
+  landmarkCount: number;
+  landmarks: BrowserSmokePoint[];
+  segments: BrowserSmokeHandSkeletonSegment[];
+  debugPoints: BrowserSmokeHandSkeletonDebugPoint[];
+  aimVector: {
+    origin: BrowserSmokePoint;
+    direction: BrowserSmokePoint;
+  } | null;
+}
+
 export interface BrowserSmokeState {
   schema: 'lerms.glove-well-browser-smoke-state.v0';
   authority: BrowserSmokeAuthority;
@@ -103,6 +132,7 @@ export interface BrowserSmokeState {
     pinchActive: boolean;
   };
   aim: BrowserSmokeAim;
+  handSkeleton: BrowserSmokeHandSkeleton;
   goin: BrowserSmokeGoin;
   goins: BrowserSmokeGoin[];
   releaseCount: number;
@@ -159,6 +189,7 @@ export function buildInitialGloveWellBrowserSmokeState(endpoint = DEFAULT_ENDPOI
       direction: { x: 0.7, y: -0.45 },
       arcSamples: buildArcSamples({ x: 0.5, y: 0.5 }, normalize({ x: 0.7, y: -0.45 }))
     },
+    handSkeleton: buildEmptyHandSkeleton(),
     goin,
     goins: [goin],
     releaseCount: 0,
@@ -254,9 +285,15 @@ export function buildGloveWellBrowserSmokeState({
   const pinkyLength = distance(pinkyTip, pinkyBase);
   const referenceLength = Math.max(0.08, distance(wrist, landmarks[9]));
   const pinkyActive = pinkyLength / referenceLength >= 0.7;
+  const skeletonBase = buildHandSkeleton({
+    landmarks,
+    palmCenter,
+    aimVector: null
+  });
 
   let phase: BrowserSmokePhase = 'waiting';
   let aim = prior.aim;
+  let handSkeleton = skeletonBase;
   let goin = activeGoin;
   let goins = advancedGoins;
   let releaseCount = prior.releaseCount;
@@ -269,6 +306,14 @@ export function buildGloveWellBrowserSmokeState({
       direction: pinkyDirection,
       arcSamples: buildArcSamples(pinkyTip, pinkyDirection)
     };
+    handSkeleton = buildHandSkeleton({
+      landmarks,
+      palmCenter,
+      aimVector: {
+        origin: aim.origin,
+        direction: aim.direction
+      }
+    });
     goin = buildHeldGoin(palmCenter, releaseCount + 1);
     goins = [...advancedGoins.filter((candidate) => candidate.state !== 'held'), goin];
   } else if (pinchActive) {
@@ -314,6 +359,7 @@ export function buildGloveWellBrowserSmokeState({
       pinchActive
     },
     aim,
+    handSkeleton,
     goin,
     goins,
     releaseCount,
@@ -329,6 +375,77 @@ function buildHeldGoin(position: BrowserSmokePoint, ordinal: number): BrowserSmo
     position,
     velocity: { x: 0, y: 0 },
     desireRadius: 0
+  };
+}
+
+function buildEmptyHandSkeleton(): BrowserSmokeHandSkeleton {
+  return {
+    schema: 'lerms.glove-well-hand-skeleton-overlay.v0',
+    visible: false,
+    landmarkCount: 0,
+    landmarks: [],
+    segments: [],
+    debugPoints: [],
+    aimVector: null
+  };
+}
+
+function buildHandSkeleton({
+  landmarks,
+  palmCenter,
+  aimVector
+}: {
+  landmarks: BrowserSmokePoint[];
+  palmCenter: BrowserSmokePoint;
+  aimVector: BrowserSmokeHandSkeleton['aimVector'];
+}): BrowserSmokeHandSkeleton {
+  const segmentSpecs: Array<{ from: number; to: number; group: BrowserSmokeHandSkeletonSegment['group'] }> = [
+    { from: 0, to: 5, group: 'palm' },
+    { from: 5, to: 9, group: 'palm' },
+    { from: 9, to: 13, group: 'palm' },
+    { from: 13, to: 17, group: 'palm' },
+    { from: 0, to: 17, group: 'palm' },
+    { from: 0, to: 1, group: 'thumb' },
+    { from: 1, to: 2, group: 'thumb' },
+    { from: 2, to: 3, group: 'thumb' },
+    { from: 3, to: 4, group: 'thumb' },
+    { from: 5, to: 6, group: 'index' },
+    { from: 6, to: 7, group: 'index' },
+    { from: 7, to: 8, group: 'index' },
+    { from: 9, to: 10, group: 'middle' },
+    { from: 10, to: 11, group: 'middle' },
+    { from: 11, to: 12, group: 'middle' },
+    { from: 13, to: 14, group: 'ring' },
+    { from: 14, to: 15, group: 'ring' },
+    { from: 15, to: 16, group: 'ring' },
+    { from: 17, to: 18, group: 'pinky' },
+    { from: 18, to: 19, group: 'pinky' },
+    { from: 19, to: 20, group: 'pinky' }
+  ];
+
+  const segments = segmentSpecs
+    .filter((segment) => landmarks[segment.from] && landmarks[segment.to])
+    .map((segment) => ({
+      ...segment,
+      start: landmarks[segment.from],
+      end: landmarks[segment.to]
+    }));
+
+  return {
+    schema: 'lerms.glove-well-hand-skeleton-overlay.v0',
+    visible: true,
+    landmarkCount: landmarks.length,
+    landmarks: landmarks.map((point) => ({ x: round3(point.x), y: round3(point.y) })),
+    segments,
+    debugPoints: [
+      { id: 'wrist', label: 'WR', point: landmarks[0], landmarkIndex: 0, role: 'context' },
+      { id: 'palm_center', label: 'PALM', point: palmCenter, landmarkIndex: null, role: 'load_bearing' },
+      { id: 'thumb_tip', label: 'TH', point: landmarks[4], landmarkIndex: 4, role: 'load_bearing' },
+      { id: 'index_tip', label: 'IX', point: landmarks[8], landmarkIndex: 8, role: 'load_bearing' },
+      { id: 'pinky_base', label: 'PB', point: landmarks[17], landmarkIndex: 17, role: 'load_bearing' },
+      { id: 'pinky_tip', label: 'PK', point: landmarks[20], landmarkIndex: 20, role: 'load_bearing' }
+    ],
+    aimVector
   };
 }
 
