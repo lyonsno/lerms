@@ -268,6 +268,28 @@ npm run witness:goin-ecology-smoke-offer -- --source-ref /tmp/lerms-goin-ecology
 
 The exported file uses `kaminos.forge-host.smoke-offer.v0` with the Preview Bench loader route `kaminos/preview-bench/smoke-offer-file`. It carries producer diaulos, source route/ref/commit, freshness budget, fixture authority, downgrades, rejected debug surfaces, and a nested `kaminos.preview-bench.payload-report.v0` summary. This is a hostable smoke offer, not source authority, live camera proof, or full vertical acceptance.
 
+### `lerms.glove-well-host-packet.v0`
+
+The Glove Well host packet is Greedy's source-owned native-host candidate for the operator scene where live goin throwing should eventually sit. It is not a Kaminos adapter by itself. It packages the same browser smoke state the operator sees into a durable packet that Gutterglass/Kaminos can adapterize through the host-surface kit.
+
+The packet route is `lerms/glove-well/host-packet`. It carries:
+
+- host candidate identity: `hostId: "glove-well"` and requested adapter `glove-well`;
+- source truth from the Kaminos hand-control event cache: endpoint, sequence, frame id, backend/effective route/model route, webcam synthetic flag, age, camera age, and authority;
+- the operator-visible mirrored screen coordinate frame used by the hand skeleton, aim arc, goins, and lerm desire hints;
+- Glove Well phase, release count, hand/pinch state, aim samples, skeleton overlay, held/launched/rolling goins, and nearby lerm desire hints;
+- capture references when a browser filmstrip/report exists;
+- custody split: Greedy owns Glove Well command truth, goin objecthood, throw/roll/desire law, and the packet; Kaminos owns native host display, camera witness mechanics, and adapter validation; Palm Daddy owns first-vertical source-truth acceptance;
+- downgrades and rejected debug surfaces, including `local_browser_smoke_not_native_kaminos_host`, `visual_capture_not_source_truth`, and `local_lerms_browser_smoke`.
+
+Generate a deterministic packet artifact with:
+
+```sh
+npm run witness:glove-well-host-packet -- --report /tmp/lerms-glove-well-host-packet-0701.json
+```
+
+The browser smoke also exposes `window.__lermsGloveWellHostPacket()` so a future native-host witness can inspect the current operator-visible state without scraping status text. Current Kaminos host-surface tools do not yet have `--adapter glove-well`; that adapter is the next Gutterglass-side composition point.
+
 ### `lerms.first-vertical-frame.v0`
 
 The frame envelope that joins terrain samples, lerm states, goin states, juice hits, and carrier-drop events under one source-truth packet.

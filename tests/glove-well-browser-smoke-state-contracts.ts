@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildGloveWellHostPacket,
   buildGloveWellBrowserSmokeState,
   type BrowserSmokeCacheSnapshot
 } from '../src/glove-well-browser-smoke-state.ts';
@@ -126,6 +127,46 @@ const rollingAfterRepinch = state.goins.find((goin) => goin.state === 'rolling')
 assert.notEqual(rollingAfterRepinch, undefined);
 assert.notDeepEqual(rollingAfterRepinch!.position, state.hand.palmCenter, 'launched goin does not teleport back into the pinched hand');
 assert.notDeepEqual(rollingAfterRepinch!.position, rollingGoinPosition, 'launched goin continues advancing while a new goin is held');
+
+const hostPacket = buildGloveWellHostPacket(state, {
+  sourceUrl: '/__lerms/glove-well-host-packet/current',
+  generatedAtMs: 90_500,
+  capture: {
+    state: 'complete',
+    reportPath: '/tmp/lerms-glove-well-browser-smoke-capture-live/capture-report.json',
+    filmstripPath: '/tmp/lerms-glove-well-browser-smoke-capture-live/filmstrip.html'
+  }
+});
+assert.equal(hostPacket.schema, 'lerms.glove-well-host-packet.v0');
+assert.equal(hostPacket.route, 'lerms/glove-well/host-packet');
+assert.equal(hostPacket.hostCandidate.hostId, 'glove-well');
+assert.equal(hostPacket.hostCandidate.kind, 'kaminos_native_host_candidate');
+assert.equal(hostPacket.source.producerDiaulos, 'greedy-glove-fucker');
+assert.equal(hostPacket.source.authority, 'live_simulation');
+assert.equal(hostPacket.source.sourceTruthAuthority, 'lerms.gloveWellBrowserSmokeState');
+assert.equal(hostPacket.source.effectiveRoute, LIVE_BACKEND);
+assert.equal(hostPacket.freshness.status, 'fresh');
+assert.equal(hostPacket.coordinateFrame.space, 'operator_visible_webcam_mirrored_screen_normalized');
+assert.equal(hostPacket.gloveWell.phase, 'priming');
+assert.equal(hostPacket.gloveWell.releaseCount, 1);
+assert.equal(hostPacket.handSkeleton.schema, 'lerms.glove-well-hand-skeleton-overlay.v0');
+assert.equal(hostPacket.handSkeleton.landmarkCount, 21);
+assert.deepEqual(hostPacket.handSkeleton.landmarks[20], { x: 0.33, y: 0.595 });
+assert.equal(hostPacket.goins.length >= 2, true, 'host packet carries the held goin plus persistent rolling goin');
+assert.equal(hostPacket.goins.some((goin) => goin.state === 'held'), true);
+assert.equal(hostPacket.goins.some((goin) => goin.state === 'rolling'), true);
+assert.equal(hostPacket.lermDesireHints.some((hint) => hint.reason === 'rolling_goin_lure' && hint.targetGoinId === rollingAfterRepinch!.id), true);
+assert.equal(hostPacket.capture.state, 'complete');
+assert.equal(hostPacket.capture.filmstripPath, '/tmp/lerms-glove-well-browser-smoke-capture-live/filmstrip.html');
+assert.ok(hostPacket.downgrades.includes('local_browser_smoke_not_native_kaminos_host'));
+assert.ok(hostPacket.downgrades.includes('visual_capture_not_source_truth'));
+assert.ok(hostPacket.custody.greedyOwns.includes('goinObjecthoodTruth'));
+assert.ok(hostPacket.custody.greedyOwns.includes('gloveWellCommandTruth'));
+assert.ok(hostPacket.custody.kaminosOwns.includes('native host display'));
+assert.equal(
+  hostPacket.rejectedDebugSurfaces.some((surface) => surface.surface === 'local_lerms_browser_smoke' && surface.acceptanceSurface === false),
+  true
+);
 
 const emptyState = buildGloveWellBrowserSmokeState({
   previous: state,

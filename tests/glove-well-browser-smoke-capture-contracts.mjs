@@ -111,8 +111,13 @@ assert.match(viteConfig, /child_process/, 'capture start endpoint runs the witne
 const browserSmoke = readFileSync('src/glove-well-browser-smoke.ts', 'utf8');
 assert.match(browserSmoke, /glove-well-capture-button/, 'browser smoke renders an operator capture control');
 assert.match(browserSmoke, /__lerms\/glove-well-capture\/start/, 'browser capture control posts to the dev-server capture endpoint');
+assert.match(browserSmoke, /__lermsGloveWellHostPacket/, 'browser smoke exposes the current source-owned Glove Well host packet for native host adapter smokes');
 assert.match(browserSmoke, /capture:/, 'operator-visible status includes capture state');
 assert.match(browserSmoke, /drawHandSkeleton/, 'browser smoke renders the live hand skeleton overlay');
 assert.match(browserSmoke, /skeleton:/, 'operator-visible status includes skeleton tracking state');
+
+const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
+assert.equal(packageJson.scripts['test:glove-well-host-packet'], 'node --experimental-strip-types tests/glove-well-host-packet-contracts.ts');
+assert.equal(packageJson.scripts['witness:glove-well-host-packet'], 'node --experimental-strip-types src/glove-well-host-packet.ts');
 
 console.log('glove well browser smoke capture contracts passed');

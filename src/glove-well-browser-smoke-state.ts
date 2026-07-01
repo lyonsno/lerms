@@ -140,6 +140,95 @@ export interface BrowserSmokeState {
   lastError: string | null;
 }
 
+export interface GloveWellHostPacketCapture {
+  state: 'idle' | 'starting' | 'running' | 'complete' | 'failed';
+  reportPath: string | null;
+  filmstripPath: string | null;
+  outDir?: string | null;
+  error?: string | null;
+}
+
+export interface GloveWellHostPacketOptions {
+  sourceUrl?: string | null;
+  generatedAtMs?: number | null;
+  capture?: GloveWellHostPacketCapture | null;
+}
+
+export interface GloveWellHostPacket {
+  schema: 'lerms.glove-well-host-packet.v0';
+  route: 'lerms/glove-well/host-packet';
+  hostCandidate: {
+    kind: 'kaminos_native_host_candidate';
+    hostId: 'glove-well';
+    hostLabel: 'Glove Well';
+    requestedAdapter: 'glove-well';
+  };
+  source: {
+    producerDiaulos: 'greedy-glove-fucker';
+    authority: BrowserSmokeAuthority;
+    sourceTruthAuthority: 'lerms.gloveWellBrowserSmokeState';
+    endpoint: string;
+    sourceUrl: string | null;
+    sequence: number | null;
+    frameId: string | null;
+    backend: string | null;
+    effectiveRoute: string | null;
+    modelRoute: string | null;
+    webcamSynthetic: boolean | null;
+    generatedAtMs: number | null;
+  };
+  freshness: {
+    status: 'fresh' | 'stale' | 'fallback' | 'synthetic_fixture' | 'invalid' | 'waiting';
+    ageMs: number | null;
+    cameraAgeMs: number | null;
+    budgetMs: number;
+  };
+  coordinateFrame: {
+    space: 'operator_visible_webcam_mirrored_screen_normalized';
+    origin: 'top_left';
+    xRange: readonly [0, 1];
+    yRange: readonly [0, 1];
+    depthLoadBearing: false;
+  };
+  gloveWell: {
+    phase: BrowserSmokePhase;
+    statusCode: BrowserSmokeStatusCode;
+    releaseCount: number;
+    aim: BrowserSmokeAim;
+    hand: BrowserSmokeState['hand'];
+  };
+  handSkeleton: BrowserSmokeHandSkeleton;
+  goins: BrowserSmokeGoin[];
+  lermDesireHints: Array<{
+    schema: 'lerms.glove-well-host-desire-hint.v0';
+    lermId: string;
+    targetGoinId: string;
+    target: BrowserSmokePoint;
+    pull: number;
+    radius: number;
+    reason: 'rolling_goin_lure' | 'held_goin_attention';
+  }>;
+  capture: {
+    state: GloveWellHostPacketCapture['state'];
+    reportPath: string | null;
+    filmstripPath: string | null;
+    outDir: string | null;
+    error: string | null;
+  };
+  downgrades: string[];
+  rejectedDebugSurfaces: Array<{
+    surface: string;
+    label: string;
+    acceptanceSurface: false;
+    reason: string;
+  }>;
+  custody: {
+    greedyOwns: string[];
+    kaminosOwns: string[];
+    palmDaddyOwns: string[];
+  };
+}
+
 export interface BuildBrowserSmokeStateOptions {
   previous: BrowserSmokeState | null;
   cache: BrowserSmokeCacheSnapshot | null;
@@ -195,6 +284,86 @@ export function buildInitialGloveWellBrowserSmokeState(endpoint = DEFAULT_ENDPOI
     releaseCount: 0,
     downgrades: ['waiting_for_kaminos_event_cache'],
     lastError: null
+  };
+}
+
+export function buildGloveWellHostPacket(state: BrowserSmokeState, options: GloveWellHostPacketOptions = {}): GloveWellHostPacket {
+  const capture = normalizeHostPacketCapture(options.capture ?? null);
+  const goins = worldGoins(state).map((goin) => cloneGoin(goin));
+  const downgrades = uniqueStrings([
+    ...state.downgrades,
+    'local_browser_smoke_not_native_kaminos_host',
+    'visual_capture_not_source_truth',
+    ...(capture.state === 'complete' ? [] : ['browser_smoke_capture_not_complete'])
+  ]);
+
+  return {
+    schema: 'lerms.glove-well-host-packet.v0',
+    route: 'lerms/glove-well/host-packet',
+    hostCandidate: {
+      kind: 'kaminos_native_host_candidate',
+      hostId: 'glove-well',
+      hostLabel: 'Glove Well',
+      requestedAdapter: 'glove-well'
+    },
+    source: {
+      producerDiaulos: 'greedy-glove-fucker',
+      authority: state.authority,
+      sourceTruthAuthority: 'lerms.gloveWellBrowserSmokeState',
+      endpoint: state.source.endpoint,
+      sourceUrl: options.sourceUrl ?? null,
+      sequence: state.source.sequence,
+      frameId: state.source.frameId,
+      backend: state.source.backend,
+      effectiveRoute: state.source.effectiveRoute,
+      modelRoute: state.source.modelRoute,
+      webcamSynthetic: state.source.webcamSynthetic,
+      generatedAtMs: finite(options.generatedAtMs) ?? null
+    },
+    freshness: {
+      status: hostPacketFreshnessStatus(state),
+      ageMs: state.source.ageMs,
+      cameraAgeMs: state.source.cameraAgeMs,
+      budgetMs: 180
+    },
+    coordinateFrame: {
+      space: 'operator_visible_webcam_mirrored_screen_normalized',
+      origin: 'top_left',
+      xRange: [0, 1],
+      yRange: [0, 1],
+      depthLoadBearing: false
+    },
+    gloveWell: {
+      phase: state.phase,
+      statusCode: state.statusCode,
+      releaseCount: state.releaseCount,
+      aim: cloneAim(state.aim),
+      hand: cloneHand(state.hand)
+    },
+    handSkeleton: cloneHandSkeleton(state.handSkeleton),
+    goins,
+    lermDesireHints: buildHostPacketDesireHints(goins),
+    capture,
+    downgrades,
+    rejectedDebugSurfaces: [
+      {
+        surface: 'local_lerms_browser_smoke',
+        label: 'Local LERMS browser smoke',
+        acceptanceSurface: false,
+        reason: 'useful operator/debug surface, but not the native Kaminos Glove Well host acceptance surface'
+      },
+      {
+        surface: 'preview_bench_smoke_offer_card',
+        label: 'Preview Bench smoke-offer card',
+        acceptanceSurface: false,
+        reason: 'useful evidence card, but it does not replace the operator scene where live goin throwing inhabits Underhill'
+      }
+    ],
+    custody: {
+      greedyOwns: ['gloveWellCommandTruth', 'goinObjecthoodTruth', 'goinThrowRollDesireLaw', 'sourceOwnedHostPacket'],
+      kaminosOwns: ['native host display', 'camera witness mechanics', 'host-surface adapter validation'],
+      palmDaddyOwns: ['firstVerticalSourceTruthAcceptance']
+    }
   };
 }
 
@@ -376,6 +545,98 @@ function buildHeldGoin(position: BrowserSmokePoint, ordinal: number): BrowserSmo
     velocity: { x: 0, y: 0 },
     desireRadius: 0
   };
+}
+
+function hostPacketFreshnessStatus(state: BrowserSmokeState): GloveWellHostPacket['freshness']['status'] {
+  if (state.authority === 'live_simulation' && state.statusCode === 'tracking') return 'fresh';
+  if (state.authority === 'fallback') return 'fallback';
+  if (state.authority === 'synthetic_fixture') return 'synthetic_fixture';
+  if (state.authority === 'invalid') return 'invalid';
+  if (state.statusCode === 'waiting' || state.statusCode === 'empty') return 'waiting';
+  return 'stale';
+}
+
+function normalizeHostPacketCapture(capture: GloveWellHostPacketCapture | null): GloveWellHostPacket['capture'] {
+  return {
+    state: capture?.state ?? 'idle',
+    reportPath: capture?.reportPath ?? null,
+    filmstripPath: capture?.filmstripPath ?? null,
+    outDir: capture?.outDir ?? null,
+    error: capture?.error ?? null
+  };
+}
+
+function buildHostPacketDesireHints(goins: BrowserSmokeGoin[]): GloveWellHostPacket['lermDesireHints'] {
+  const lure = goins.find((goin) => goin.state === 'rolling') ?? goins.find((goin) => goin.state === 'held');
+  if (!lure) return [];
+  const reason = lure.state === 'rolling' ? 'rolling_goin_lure' : 'held_goin_attention';
+  const pull = lure.state === 'rolling' ? 0.84 : 0.26;
+  return ['nearby-red-lerm-001', 'nearby-red-lerm-002', 'nearby-red-lerm-003'].map((lermId, index) => ({
+    schema: 'lerms.glove-well-host-desire-hint.v0',
+    lermId,
+    targetGoinId: lure.id,
+    target: { ...lure.position },
+    pull: round3(Math.max(0.08, pull - index * 0.11)),
+    radius: round3(Math.max(0.08, lure.desireRadius || 0.12)),
+    reason
+  }));
+}
+
+function cloneGoin(goin: BrowserSmokeGoin): BrowserSmokeGoin {
+  return {
+    ...goin,
+    position: { ...goin.position },
+    velocity: { ...goin.velocity }
+  };
+}
+
+function cloneAim(aim: BrowserSmokeAim): BrowserSmokeAim {
+  return {
+    active: aim.active,
+    origin: { ...aim.origin },
+    direction: { ...aim.direction },
+    arcSamples: aim.arcSamples.map((sample) => ({ ...sample }))
+  };
+}
+
+function cloneHand(hand: BrowserSmokeState['hand']): BrowserSmokeState['hand'] {
+  return {
+    palmCenter: hand.palmCenter ? { ...hand.palmCenter } : null,
+    thumbTip: hand.thumbTip ? { ...hand.thumbTip } : null,
+    indexTip: hand.indexTip ? { ...hand.indexTip } : null,
+    pinkyTip: hand.pinkyTip ? { ...hand.pinkyTip } : null,
+    pinkyBase: hand.pinkyBase ? { ...hand.pinkyBase } : null,
+    pinchDistance: hand.pinchDistance,
+    pinchActive: hand.pinchActive
+  };
+}
+
+function cloneHandSkeleton(skeleton: BrowserSmokeHandSkeleton): BrowserSmokeHandSkeleton {
+  return {
+    schema: skeleton.schema,
+    visible: skeleton.visible,
+    landmarkCount: skeleton.landmarkCount,
+    landmarks: skeleton.landmarks.map((point) => ({ ...point })),
+    segments: skeleton.segments.map((segment) => ({
+      ...segment,
+      start: { ...segment.start },
+      end: { ...segment.end }
+    })),
+    debugPoints: skeleton.debugPoints.map((point) => ({
+      ...point,
+      point: { ...point.point }
+    })),
+    aimVector: skeleton.aimVector
+      ? {
+          origin: { ...skeleton.aimVector.origin },
+          direction: { ...skeleton.aimVector.direction }
+        }
+      : null
+  };
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function buildEmptyHandSkeleton(): BrowserSmokeHandSkeleton {

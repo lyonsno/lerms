@@ -1,10 +1,17 @@
 import {
+  buildGloveWellHostPacket,
   buildGloveWellBrowserSmokeState,
   buildInitialGloveWellBrowserSmokeState,
   type BrowserSmokeCacheSnapshot,
   type BrowserSmokePoint,
   type BrowserSmokeState
 } from './glove-well-browser-smoke-state.js';
+
+declare global {
+  interface Window {
+    __lermsGloveWellHostPacket?: () => unknown;
+  }
+}
 
 interface SmokeRuntime {
   canvas: HTMLCanvasElement;
@@ -83,6 +90,11 @@ export function mountGloveWellBrowserSmoke(root: HTMLElement): void {
       error: null
     }
   };
+  window.__lermsGloveWellHostPacket = () => buildGloveWellHostPacket(runtime.state, {
+    sourceUrl: window.location.href,
+    generatedAtMs: Math.round(performance.now()),
+    capture: runtime.capture
+  });
 
   installSmokeStyles();
   resize(runtime);
