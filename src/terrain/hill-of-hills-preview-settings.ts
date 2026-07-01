@@ -1,0 +1,143 @@
+export const HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY = 'lerms.hill-of-hills.preview-settings.v0' as const;
+
+export type HillPreviewLayerKey =
+  | 'base'
+  | 'transitions'
+  | 'edgeDissolves'
+  | 'surfaceDetails'
+  | 'topologyOverlays'
+  | 'growthSkin'
+  | 'routeMarkers';
+
+export type HillPreviewLayerSettings = Record<HillPreviewLayerKey, boolean>;
+
+export interface HillPreviewGrowthSkinSettings {
+  density: number;
+  opacity: number;
+}
+
+export interface HillPreviewSettings {
+  layers: HillPreviewLayerSettings;
+  growthSkin: HillPreviewGrowthSkinSettings;
+}
+
+export interface HillPreviewSettingsStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+const DEFAULT_LAYER_SETTINGS: HillPreviewLayerSettings = {
+  base: true,
+  transitions: true,
+  edgeDissolves: true,
+  surfaceDetails: true,
+  topologyOverlays: true,
+  growthSkin: true,
+  routeMarkers: true
+};
+
+const DEFAULT_GROWTH_SKIN_SETTINGS: HillPreviewGrowthSkinSettings = {
+  density: 1,
+  opacity: 1
+};
+
+export const HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE = {
+  min: 0,
+  max: 2.5
+} as const;
+
+export const HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE = {
+  min: 0.05,
+  max: 1.6
+} as const;
+
+export function defaultHillPreviewSettings(): HillPreviewSettings {
+  return {
+    layers: { ...DEFAULT_LAYER_SETTINGS },
+    growthSkin: { ...DEFAULT_GROWTH_SKIN_SETTINGS }
+  };
+}
+
+export function loadHillPreviewSettings(storage: HillPreviewSettingsStorage | undefined): HillPreviewSettings {
+  if (!storage) {
+    return defaultHillPreviewSettings();
+  }
+
+  const persisted = storage.getItem(HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY);
+  if (!persisted) {
+    return defaultHillPreviewSettings();
+  }
+
+  try {
+    return sanitizeHillPreviewSettings(JSON.parse(persisted));
+  } catch {
+    return defaultHillPreviewSettings();
+  }
+}
+
+export function saveHillPreviewSettings(storage: HillPreviewSettingsStorage | undefined, settings: HillPreviewSettings): void {
+  if (!storage) {
+    return;
+  }
+
+  storage.setItem(HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY, JSON.stringify(sanitizeHillPreviewSettings(settings)));
+}
+
+export function sanitizeHillPreviewSettings(input: unknown): HillPreviewSettings {
+  const defaults = defaultHillPreviewSettings();
+  if (!isPlainObject(input)) {
+    return defaults;
+  }
+
+  const layersInput = isPlainObject(input.layers) ? input.layers : {};
+  const growthSkinInput = isPlainObject(input.growthSkin) ? input.growthSkin : {};
+
+  return {
+    layers: {
+      base: booleanOrDefault(layersInput.base, defaults.layers.base),
+      transitions: booleanOrDefault(layersInput.transitions, defaults.layers.transitions),
+      edgeDissolves: booleanOrDefault(layersInput.edgeDissolves, defaults.layers.edgeDissolves),
+      surfaceDetails: booleanOrDefault(layersInput.surfaceDetails, defaults.layers.surfaceDetails),
+      topologyOverlays: booleanOrDefault(layersInput.topologyOverlays, defaults.layers.topologyOverlays),
+      growthSkin: booleanOrDefault(layersInput.growthSkin, defaults.layers.growthSkin),
+      routeMarkers: booleanOrDefault(layersInput.routeMarkers, defaults.layers.routeMarkers)
+    },
+    growthSkin: {
+      density: numberOrDefault(
+        growthSkinInput.density,
+        defaults.growthSkin.density,
+        HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE.min,
+        HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE.max
+      ),
+      opacity: numberOrDefault(
+        growthSkinInput.opacity,
+        defaults.growthSkin.opacity,
+        HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE.min,
+        HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE.max
+      )
+    }
+  };
+}
+
+function booleanOrDefault(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function numberOrDefault(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return round(clamp(value, min, max));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function round(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}

@@ -41,6 +41,16 @@ import {
   type HillGrowthMeadowShaderSketch,
   type HillGrowthMeadowShaderSketchInput
 } from './terrain/hill-of-hills-growth-meadow-shader-sketch.js';
+import {
+  HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE,
+  HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE,
+  defaultHillPreviewSettings,
+  loadHillPreviewSettings,
+  saveHillPreviewSettings,
+  type HillPreviewLayerKey,
+  type HillPreviewSettings,
+  type HillPreviewSettingsStorage
+} from './terrain/hill-of-hills-preview-settings.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -257,12 +267,23 @@ const viewControlSpecs: readonly ViewControlSpec[] = [
   { key: 'panY', label: 'Camera pan Y', min: -0.32, max: 0.24, step: 0.01 },
   { key: 'motionSpeed', label: 'Motion speed', min: 0, max: 2, step: 0.05 }
 ];
+const previewLayerSpecs: readonly { key: HillPreviewLayerKey; label: string }[] = [
+  { key: 'base', label: 'Base' },
+  { key: 'growthSkin', label: 'Growth skin' },
+  { key: 'transitions', label: 'Transitions' },
+  { key: 'edgeDissolves', label: 'Edge dissolves' },
+  { key: 'surfaceDetails', label: 'Surface details' },
+  { key: 'topologyOverlays', label: 'Topology overlays' },
+  { key: 'routeMarkers', label: 'Route markers' }
+];
 
 const controls = createControls();
 const viewControls = createViewControls();
+let previewSettings: HillPreviewSettings = loadHillPreviewSettings(safePreviewSettingsStorage());
+const previewDebugControls = createPreviewDebugControls();
 const witnessPanel = createWitnessPanel();
 
-document.body.append(controls.element, viewControls.element, witnessPanel);
+document.body.append(controls.element, viewControls.element, previewDebugControls.element, witnessPanel);
 installCameraDrag();
 
 function resize(): void {
@@ -297,7 +318,9 @@ function render(timestampMs: number): void {
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
   drawTerrain(terrainBuffer, width, height);
-  drawRouteMarkers(terrainBuffer, width, height);
+  if (previewSettings.layers.routeMarkers) {
+    drawRouteMarkers(terrainBuffer, width, height);
+  }
   drawWitness(terrainBuffer);
 
   window.requestAnimationFrame(render);
@@ -326,44 +349,56 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
   const gridResolutionX = currentBuffer.gridResolution.x;
   const gridResolutionZ = currentBuffer.gridResolution.z;
 
-  for (let zi = gridResolutionZ - 2; zi >= 0; zi -= 1) {
-    for (let xi = 0; xi < gridResolutionX - 1; xi += 1) {
-      const a = zi * gridResolutionX + xi;
-      const b = zi * gridResolutionX + xi + 1;
-      const c = (zi + 1) * gridResolutionX + xi + 1;
-      const d = (zi + 1) * gridResolutionX + xi;
-      const pa = projectSample(currentBuffer, a, width, height);
-      const pb = projectSample(currentBuffer, b, width, height);
-      const pc = projectSample(currentBuffer, c, width, height);
-      const pd = projectSample(currentBuffer, d, width, height);
-      const averageHeight =
-        (metricAt(currentBuffer, a, 'height') +
-          metricAt(currentBuffer, b, 'height') +
-          metricAt(currentBuffer, c, 'height') +
-          metricAt(currentBuffer, d, 'height')) *
-        0.25;
-      const averageNormal: readonly [number, number, number] = [
-        (normalAt(currentBuffer, a, 0) + normalAt(currentBuffer, b, 0) + normalAt(currentBuffer, c, 0) + normalAt(currentBuffer, d, 0)) * 0.25,
-        (normalAt(currentBuffer, a, 1) + normalAt(currentBuffer, b, 1) + normalAt(currentBuffer, c, 1) + normalAt(currentBuffer, d, 1)) * 0.25,
-        (normalAt(currentBuffer, a, 2) + normalAt(currentBuffer, b, 2) + normalAt(currentBuffer, c, 2) + normalAt(currentBuffer, d, 2)) * 0.25
-      ];
+  if (previewSettings.layers.base) {
+    for (let zi = gridResolutionZ - 2; zi >= 0; zi -= 1) {
+      for (let xi = 0; xi < gridResolutionX - 1; xi += 1) {
+        const a = zi * gridResolutionX + xi;
+        const b = zi * gridResolutionX + xi + 1;
+        const c = (zi + 1) * gridResolutionX + xi + 1;
+        const d = (zi + 1) * gridResolutionX + xi;
+        const pa = projectSample(currentBuffer, a, width, height);
+        const pb = projectSample(currentBuffer, b, width, height);
+        const pc = projectSample(currentBuffer, c, width, height);
+        const pd = projectSample(currentBuffer, d, width, height);
+        const averageHeight =
+          (metricAt(currentBuffer, a, 'height') +
+            metricAt(currentBuffer, b, 'height') +
+            metricAt(currentBuffer, c, 'height') +
+            metricAt(currentBuffer, d, 'height')) *
+          0.25;
+        const averageNormal: readonly [number, number, number] = [
+          (normalAt(currentBuffer, a, 0) + normalAt(currentBuffer, b, 0) + normalAt(currentBuffer, c, 0) + normalAt(currentBuffer, d, 0)) * 0.25,
+          (normalAt(currentBuffer, a, 1) + normalAt(currentBuffer, b, 1) + normalAt(currentBuffer, c, 1) + normalAt(currentBuffer, d, 1)) * 0.25,
+          (normalAt(currentBuffer, a, 2) + normalAt(currentBuffer, b, 2) + normalAt(currentBuffer, c, 2) + normalAt(currentBuffer, d, 2)) * 0.25
+        ];
 
-      ctx.beginPath();
-      ctx.moveTo(pa.x, pa.y);
-      ctx.lineTo(pb.x, pb.y);
-      ctx.lineTo(pc.x, pc.y);
-      ctx.lineTo(pd.x, pd.y);
-      ctx.closePath();
-      ctx.fillStyle = colorForBufferSample(currentBuffer, a, averageHeight, averageNormal, currentBuffer.heightRange);
-      ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(pa.x, pa.y);
+        ctx.lineTo(pb.x, pb.y);
+        ctx.lineTo(pc.x, pc.y);
+        ctx.lineTo(pd.x, pd.y);
+        ctx.closePath();
+        ctx.fillStyle = colorForBufferSample(currentBuffer, a, averageHeight, averageNormal, currentBuffer.heightRange);
+        ctx.fill();
+      }
     }
   }
 
-  drawGrowthMeadowShaderSketch(currentBuffer, width, height);
-  drawMaterialTransitionFragments(currentBuffer, width, height);
-  drawMaterialEdgeDissolves(currentBuffer, width, height);
-  drawSurfaceDetails(currentBuffer, width, height);
-  drawTopologyOverlays(currentBuffer, width, height);
+  if (previewSettings.layers.growthSkin) {
+    drawGrowthMeadowShaderSketch(currentBuffer, width, height);
+  }
+  if (previewSettings.layers.transitions) {
+    drawMaterialTransitionFragments(currentBuffer, width, height);
+  }
+  if (previewSettings.layers.edgeDissolves) {
+    drawMaterialEdgeDissolves(currentBuffer, width, height);
+  }
+  if (previewSettings.layers.surfaceDetails) {
+    drawSurfaceDetails(currentBuffer, width, height);
+  }
+  if (previewSettings.layers.topologyOverlays) {
+    drawTopologyOverlays(currentBuffer, width, height);
+  }
 
   ctx.strokeStyle = 'rgba(248, 233, 166, 0.1)';
   ctx.lineWidth = 1;
@@ -379,8 +414,14 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
 }
 
 function drawGrowthMeadowShaderSketch(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const densityMultiplier = previewSettings.growthSkin.density;
+  if (densityMultiplier <= 0) {
+    return;
+  }
+
   const gridResolutionX = currentBuffer.gridResolution.x;
   const gridResolutionZ = currentBuffer.gridResolution.z;
+  const opacityMultiplier = previewSettings.growthSkin.opacity;
 
   ctx.save();
   ctx.lineCap = 'round';
@@ -395,11 +436,11 @@ function drawGrowthMeadowShaderSketch(currentBuffer: HillOfHillsTerrainBuffer, w
       }
 
       const jitter = detailJitter(currentBuffer, index);
-      if (jitter > sketch.fiberDensity * 0.74 + sketch.tuftDensity * 0.22 + 0.08) {
+      if (jitter > (sketch.fiberDensity * 0.74 + sketch.tuftDensity * 0.22 + 0.08) * densityMultiplier) {
         continue;
       }
 
-      drawGrowthMeadowShaderMark(currentBuffer, index, sketch, jitter, width, height);
+      drawGrowthMeadowShaderMark(currentBuffer, index, sketch, jitter, opacityMultiplier, width, height);
     }
   }
 
@@ -492,6 +533,7 @@ function drawGrowthMeadowShaderMark(
   index: number,
   sketch: HillGrowthMeadowShaderSketch,
   jitter: number,
+  opacityMultiplier: number,
   width: number,
   height: number
 ): void {
@@ -502,7 +544,7 @@ function drawGrowthMeadowShaderMark(
   const dy = Math.sin(angle) * length * 0.42;
 
   if (sketch.tintAlpha > 0) {
-    ctx.fillStyle = rgba(sketch.tintRgb, sketch.tintAlpha * 0.42);
+    ctx.fillStyle = rgba(sketch.tintRgb, sketch.tintAlpha * 0.42 * opacityMultiplier);
     ctx.beginPath();
     ctx.ellipse(
       point.x + dx * 0.08,
@@ -516,7 +558,7 @@ function drawGrowthMeadowShaderMark(
     ctx.fill();
   }
 
-  ctx.strokeStyle = rgba(sketch.tintRgb, 0.04 + sketch.fiberDensity * 0.12);
+  ctx.strokeStyle = rgba(sketch.tintRgb, (0.04 + sketch.fiberDensity * 0.12) * opacityMultiplier);
   ctx.lineWidth = 0.55 + sketch.edgeThickening * 0.9;
   ctx.beginPath();
   ctx.moveTo(point.x - dx * 0.48, point.y - dy * 0.48);
@@ -525,7 +567,7 @@ function drawGrowthMeadowShaderMark(
 
   if (sketch.tuftDensity > 0.24 && jitter < sketch.tuftDensity * 0.82) {
     const tuftHeight = 2.4 + sketch.tuftDensity * 7.2;
-    ctx.strokeStyle = rgba([43, 118, 58], 0.07 + sketch.tuftDensity * 0.16);
+    ctx.strokeStyle = rgba([43, 118, 58], (0.07 + sketch.tuftDensity * 0.16) * opacityMultiplier);
     ctx.lineWidth = 0.65 + sketch.anchorBoost * 0.75;
     ctx.beginPath();
     ctx.moveTo(point.x - dx * 0.18, point.y + dy * 0.12);
@@ -1515,8 +1557,26 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `worker error: ${latestWorkerError}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
+    `layers: ${activePreviewLayerSummary()}`,
+    `growth skin: density ${previewSettings.growthSkin.density.toFixed(2)} opacity ${previewSettings.growthSkin.opacity.toFixed(2)}`,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
+}
+
+function activePreviewLayerSummary(): string {
+  const labels: Record<HillPreviewLayerKey, string> = {
+    base: 'base',
+    transitions: 'trans',
+    edgeDissolves: 'edge',
+    surfaceDetails: 'detail',
+    topologyOverlays: 'topo',
+    growthSkin: 'growth',
+    routeMarkers: 'route'
+  };
+  return previewLayerSpecs
+    .filter((spec) => previewSettings.layers[spec.key])
+    .map((spec) => labels[spec.key])
+    .join(' ');
 }
 
 function createControls(): { element: HTMLElement } {
@@ -1552,9 +1612,9 @@ function createControls(): { element: HTMLElement } {
   const style = document.createElement('style');
   style.textContent = `
     .terrain-controls,
-    .view-controls {
+    .view-controls,
+    .preview-debug-controls {
       position: fixed;
-      right: 16px;
       width: min(330px, calc(100vw - 32px));
       overflow: auto;
       padding: 12px;
@@ -1566,32 +1626,61 @@ function createControls(): { element: HTMLElement } {
       backdrop-filter: blur(8px);
     }
     .terrain-controls {
+      right: 16px;
       top: 16px;
       max-height: calc(100vh - 200px);
     }
     .view-controls {
+      right: 16px;
       bottom: 16px;
     }
+    .preview-debug-controls {
+      left: 16px;
+      bottom: 16px;
+      width: min(280px, calc(100vw - 32px));
+      max-height: calc(100vh - 250px);
+    }
+    .preview-debug-controls h2 {
+      margin: 0 0 8px;
+      color: #d7f7e8;
+      font: inherit;
+      font-weight: 700;
+    }
     .terrain-controls label,
-    .view-controls label {
+    .view-controls label,
+    .preview-debug-range {
       display: grid;
       grid-template-columns: minmax(96px, 1fr) minmax(0, 1.3fr) 44px;
       gap: 8px;
       align-items: center;
       min-height: 26px;
     }
+    .preview-debug-toggle {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      min-height: 24px;
+    }
     .terrain-controls input,
-    .view-controls input {
+    .view-controls input,
+    .preview-debug-controls input {
       width: 100%;
       min-width: 0;
       accent-color: #d5b64f;
     }
+    .preview-debug-toggle input {
+      width: 14px;
+      height: 14px;
+    }
     .terrain-controls output,
-    .view-controls output {
+    .view-controls output,
+    .preview-debug-controls output {
       color: #88e0ba;
       text-align: right;
     }
-    .view-controls button {
+    .view-controls button,
+    .preview-debug-controls button {
       width: 100%;
       margin-top: 8px;
       min-height: 28px;
@@ -1620,6 +1709,12 @@ function createControls(): { element: HTMLElement } {
         right: 12px;
         width: calc(100vw - 24px);
         max-height: 30vh;
+      }
+      .preview-debug-controls {
+        left: 12px;
+        bottom: 166px;
+        width: calc(100vw - 24px);
+        max-height: 22vh;
       }
       .view-controls {
         right: 12px;
@@ -1697,6 +1792,147 @@ function createViewControls(): { element: HTMLElement; refresh: () => void } {
   }
 
   return { element, refresh };
+}
+
+function createPreviewDebugControls(): { element: HTMLElement; refresh: () => void } {
+  const element = document.createElement('section');
+  element.className = 'preview-debug-controls';
+  const title = document.createElement('h2');
+  title.textContent = 'Preview layers';
+  element.append(title);
+
+  const checkboxes = new Map<HillPreviewLayerKey, HTMLInputElement>();
+  for (const spec of previewLayerSpecs) {
+    const row = document.createElement('label');
+    const input = document.createElement('input');
+    const name = document.createElement('span');
+
+    row.className = 'preview-debug-toggle';
+    input.type = 'checkbox';
+    input.checked = previewSettings.layers[spec.key];
+    input.addEventListener('change', () => {
+      previewSettings = {
+        ...previewSettings,
+        layers: {
+          ...previewSettings.layers,
+          [spec.key]: input.checked
+        }
+      };
+      persistPreviewSettings();
+    });
+    name.textContent = spec.label;
+
+    checkboxes.set(spec.key, input);
+    row.append(input, name);
+    element.append(row);
+  }
+
+  const density = createPreviewDebugRange(
+    'Growth density',
+    previewSettings.growthSkin.density,
+    HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE.min,
+    HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE.max,
+    0.05,
+    (value) => {
+      previewSettings = {
+        ...previewSettings,
+        growthSkin: {
+          ...previewSettings.growthSkin,
+          density: value
+        }
+      };
+      persistPreviewSettings();
+    }
+  );
+  const opacity = createPreviewDebugRange(
+    'Growth opacity',
+    previewSettings.growthSkin.opacity,
+    HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE.min,
+    HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE.max,
+    0.05,
+    (value) => {
+      previewSettings = {
+        ...previewSettings,
+        growthSkin: {
+          ...previewSettings.growthSkin,
+          opacity: value
+        }
+      };
+      persistPreviewSettings();
+    }
+  );
+
+  element.append(density.row, opacity.row);
+
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.textContent = 'Reset preview';
+  reset.addEventListener('click', () => {
+    previewSettings = defaultHillPreviewSettings();
+    refresh();
+    persistPreviewSettings();
+  });
+  element.append(reset);
+
+  function refresh(): void {
+    for (const spec of previewLayerSpecs) {
+      const input = checkboxes.get(spec.key);
+      if (input) input.checked = previewSettings.layers[spec.key];
+    }
+    density.setValue(previewSettings.growthSkin.density);
+    opacity.setValue(previewSettings.growthSkin.opacity);
+  }
+
+  return { element, refresh };
+}
+
+function createPreviewDebugRange(
+  label: string,
+  initialValue: number,
+  min: number,
+  max: number,
+  step: number,
+  onInput: (value: number) => void
+): { row: HTMLElement; setValue: (value: number) => void } {
+  const row = document.createElement('label');
+  const name = document.createElement('span');
+  const input = document.createElement('input');
+  const value = document.createElement('output');
+
+  row.className = 'preview-debug-range';
+  name.textContent = label;
+  input.type = 'range';
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(initialValue);
+  value.value = initialValue.toFixed(2);
+  input.addEventListener('input', () => {
+    const nextValue = Number(input.value);
+    value.value = nextValue.toFixed(2);
+    onInput(nextValue);
+  });
+  row.append(name, input, value);
+
+  return {
+    row,
+    setValue(nextValue: number): void {
+      input.value = String(nextValue);
+      value.value = nextValue.toFixed(2);
+    }
+  };
+}
+
+function persistPreviewSettings(): void {
+  saveHillPreviewSettings(safePreviewSettingsStorage(), previewSettings);
+}
+
+function safePreviewSettingsStorage(): HillPreviewSettingsStorage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 function installCameraDrag(): void {
