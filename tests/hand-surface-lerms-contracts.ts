@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  createHandSurfaceHostPacket,
   composeHandSurfaceLerms,
   createFixtureKaminosHandEventCache,
   createFixtureWilorHandPacket,
@@ -239,7 +240,9 @@ test('actual WiLoR MANO mesh supports barycentric lerms on mesh triangles', () =
   assert.equal(report.attachments[0].surfaceSource, 'mano_mesh');
   assert.equal(report.attachments[0].meshFaceIndex, 1);
   assert.deepEqual(report.attachments[0].face, [1, 3, 2]);
-  assert.equal(report.attachments[0].screen.x, 0.75);
+  assert.equal(report.surfaceFrame.mesh.projection.mirrorX, true);
+  assert.equal(report.surfaceFrame.mesh.projection.reason, 'align_mano_mesh_to_mirrored_operator_webcam');
+  assert.equal(report.attachments[0].screen.x, 0.25);
   assert.equal(report.attachments[0].screen.y, 0.75);
   assert.equal(report.attachments[0].depth, 0.225);
 });
@@ -261,6 +264,45 @@ test('mesh lerm attachments expose provisional proxy schnoz bodies oriented by t
   assert.equal(bodyVisual.source, 'kaminos.origin-main.3a373d5.makeLermsPreviewActorVisualMesh');
   assert.deepEqual(bodyVisual.heading2d, { x: 0, y: 1 });
   assert.ok(bodyVisual.normal && bodyVisual.normal.z > 0.9, 'expected outward-ish triangle normal');
+});
+
+test('hand-surface host packet exports source-owned MANO anchors and proxy body truth', () => {
+  const report = composeHandSurfaceLerms(
+    liveMeshPacket(),
+    liveOptions({
+      attachmentMode: 'hand_mesh',
+      lermAnchors: [{ id: 'mesh-red-lerm', meshFaceIndex: 1, barycentric: [0.25, 0.5, 0.25], behaviorHint: 'cling' }],
+      requestedEndpoint: '/kaminos-hand-control/hand-control-sidecar-event',
+      effectiveEndpoint: 'http://127.0.0.1:8096/hand-control-sidecar-event',
+    }),
+  );
+
+  const packet = createHandSurfaceHostPacket(report, {
+    generatedAtMs: 1100,
+    sourceRoute: 'lerms/hand-surface/host-packet-file',
+    sourceCommit: 'test-commit',
+  });
+
+  assert.equal(packet.schema, 'lerms.hand-surface-host-packet.v0');
+  assert.equal(packet.source.route, 'lerms/hand-surface/host-packet-file');
+  assert.equal(packet.source.commit, 'test-commit');
+  assert.equal(packet.sourceAuthority, 'live_hand_surface');
+  assert.equal(packet.surfaceAnchorFrame.kind, 'mano_mesh_barycentric');
+  assert.equal(packet.surfaceAnchorFrame.projection.mirrorX, true);
+  assert.equal(packet.bodyStatus.kind, 'proxy_schnoz_sphere');
+  assert.equal(packet.bodyStatus.downgrade, 'proxy_body_visual_only');
+  assert.equal(packet.bodyStatus.finalAssets, false);
+  assert.equal(packet.anchors[0].orientationSource, 'mano_triangle_frame');
+  assert.equal(packet.anchors[0].body.kind, 'proxy_schnoz_sphere');
+  assert.equal(packet.anchors[0].body.downgrade, 'proxy_body_visual_only');
+  assert.equal(packet.anchors[0].meshFaceIndex, 1);
+  assert.deepEqual(packet.anchors[0].face, [1, 3, 2]);
+  assert.deepEqual(packet.custody, {
+    lermfeelOwns: ['hand-surface behavior', 'MANO barycentric anchors', 'proxy body status'],
+    kaminosOwns: ['future native host shell', 'host witness ergonomics'],
+  });
+  assert.ok(packet.rejectedDebugSurfaces.includes('lerms-moving-timeline'));
+  assert.ok(packet.rejectedDebugSurfaces.includes('screen_space_sticker_attachment'));
 });
 
 test('witness svg renders mesh lerms as proxy schnoz spheres with downgrade truth', () => {

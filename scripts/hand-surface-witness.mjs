@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 
 import {
   composeHandSurfaceLerms,
+  createHandSurfaceHostPacket,
   createFixtureKaminosHandEventCache,
   createFixtureWilorHandPacket,
   renderHandSurfaceWitnessSvg,
@@ -10,6 +11,7 @@ import {
 
 const jsonPath = process.argv[2] ?? '/tmp/lerms-hand-surface-witness-0629.json';
 const svgPath = process.argv[3] ?? '/tmp/lerms-hand-surface-witness-0629.svg';
+const hostPacketPath = process.argv[4] ?? '/tmp/lerms-hand-surface-host-packet-0701.json';
 const requestedRoute = 'native_wilor_mini_mlx_detector_sidecar_live';
 const nowMs = 1200;
 const packet = createFixtureWilorHandPacket({
@@ -66,6 +68,11 @@ const report = composeHandSurfaceLerms(cache, {
   ],
   moge: { requested: true, effectiveRoute: null, ageMs: null },
 });
+const hostPacket = createHandSurfaceHostPacket(report, {
+  generatedAtMs: nowMs,
+  sourceRoute: 'lerms/hand-surface/host-packet-file',
+  sourceCommit: process.env.LERMS_SOURCE_COMMIT ?? null,
+});
 const witness = {
   ok: report.surfaceFrame.status === 'valid' && report.attachments.every((attachment) => attachment.mode === 'hand_surface'),
   visibleDeltaAssessment: 'Synthetic fixture filmstrip shows an Underhill ghost-shell panel, a MANO-shaped mesh frame, and three provisional proxy schnoz-sphere lerm bodies attached by barycentric mesh-triangle coordinates and oriented from local triangle frames; it does not prove live operator webcam/WiLoR authority or final lerm assets.',
@@ -88,12 +95,17 @@ const witness = {
   artifacts: {
     jsonPath,
     svgPath,
+    hostPacketPath,
   },
+  hostPacketSchema: hostPacket.schema,
+  hostPacketRoute: hostPacket.source.route,
   report,
 };
 
 await mkdir(dirname(jsonPath), { recursive: true });
 await mkdir(dirname(svgPath), { recursive: true });
+await mkdir(dirname(hostPacketPath), { recursive: true });
 await writeFile(jsonPath, `${JSON.stringify(witness, null, 2)}\n`, 'utf8');
 await writeFile(svgPath, `${renderHandSurfaceWitnessSvg(report, { width: 960, height: 540 })}\n`, 'utf8');
-console.log(JSON.stringify({ ok: witness.ok, jsonPath, svgPath, authority: report.authority, downgrades: report.downgrades }, null, 2));
+await writeFile(hostPacketPath, `${JSON.stringify(hostPacket, null, 2)}\n`, 'utf8');
+console.log(JSON.stringify({ ok: witness.ok, jsonPath, svgPath, hostPacketPath, authority: report.authority, downgrades: report.downgrades }, null, 2));

@@ -146,6 +146,10 @@ export type HandSurfaceReport = {
     mesh: {
       status: 'valid' | 'missing';
       coordinateSpace: string | null;
+      projection: {
+        mirrorX: boolean;
+        reason: 'align_mano_mesh_to_mirrored_operator_webcam';
+      };
       vertices: Vec3[];
       faces: number[][];
       projected2d: Vec2[];
@@ -188,6 +192,60 @@ export type HandSurfaceReport = {
     ageMs: number | null;
   };
   downgrades: Array<{ code: DowngradeCode; detail: string }>;
+};
+
+export type HandSurfaceHostPacket = {
+  schema: 'lerms.hand-surface-host-packet.v0';
+  source: {
+    route: string;
+    commit: string | null;
+    generatedAtMs: number;
+    reportSchema: HandSurfaceReport['schema'];
+  };
+  sourceAuthority: WitnessAuthority;
+  routeTruth: HandSurfaceReport['routeTruth'];
+  freshness: HandSurfaceReport['freshness'];
+  webcam: HandSurfaceReport['webcam'];
+  surfaceAnchorFrame: {
+    kind: 'mano_mesh_barycentric' | 'landmark_proxy_barycentric' | 'missing';
+    status: HandSurfaceReport['surfaceFrame']['status'];
+    meshStatus: HandSurfaceReport['surfaceFrame']['mesh']['status'];
+    handedness: string;
+    confidence: number | null;
+    projection: HandSurfaceReport['surfaceFrame']['mesh']['projection'];
+    coordinateSpace: string | null;
+  };
+  bodyStatus: {
+    kind: 'proxy_schnoz_sphere' | 'missing';
+    downgrade: 'proxy_body_visual_only' | null;
+    finalAssets: false;
+    source: string | null;
+  };
+  anchors: Array<{
+    id: string;
+    meshFaceIndex: number | null;
+    face: number[] | null;
+    barycentric: number[] | null;
+    screen: Vec2;
+    depth: number;
+    surfaceSource: HandSurfaceReport['attachments'][number]['surfaceSource'];
+    orientationSource: 'mano_triangle_frame' | 'landmark_proxy_frame' | null;
+    heading2d: Vec2 | null;
+    normal: Vec3 | null;
+    behavior: HandSurfaceReport['attachments'][number]['behavior'];
+    body: {
+      kind: 'proxy_schnoz_sphere' | null;
+      downgrade: 'proxy_body_visual_only' | null;
+      provisional: boolean;
+      source: string | null;
+    };
+  }>;
+  custody: {
+    lermfeelOwns: string[];
+    kaminosOwns: string[];
+  };
+  rejectedDebugSurfaces: string[];
+  downgrades: HandSurfaceReport['downgrades'];
 };
 
 export const HAND_SURFACE_FACES: number[][] = [
@@ -528,6 +586,73 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
   };
 }
 
+export function createHandSurfaceHostPacket(report: HandSurfaceReport, options: {
+  generatedAtMs: number;
+  sourceRoute: string;
+  sourceCommit?: string | null;
+}): HandSurfaceHostPacket {
+  const firstBody = report.attachments.find((attachment) => attachment.bodyVisual?.kind === 'proxy_schnoz_sphere')?.bodyVisual ?? null;
+  const meshAnchorPresent = report.attachments.some((attachment) => attachment.surfaceSource === 'mano_mesh');
+  const landmarkAnchorPresent = report.attachments.some((attachment) => attachment.surfaceSource === 'landmark_proxy');
+  return {
+    schema: 'lerms.hand-surface-host-packet.v0',
+    source: {
+      route: options.sourceRoute,
+      commit: options.sourceCommit ?? null,
+      generatedAtMs: options.generatedAtMs,
+      reportSchema: report.schema,
+    },
+    sourceAuthority: report.authority,
+    routeTruth: report.routeTruth,
+    freshness: report.freshness,
+    webcam: report.webcam,
+    surfaceAnchorFrame: {
+      kind: meshAnchorPresent ? 'mano_mesh_barycentric' : landmarkAnchorPresent ? 'landmark_proxy_barycentric' : 'missing',
+      status: report.surfaceFrame.status,
+      meshStatus: report.surfaceFrame.mesh.status,
+      handedness: report.surfaceFrame.handedness,
+      confidence: report.surfaceFrame.confidence,
+      projection: report.surfaceFrame.mesh.projection,
+      coordinateSpace: report.surfaceFrame.mesh.coordinateSpace,
+    },
+    bodyStatus: {
+      kind: firstBody?.kind ?? 'missing',
+      downgrade: firstBody?.downgrade ?? null,
+      finalAssets: false,
+      source: firstBody?.source ?? null,
+    },
+    anchors: report.attachments.map((attachment) => ({
+      id: attachment.id,
+      meshFaceIndex: attachment.meshFaceIndex,
+      face: attachment.face ? [...attachment.face] : null,
+      barycentric: attachment.barycentric ? [...attachment.barycentric] : null,
+      screen: { ...attachment.screen },
+      depth: attachment.depth,
+      surfaceSource: attachment.surfaceSource,
+      orientationSource: attachment.bodyVisual?.orientationSource ?? null,
+      heading2d: attachment.bodyVisual?.heading2d ? { ...attachment.bodyVisual.heading2d } : null,
+      normal: attachment.bodyVisual?.normal ? { ...attachment.bodyVisual.normal } : null,
+      behavior: attachment.behavior,
+      body: {
+        kind: attachment.bodyVisual?.kind ?? null,
+        downgrade: attachment.bodyVisual?.downgrade ?? null,
+        provisional: attachment.bodyVisual?.provisional ?? false,
+        source: attachment.bodyVisual?.source ?? null,
+      },
+    })),
+    custody: {
+      lermfeelOwns: ['hand-surface behavior', 'MANO barycentric anchors', 'proxy body status'],
+      kaminosOwns: ['future native host shell', 'host witness ergonomics'],
+    },
+    rejectedDebugSurfaces: [
+      'lerms-moving-timeline',
+      'screen_space_sticker_attachment',
+      'native_kaminos_host_without_source_packet',
+    ],
+    downgrades: report.downgrades.map((entry) => ({ ...entry })),
+  };
+}
+
 export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { width: number; height: number }): string {
   const width = Math.max(320, Math.floor(size.width));
   const height = Math.max(220, Math.floor(size.height));
@@ -676,18 +801,33 @@ function validVec3(value: unknown): Vec3 | null {
 
 function normalizeManoSurface(value: unknown): HandSurfaceReport['surfaceFrame']['mesh'] {
   if (!value || typeof value !== 'object') {
-    return { status: 'missing', coordinateSpace: null, vertices: [], faces: [], projected2d: [] };
+    return {
+      status: 'missing',
+      coordinateSpace: null,
+      projection: { mirrorX: true, reason: 'align_mano_mesh_to_mirrored_operator_webcam' },
+      vertices: [],
+      faces: [],
+      projected2d: [],
+    };
   }
   const candidate = value as ManoSurface;
   const vertices = validVec3List(candidate.vertices);
   const faces = validFaceList(candidate.faces, vertices.length);
   const coordinateSpace = typeof candidate.coordinate_space === 'string' ? candidate.coordinate_space : null;
   if (!vertices.length || !faces.length) {
-    return { status: 'missing', coordinateSpace, vertices, faces, projected2d: [] };
+    return {
+      status: 'missing',
+      coordinateSpace,
+      projection: { mirrorX: true, reason: 'align_mano_mesh_to_mirrored_operator_webcam' },
+      vertices,
+      faces,
+      projected2d: [],
+    };
   }
   return {
     status: 'valid',
     coordinateSpace,
+    projection: { mirrorX: true, reason: 'align_mano_mesh_to_mirrored_operator_webcam' },
     vertices,
     faces,
     projected2d: projectMeshVertices(vertices),
@@ -713,7 +853,7 @@ function projectMeshVertices(vertices: Vec3[]): Vec2[] {
   const spanX = Math.max(1e-6, maxX - minX);
   const spanY = Math.max(1e-6, maxY - minY);
   return vertices.map((vertex) => ({
-    x: roundForReport((vertex.x - minX) / spanX),
+    x: roundForReport(1 - ((vertex.x - minX) / spanX)),
     y: roundForReport((vertex.y - minY) / spanY),
   }));
 }
