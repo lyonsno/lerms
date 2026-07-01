@@ -34,6 +34,27 @@ assert.equal(packet.gloveWell.releaseCount, 1);
 assert.equal(packet.handSkeleton.landmarkCount, 21);
 assert.equal(packet.goins.some((goin) => goin.state === 'held'), true);
 assert.equal(packet.goins.some((goin) => goin.state === 'rolling'), true);
+assert.equal(packet.surface.schema, 'lerms.glove-well-host-surface.v0');
+assert.equal(packet.surface.surfaceId, 'glove-well-native-smoke');
+assert.equal(packet.surface.hostRouteExpectation, 'kaminos/glove-well-host');
+assert.deepEqual(packet.surface.coordinateFrame, packet.coordinateFrame);
+assert.deepEqual(
+  packet.surface.layers.map((layer) => layer.id),
+  ['glove-well', 'hand-tracking', 'goins', 'lerm-desire', 'source-truth', 'capture']
+);
+assert.equal(packet.surface.primitives.some((primitive) => primitive.id === 'glove-well-core' && primitive.role === 'wealth_source'), true);
+assert.equal(packet.surface.primitives.some((primitive) => primitive.id === 'goin-launched-goin-001' && primitive.role === 'rolling_goin'), true);
+assert.equal(packet.surface.primitives.some((primitive) => primitive.id === 'goin-primed-goin-002' && primitive.role === 'held_goin'), true);
+assert.equal(packet.surface.primitives.some((primitive) => primitive.role === 'hand_skeleton_bone'), true);
+assert.equal(packet.surface.primitives.some((primitive) => primitive.role === 'aim_arc_sample'), true);
+assert.equal(packet.surface.primitives.some((primitive) => primitive.role === 'lerm_desire_link'), true);
+assert.equal(packet.surface.statusBadges.some((badge) => badge.id === 'authority' && badge.value === 'live_simulation'), true);
+assert.equal(packet.surface.statusBadges.some((badge) => badge.id === 'freshness' && badge.value === 'fresh'), true);
+assert.equal(packet.surface.controls.some((control) => control.id === 'capture-filmstrip' && control.sourceOwned === false), true);
+assert.ok(packet.surface.witnessExpectations.requiredDowngrades.includes('local_browser_smoke_not_native_kaminos_host'));
+assert.ok(packet.surface.witnessExpectations.requiredPrimitiveRoles.includes('wealth_source'));
+assert.ok(packet.surface.witnessExpectations.requiredPrimitiveRoles.includes('rolling_goin'));
+assert.ok(packet.surface.witnessExpectations.requiredPrimitiveRoles.includes('hand_skeleton_bone'));
 assert.ok(packet.downgrades.includes('local_browser_smoke_not_native_kaminos_host'));
 assert.ok(packet.downgrades.includes('visual_capture_not_source_truth'));
 assert.ok(packet.custody.greedyOwns.includes('sourceOwnedHostPacket'));
@@ -54,6 +75,8 @@ const written = JSON.parse(readFileSync(reportPath, 'utf8'));
 assert.equal(written.schema, 'lerms.glove-well-host-packet.v0');
 assert.equal(written.capture.reportPath, '/tmp/lerms-glove-well-capture.json');
 assert.equal(written.capture.filmstripPath, '/tmp/lerms-glove-well-filmstrip.html');
+assert.equal(written.surface.schema, 'lerms.glove-well-host-surface.v0');
+assert.equal(written.surface.primitives.some((primitive: { role: string }) => primitive.role === 'capture_status'), true);
 
 const help = spawnSync(process.execPath, ['--experimental-strip-types', 'src/glove-well-host-packet.ts', '--help'], {
   cwd: process.cwd(),

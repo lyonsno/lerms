@@ -278,9 +278,19 @@ The packet route is `lerms/glove-well/host-packet`. It carries:
 - source truth from the Kaminos hand-control event cache: endpoint, sequence, frame id, backend/effective route/model route, webcam synthetic flag, age, camera age, and authority;
 - the operator-visible mirrored screen coordinate frame used by the hand skeleton, aim arc, goins, and lerm desire hints;
 - Glove Well phase, release count, hand/pinch state, aim samples, skeleton overlay, held/launched/rolling goins, and nearby lerm desire hints;
+- a renderable `lerms.glove-well-host-surface.v0` block with named layers, normalized primitives, status badges, control expectations, and host witness requirements;
 - capture references when a browser filmstrip/report exists;
 - custody split: Greedy owns Glove Well command truth, goin objecthood, throw/roll/desire law, and the packet; Kaminos owns native host display, camera witness mechanics, and adapter validation; Palm Daddy owns first-vertical source-truth acceptance;
 - downgrades and rejected debug surfaces, including `local_browser_smoke_not_native_kaminos_host`, `visual_capture_not_source_truth`, and `local_lerms_browser_smoke`.
+
+The `surface` block is intentionally renderer-friendly without making Kaminos infer behavior semantics. It declares:
+
+- layers: `glove-well`, `hand-tracking`, `goins`, `lerm-desire`, `source-truth`, and `capture`;
+- primitives for wealth source, pull line, hand skeleton bones/debug points, aim arc samples, held/rolling/settled goins, lerm desire markers/links, source badges, and capture status;
+- source refs for every primitive so a host witness can trace visuals back to source-owned rows;
+- status badges for authority, freshness, phase, route, and capture;
+- non-source-owned control expectations such as capture filmstrip and live hand lifecycle controls;
+- witness expectations requiring key downgrades, primitive roles, and source rows.
 
 Generate a deterministic packet artifact with:
 

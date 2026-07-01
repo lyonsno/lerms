@@ -208,6 +208,7 @@ export interface GloveWellHostPacket {
     radius: number;
     reason: 'rolling_goin_lure' | 'held_goin_attention';
   }>;
+  surface: GloveWellHostSurface;
   capture: {
     state: GloveWellHostPacketCapture['state'];
     reportPath: string | null;
@@ -226,6 +227,72 @@ export interface GloveWellHostPacket {
     greedyOwns: string[];
     kaminosOwns: string[];
     palmDaddyOwns: string[];
+  };
+}
+
+export type GloveWellHostSurfacePrimitiveRole =
+  | 'wealth_source'
+  | 'well_to_hand_pull'
+  | 'hand_skeleton_bone'
+  | 'hand_debug_point'
+  | 'aim_arc_sample'
+  | 'held_goin'
+  | 'rolling_goin'
+  | 'settled_goin'
+  | 'lerm_desire_marker'
+  | 'lerm_desire_link'
+  | 'source_badge'
+  | 'capture_status';
+
+export interface GloveWellHostSurfaceLayer {
+  id: 'glove-well' | 'hand-tracking' | 'goins' | 'lerm-desire' | 'source-truth' | 'capture';
+  label: string;
+  sourceOwned: boolean;
+}
+
+export interface GloveWellHostSurfacePrimitive {
+  id: string;
+  layerId: GloveWellHostSurfaceLayer['id'];
+  kind: 'disk' | 'ellipse' | 'line' | 'point' | 'badge';
+  role: GloveWellHostSurfacePrimitiveRole;
+  sourceRef: string;
+  color: string;
+  center?: BrowserSmokePoint;
+  start?: BrowserSmokePoint;
+  end?: BrowserSmokePoint;
+  radius?: number;
+  radiusX?: number;
+  radiusY?: number;
+  text?: string;
+  alpha?: number;
+}
+
+export interface GloveWellHostSurface {
+  schema: 'lerms.glove-well-host-surface.v0';
+  surfaceId: 'glove-well-native-smoke';
+  hostRouteExpectation: 'kaminos/glove-well-host';
+  coordinateFrame: GloveWellHostPacket['coordinateFrame'];
+  layers: GloveWellHostSurfaceLayer[];
+  primitives: GloveWellHostSurfacePrimitive[];
+  statusBadges: Array<{
+    id: 'authority' | 'freshness' | 'phase' | 'route' | 'capture';
+    label: string;
+    value: string;
+    authorityBearing: boolean;
+  }>;
+  controls: Array<{
+    id: 'capture-filmstrip' | 'open-live-hand' | 'stop-live-hand';
+    label: string;
+    sourceOwned: boolean;
+    reason: string;
+  }>;
+  witnessExpectations: {
+    expectedHostId: 'glove-well';
+    expectedPacketSchema: 'lerms.glove-well-host-packet.v0';
+    expectedPacketRoute: 'lerms/glove-well/host-packet';
+    requiredDowngrades: string[];
+    requiredPrimitiveRoles: GloveWellHostSurfacePrimitiveRole[];
+    requiredSourceRows: string[];
   };
 }
 
@@ -296,6 +363,14 @@ export function buildGloveWellHostPacket(state: BrowserSmokeState, options: Glov
     'visual_capture_not_source_truth',
     ...(capture.state === 'complete' ? [] : ['browser_smoke_capture_not_complete'])
   ]);
+  const lermDesireHints = buildHostPacketDesireHints(goins);
+  const coordinateFrame = {
+    space: 'operator_visible_webcam_mirrored_screen_normalized' as const,
+    origin: 'top_left' as const,
+    xRange: [0, 1] as const,
+    yRange: [0, 1] as const,
+    depthLoadBearing: false as const
+  };
 
   return {
     schema: 'lerms.glove-well-host-packet.v0',
@@ -326,13 +401,7 @@ export function buildGloveWellHostPacket(state: BrowserSmokeState, options: Glov
       cameraAgeMs: state.source.cameraAgeMs,
       budgetMs: 180
     },
-    coordinateFrame: {
-      space: 'operator_visible_webcam_mirrored_screen_normalized',
-      origin: 'top_left',
-      xRange: [0, 1],
-      yRange: [0, 1],
-      depthLoadBearing: false
-    },
+    coordinateFrame,
     gloveWell: {
       phase: state.phase,
       statusCode: state.statusCode,
@@ -342,7 +411,8 @@ export function buildGloveWellHostPacket(state: BrowserSmokeState, options: Glov
     },
     handSkeleton: cloneHandSkeleton(state.handSkeleton),
     goins,
-    lermDesireHints: buildHostPacketDesireHints(goins),
+    lermDesireHints,
+    surface: buildGloveWellHostSurface({ state, goins, lermDesireHints, capture, downgrades, coordinateFrame }),
     capture,
     downgrades,
     rejectedDebugSurfaces: [
@@ -580,6 +650,233 @@ function buildHostPacketDesireHints(goins: BrowserSmokeGoin[]): GloveWellHostPac
     radius: round3(Math.max(0.08, lure.desireRadius || 0.12)),
     reason
   }));
+}
+
+function buildGloveWellHostSurface({
+  state,
+  goins,
+  lermDesireHints,
+  capture,
+  downgrades,
+  coordinateFrame
+}: {
+  state: BrowserSmokeState;
+  goins: BrowserSmokeGoin[];
+  lermDesireHints: GloveWellHostPacket['lermDesireHints'];
+  capture: GloveWellHostPacket['capture'];
+  downgrades: string[];
+  coordinateFrame: GloveWellHostPacket['coordinateFrame'];
+}): GloveWellHostSurface {
+  const primitives: GloveWellHostSurfacePrimitive[] = [
+    {
+      id: 'glove-well-core',
+      layerId: 'glove-well',
+      kind: 'ellipse',
+      role: 'wealth_source',
+      sourceRef: 'gloveWell.phase',
+      center: { x: 0.18, y: 0.65 },
+      radiusX: 0.12,
+      radiusY: 0.09,
+      color: '#f4c64f'
+    }
+  ];
+
+  if (state.hand.palmCenter && (state.phase === 'priming' || state.phase === 'aiming')) {
+    primitives.push({
+      id: 'glove-well-pull-to-hand',
+      layerId: 'glove-well',
+      kind: 'line',
+      role: 'well_to_hand_pull',
+      sourceRef: 'hand.palmCenter',
+      start: { x: 0.18, y: 0.65 },
+      end: { ...state.hand.palmCenter },
+      color: '#ffe789',
+      alpha: 0.55
+    });
+  }
+
+  state.handSkeleton.segments.forEach((segment, index) => {
+    primitives.push({
+      id: `hand-bone-${String(index).padStart(2, '0')}-${segment.from}-${segment.to}`,
+      layerId: 'hand-tracking',
+      kind: 'line',
+      role: 'hand_skeleton_bone',
+      sourceRef: `handSkeleton.segments[${index}]`,
+      start: { ...segment.start },
+      end: { ...segment.end },
+      color: segment.group === 'pinky' || segment.group === 'thumb' ? '#82e2be' : '#5ba88f',
+      alpha: segment.group === 'palm' ? 0.45 : 0.72
+    });
+  });
+
+  state.handSkeleton.debugPoints.forEach((debugPoint) => {
+    primitives.push({
+      id: `hand-debug-${debugPoint.id}`,
+      layerId: 'hand-tracking',
+      kind: 'point',
+      role: 'hand_debug_point',
+      sourceRef: `handSkeleton.debugPoints.${debugPoint.id}`,
+      center: { ...debugPoint.point },
+      radius: debugPoint.role === 'load_bearing' ? 0.012 : 0.008,
+      text: debugPoint.label,
+      color: debugPoint.role === 'load_bearing' ? '#ffe789' : '#dfe7ff'
+    });
+  });
+
+  if (state.aim.active || state.phase === 'released') {
+    state.aim.arcSamples.forEach((sample, index) => {
+      primitives.push({
+        id: `aim-arc-${String(index + 1).padStart(2, '0')}`,
+        layerId: 'hand-tracking',
+        kind: 'point',
+        role: 'aim_arc_sample',
+        sourceRef: `gloveWell.aim.arcSamples[${index}]`,
+        center: { x: sample.x, y: sample.y },
+        radius: 0.006 + index * 0.0006,
+        color: '#dfe7ff',
+        alpha: 0.5 + index * 0.06
+      });
+    });
+  }
+
+  goins.forEach((goin) => {
+    primitives.push({
+      id: `goin-${goin.id}`,
+      layerId: 'goins',
+      kind: 'ellipse',
+      role: goin.state === 'held' ? 'held_goin' : goin.state === 'rolling' ? 'rolling_goin' : 'settled_goin',
+      sourceRef: `goins.${goin.id}`,
+      center: { ...goin.position },
+      radiusX: goin.state === 'held' ? 0.018 : 0.026,
+      radiusY: goin.state === 'held' ? 0.015 : 0.022,
+      color: goin.state === 'held' ? '#ffe789' : '#f4c64f'
+    });
+  });
+
+  lermDesireHints.forEach((hint, index) => {
+    const origin = lermMarkerOrigin(index);
+    primitives.push({
+      id: `lerm-marker-${hint.lermId}`,
+      layerId: 'lerm-desire',
+      kind: 'disk',
+      role: 'lerm_desire_marker',
+      sourceRef: `lermDesireHints.${hint.lermId}`,
+      center: origin,
+      radius: 0.014,
+      color: ['#ce4b4b', '#b43d5c', '#e06548'][index] ?? '#ce4b4b'
+    });
+    primitives.push({
+      id: `lerm-desire-link-${hint.lermId}-${hint.targetGoinId}`,
+      layerId: 'lerm-desire',
+      kind: 'line',
+      role: 'lerm_desire_link',
+      sourceRef: `lermDesireHints.${hint.lermId}.target`,
+      start: origin,
+      end: { ...hint.target },
+      color: '#ffe789',
+      alpha: round3(hint.pull)
+    });
+  });
+
+  primitives.push(
+    {
+      id: 'source-authority-badge',
+      layerId: 'source-truth',
+      kind: 'badge',
+      role: 'source_badge',
+      sourceRef: 'source.authority',
+      center: { x: 0.035, y: 0.04 },
+      text: `authority: ${state.authority}`,
+      color: sourceBadgeColor(state.authority)
+    },
+    {
+      id: 'source-freshness-badge',
+      layerId: 'source-truth',
+      kind: 'badge',
+      role: 'source_badge',
+      sourceRef: 'freshness.status',
+      center: { x: 0.035, y: 0.075 },
+      text: `freshness: ${hostPacketFreshnessStatus(state)}`,
+      color: sourceBadgeColor(state.authority)
+    },
+    {
+      id: 'capture-status-badge',
+      layerId: 'capture',
+      kind: 'badge',
+      role: 'capture_status',
+      sourceRef: 'capture.state',
+      center: { x: 0.035, y: 0.11 },
+      text: `capture: ${capture.state}`,
+      color: capture.state === 'complete' ? '#82e2be' : '#d9a75e'
+    }
+  );
+
+  return {
+    schema: 'lerms.glove-well-host-surface.v0',
+    surfaceId: 'glove-well-native-smoke',
+    hostRouteExpectation: 'kaminos/glove-well-host',
+    coordinateFrame,
+    layers: [
+      { id: 'glove-well', label: 'Glove Well', sourceOwned: true },
+      { id: 'hand-tracking', label: 'Hand Tracking', sourceOwned: true },
+      { id: 'goins', label: 'Goins', sourceOwned: true },
+      { id: 'lerm-desire', label: 'Lerm Desire', sourceOwned: true },
+      { id: 'source-truth', label: 'Source Truth', sourceOwned: true },
+      { id: 'capture', label: 'Capture', sourceOwned: false }
+    ],
+    primitives,
+    statusBadges: [
+      { id: 'authority', label: 'Authority', value: state.authority, authorityBearing: true },
+      { id: 'freshness', label: 'Freshness', value: hostPacketFreshnessStatus(state), authorityBearing: true },
+      { id: 'phase', label: 'Phase', value: state.phase, authorityBearing: false },
+      { id: 'route', label: 'Route', value: state.source.effectiveRoute ?? 'none', authorityBearing: true },
+      { id: 'capture', label: 'Capture', value: capture.state, authorityBearing: false }
+    ],
+    controls: [
+      {
+        id: 'capture-filmstrip',
+        label: 'Capture Filmstrip',
+        sourceOwned: false,
+        reason: 'Kaminos host should provide the operator control; Greedy only reports capture refs and source state'
+      },
+      {
+        id: 'open-live-hand',
+        label: 'Open Live Hand',
+        sourceOwned: false,
+        reason: 'Kaminos owns the live hand compositor route and camera permission surface'
+      },
+      {
+        id: 'stop-live-hand',
+        label: 'Stop Live Hand',
+        sourceOwned: false,
+        reason: 'Kaminos owns sidecar lifecycle controls'
+      }
+    ],
+    witnessExpectations: {
+      expectedHostId: 'glove-well',
+      expectedPacketSchema: 'lerms.glove-well-host-packet.v0',
+      expectedPacketRoute: 'lerms/glove-well/host-packet',
+      requiredDowngrades: downgrades,
+      requiredPrimitiveRoles: ['wealth_source', 'rolling_goin', 'hand_skeleton_bone', 'aim_arc_sample', 'lerm_desire_link'],
+      requiredSourceRows: ['source.authority', 'source.effectiveRoute', 'freshness.status', 'downgrades', 'custody.greedyOwns', 'custody.kaminosOwns']
+    }
+  };
+}
+
+function lermMarkerOrigin(index: number): BrowserSmokePoint {
+  return [
+    { x: 0.68, y: 0.68 },
+    { x: 0.76, y: 0.78 },
+    { x: 0.6, y: 0.82 }
+  ][index] ?? { x: 0.7, y: 0.74 };
+}
+
+function sourceBadgeColor(authority: BrowserSmokeAuthority): string {
+  if (authority === 'live_simulation') return '#82e2be';
+  if (authority === 'fallback') return '#d9a75e';
+  if (authority === 'synthetic_fixture') return '#d8c46a';
+  if (authority === 'invalid') return '#e36e6e';
+  return '#a4b2c0';
 }
 
 function cloneGoin(goin: BrowserSmokeGoin): BrowserSmokeGoin {
