@@ -32,8 +32,15 @@ import {
 import {
   hillPlacementAffordanceAnchorsFor,
   type HillPlacementAffordanceAnchor,
+  type HillPlacementAffordanceFamily,
+  type HillPlacementAffordanceKind,
   type HillPlacementVec2
 } from './terrain/hill-of-hills-placement-affordance.js';
+import {
+  hillGrowthMeadowShaderSketchFor,
+  type HillGrowthMeadowShaderSketch,
+  type HillGrowthMeadowShaderSketchInput
+} from './terrain/hill-of-hills-growth-meadow-shader-sketch.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -352,6 +359,7 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
     }
   }
 
+  drawGrowthMeadowShaderSketch(currentBuffer, width, height);
   drawMaterialTransitionFragments(currentBuffer, width, height);
   drawMaterialEdgeDissolves(currentBuffer, width, height);
   drawSurfaceDetails(currentBuffer, width, height);
@@ -366,6 +374,164 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
       if (zi === 0) ctx.moveTo(point.x, point.y);
       else ctx.lineTo(point.x, point.y);
     }
+    ctx.stroke();
+  }
+}
+
+function drawGrowthMeadowShaderSketch(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const gridResolutionX = currentBuffer.gridResolution.x;
+  const gridResolutionZ = currentBuffer.gridResolution.z;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (let zi = 2; zi < gridResolutionZ - 2; zi += 2) {
+    for (let xi = 2; xi < gridResolutionX - 2; xi += 2) {
+      const index = zi * gridResolutionX + xi;
+      const sketch = hillGrowthMeadowShaderSketchFor(growthMeadowShaderInput(currentBuffer, index));
+      if (!sketch.active) {
+        continue;
+      }
+
+      const jitter = detailJitter(currentBuffer, index);
+      if (jitter > sketch.fiberDensity * 0.74 + sketch.tuftDensity * 0.22 + 0.08) {
+        continue;
+      }
+
+      drawGrowthMeadowShaderMark(currentBuffer, index, sketch, jitter, width, height);
+    }
+  }
+
+  ctx.restore();
+}
+
+function growthMeadowShaderInput(
+  buffer: HillOfHillsTerrainBuffer,
+  index: number
+): HillGrowthMeadowShaderSketchInput {
+  const cues = growthMeadowAnchorCues(buffer, index);
+  const material = proxyMaterialAt(buffer, index);
+  const edgeKind = materialEdgeAt(buffer, index);
+  const anchor = surfaceAnchorAt(buffer, index);
+  const transitionLaw = growthMeadowTransitionLawAt(material, edgeKind, anchor);
+  const growth = Math.max(metricAt(buffer, index, 'growthTint'), metricAt(buffer, index, 'growthPotential') * 0.74);
+  const edgeStrength = metricAt(buffer, index, 'materialEdgeStrength');
+  const detailDensity = metricAt(buffer, index, 'surfaceDetailDensity');
+
+  return {
+    proxyMaterial: material,
+    transitionLaw,
+    anchorFamily: cues.anchorFamily,
+    anchorKind: cues.anchorKind,
+    growth,
+    wetness: metricAt(buffer, index, 'wetness'),
+    routePressure: metricAt(buffer, index, 'routePressure'),
+    slope: metricAt(buffer, index, 'slope'),
+    intensity: Math.max(edgeStrength, detailDensity * 0.84, growth * 0.62),
+    seedKey: `${material}:${edgeKind}:${anchor}:${index}:${buffer.params.seed}`
+  };
+}
+
+function growthMeadowTransitionLawAt(
+  material: HillOfHillsProxyMaterialKind,
+  edgeKind: HillOfHillsMaterialEdgeKind,
+  anchor: HillOfHillsSurfaceAnchorKind
+) {
+  if (edgeKind === 'growth-cluster' || anchor === 'growth-cluster') {
+    return 'growth-thicket';
+  }
+  if (edgeKind === 'meadow-growth' || material === 'growth-lip') {
+    return 'vegetation-creep';
+  }
+  if (material === 'basin-meadow' || material === 'slope-moss' || anchor === 'tuft-line') {
+    return 'soft-ground-fray';
+  }
+  return 'none';
+}
+
+function growthMeadowAnchorCues(
+  buffer: HillOfHillsTerrainBuffer,
+  index: number
+): {
+  anchorFamily: HillPlacementAffordanceFamily | 'none';
+  anchorKind: HillPlacementAffordanceKind | 'none';
+} {
+  const material = proxyMaterialAt(buffer, index);
+  const edgeKind = materialEdgeAt(buffer, index);
+  const anchor = surfaceAnchorAt(buffer, index);
+  const detail = surfaceDetailAt(buffer, index);
+  const growth = metricAt(buffer, index, 'growthTint');
+
+  if (anchor === 'growth-cluster' || edgeKind === 'growth-cluster' || detail === 'growth-bud') {
+    return {
+      anchorFamily: 'vegetation',
+      anchorKind: growth > 0.72 ? 'root-clump' : 'bushlet'
+    };
+  }
+  if (anchor === 'tuft-line' || edgeKind === 'meadow-growth' || material === 'growth-lip') {
+    return {
+      anchorFamily: 'vegetation',
+      anchorKind: 'edge-grass'
+    };
+  }
+  if (material === 'basin-meadow' || material === 'slope-moss' || detail === 'meadow-tuft') {
+    return {
+      anchorFamily: 'ground-fiber',
+      anchorKind: 'trail-fiber'
+    };
+  }
+  return {
+    anchorFamily: 'none',
+    anchorKind: 'none'
+  };
+}
+
+function drawGrowthMeadowShaderMark(
+  currentBuffer: HillOfHillsTerrainBuffer,
+  index: number,
+  sketch: HillGrowthMeadowShaderSketch,
+  jitter: number,
+  width: number,
+  height: number
+): void {
+  const point = projectSample(currentBuffer, index, width, height, 0.09 + sketch.edgeThickening * 0.025);
+  const angle = detailAngle(currentBuffer, index, jitter) + (sketch.shimmerPhase - 0.5) * 0.74;
+  const length = 2.2 + sketch.fiberDensity * 8 + sketch.edgeThickening * 4;
+  const dx = Math.cos(angle) * length;
+  const dy = Math.sin(angle) * length * 0.42;
+
+  if (sketch.tintAlpha > 0) {
+    ctx.fillStyle = rgba(sketch.tintRgb, sketch.tintAlpha * 0.42);
+    ctx.beginPath();
+    ctx.ellipse(
+      point.x + dx * 0.08,
+      point.y + dy * 0.08,
+      2.4 + sketch.tuftDensity * 8,
+      1.2 + sketch.fiberDensity * 3.8,
+      angle,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = rgba(sketch.tintRgb, 0.04 + sketch.fiberDensity * 0.12);
+  ctx.lineWidth = 0.55 + sketch.edgeThickening * 0.9;
+  ctx.beginPath();
+  ctx.moveTo(point.x - dx * 0.48, point.y - dy * 0.48);
+  ctx.quadraticCurveTo(point.x + dy * 0.14, point.y - dx * 0.06, point.x + dx * 0.5, point.y + dy * 0.5);
+  ctx.stroke();
+
+  if (sketch.tuftDensity > 0.24 && jitter < sketch.tuftDensity * 0.82) {
+    const tuftHeight = 2.4 + sketch.tuftDensity * 7.2;
+    ctx.strokeStyle = rgba([43, 118, 58], 0.07 + sketch.tuftDensity * 0.16);
+    ctx.lineWidth = 0.65 + sketch.anchorBoost * 0.75;
+    ctx.beginPath();
+    ctx.moveTo(point.x - dx * 0.18, point.y + dy * 0.12);
+    ctx.lineTo(point.x + Math.cos(angle - 0.9) * tuftHeight * 0.55, point.y - tuftHeight * 0.7);
+    ctx.lineTo(point.x + Math.cos(angle + 0.9) * tuftHeight * 0.55, point.y - tuftHeight * 0.7);
+    ctx.lineTo(point.x + dx * 0.18, point.y + dy * 0.12);
     ctx.stroke();
   }
 }
