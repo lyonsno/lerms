@@ -244,6 +244,41 @@ test('actual WiLoR MANO mesh supports barycentric lerms on mesh triangles', () =
   assert.equal(report.attachments[0].depth, 0.225);
 });
 
+test('mesh lerm attachments expose provisional proxy schnoz bodies oriented by the MANO triangle frame', () => {
+  const report = composeHandSurfaceLerms(
+    liveMeshPacket(),
+    liveOptions({
+      attachmentMode: 'hand_mesh',
+      lermAnchors: [{ id: 'mesh-red-lerm', meshFaceIndex: 1, barycentric: [0.25, 0.5, 0.25], behaviorHint: 'cling' }],
+    }),
+  );
+
+  const bodyVisual = report.attachments[0].bodyVisual;
+  assert.equal(bodyVisual.kind, 'proxy_schnoz_sphere');
+  assert.equal(bodyVisual.downgrade, 'proxy_body_visual_only');
+  assert.equal(bodyVisual.provisional, true);
+  assert.equal(bodyVisual.orientationSource, 'mano_triangle_frame');
+  assert.equal(bodyVisual.source, 'kaminos.origin-main.3a373d5.makeLermsPreviewActorVisualMesh');
+  assert.deepEqual(bodyVisual.heading2d, { x: 0, y: 1 });
+  assert.ok(bodyVisual.normal && bodyVisual.normal.z > 0.9, 'expected outward-ish triangle normal');
+});
+
+test('witness svg renders mesh lerms as proxy schnoz spheres with downgrade truth', () => {
+  const report = composeHandSurfaceLerms(
+    liveMeshPacket(),
+    liveOptions({
+      attachmentMode: 'hand_mesh',
+      lermAnchors: [{ id: 'mesh-red-lerm', meshFaceIndex: 1, barycentric: [0.25, 0.5, 0.25], behaviorHint: 'cling' }],
+    }),
+  );
+  const svg = renderHandSurfaceWitnessSvg(report, { width: 720, height: 420 });
+
+  assert.match(svg, /proxy_schnoz_sphere/);
+  assert.match(svg, /proxy_body_visual_only/);
+  assert.match(svg, /schnoz-nub/);
+  assert.match(svg, /orientationSource mano_triangle_frame/);
+});
+
 test('hand mesh mode rejects landmark-only packets instead of silently falling back to stickers', () => {
   const report = composeHandSurfaceLerms(
     livePacket(),
@@ -277,6 +312,15 @@ test('browser prototype exposes a crude Underhill ghost shell for mesh mode', ()
   assert.match(mainSource, /drawUnderhillGhostShell/);
   assert.match(mainSource, /drawMeshGhostHand/);
   assert.match(mainSource, /attachmentMode:\s*handMeshMode\s*\?\s*'hand_mesh'\s*:\s*'hand_surface'/);
+});
+
+test('browser mesh smoke draws provisional proxy schnoz bodies instead of flat lerm ellipses', () => {
+  const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+
+  assert.match(mainSource, /drawProxySchnozLerm/);
+  assert.match(mainSource, /proxy_schnoz_sphere/);
+  assert.match(mainSource, /proxy_body_visual_only/);
+  assert.match(mainSource, /bodyVisual\.heading2d/);
 });
 
 test('browser mesh smoke renders all MANO faces and starts through an explicit witness button', () => {

@@ -68,8 +68,15 @@ const report = composeHandSurfaceLerms(cache, {
 });
 const witness = {
   ok: report.surfaceFrame.status === 'valid' && report.attachments.every((attachment) => attachment.mode === 'hand_surface'),
-  visibleDeltaAssessment: 'Synthetic fixture filmstrip shows an Underhill ghost-shell panel, a MANO-shaped mesh frame, and three lerm placeholders attached by barycentric mesh-triangle coordinates; it does not prove live operator webcam/WiLoR authority.',
+  visibleDeltaAssessment: 'Synthetic fixture filmstrip shows an Underhill ghost-shell panel, a MANO-shaped mesh frame, and three provisional proxy schnoz-sphere lerm bodies attached by barycentric mesh-triangle coordinates and oriented from local triangle frames; it does not prove live operator webcam/WiLoR authority or final lerm assets.',
   handSurfaceAttachment: report.authority,
+  bodyVisuals: report.attachments.map((attachment) => ({
+    id: attachment.id,
+    kind: attachment.bodyVisual?.kind ?? null,
+    downgrade: attachment.bodyVisual?.downgrade ?? null,
+    orientationSource: attachment.bodyVisual?.orientationSource ?? null,
+    source: attachment.bodyVisual?.source ?? null,
+  })),
   requestedRoute: report.routeTruth.requestedRoute,
   effectiveRoute: report.routeTruth.effectiveRoute,
   backendIdentity: report.routeTruth.backendIdentity,

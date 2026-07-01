@@ -169,6 +169,17 @@ export type HandSurfaceReport = {
     surfaceSource: 'mano_mesh' | 'landmark_proxy' | 'missing_mesh' | 'screen_space';
     behavior: 'cling' | 'slide' | 'finger_walk' | 'curious' | 'rejected';
     reason: string;
+    bodyVisual: {
+      kind: 'proxy_schnoz_sphere';
+      downgrade: 'proxy_body_visual_only';
+      source: 'kaminos.origin-main.3a373d5.makeLermsPreviewActorVisualMesh';
+      provisional: true;
+      orientationSource: 'mano_triangle_frame' | 'landmark_proxy_frame';
+      heading2d: Vec2;
+      normal: Vec3 | null;
+      radius: number;
+      schnozDistance: number;
+    } | null;
   }>;
   moge: {
     requested: boolean;
@@ -384,6 +395,7 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
         surfaceSource: 'screen_space' as const,
         behavior: 'rejected' as const,
         reason: 'screen-space stickers do not satisfy hand-surface attachment',
+        bodyVisual: null,
       };
     }
 
@@ -397,6 +409,9 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
       const world = mesh.status === 'valid' && face
         ? barycentricPoint3(mesh.vertices, face, barycentric)
         : { x: 0, y: 0, z: 0 };
+      const bodyVisual = mesh.status === 'valid' && face
+        ? createProxySchnozBodyVisual(mesh.projected2d, mesh.vertices, face, 'mano_triangle_frame')
+        : null;
       return {
         id: anchor.id,
         mode: 'hand_surface' as const,
@@ -408,6 +423,7 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
         surfaceSource: mesh.status === 'valid' && face ? 'mano_mesh' as const : 'missing_mesh' as const,
         behavior: chooseBehavior(anchor, palmNormal),
         reason: mesh.status === 'valid' && face ? 'anchored to MANO mesh triangle' : 'MANO mesh missing or invalid',
+        bodyVisual,
       };
     }
 
@@ -419,6 +435,9 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
     const world = surfaceValid
       ? barycentricPoint3(worldLandmarks, face, barycentric)
       : { x: 0, y: 0, z: 0 };
+    const bodyVisual = surfaceValid
+      ? createProxySchnozBodyVisual(landmarks2d, worldLandmarks, face, 'landmark_proxy_frame')
+      : null;
     return {
       id: anchor.id,
       mode: 'hand_surface' as const,
@@ -430,6 +449,7 @@ export function composeHandSurfaceLerms(packet: WilorHandPacket | KaminosHandEve
       surfaceSource: 'landmark_proxy' as const,
       behavior: chooseBehavior(anchor, palmNormal),
       reason: surfaceValid ? 'anchored to interpolated hand surface face' : 'surface frame invalid',
+      bodyVisual,
     };
   });
 
@@ -538,8 +558,21 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
   const lerms = report.attachments.map((attachment) => {
     const x = scaleX(attachment.screen.x, frameWidth);
     const y = scaleY(attachment.screen.y, height);
-    const color = attachment.id.includes('yellow') ? '#f5d75f' : '#e95048';
+    const color = attachment.id.includes('yellow') ? '#f5d75f' : attachment.id.includes('blue') ? '#5aa8f5' : '#e95048';
     const behavior = escapeXml(attachment.behavior);
+    if (attachment.bodyVisual?.kind === 'proxy_schnoz_sphere') {
+      const radius = 13;
+      const schnozX = attachment.bodyVisual.heading2d.x * 18;
+      const schnozY = attachment.bodyVisual.heading2d.y * 18;
+      return [
+        `<g id="${escapeXml(attachment.id)}" class="surface-lerm proxy-schnoz-sphere" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">`,
+        `<circle cx="0" cy="0" r="${radius}" fill="${color}" stroke="#24120d" stroke-width="2" />`,
+        `<circle class="schnoz-nub" cx="${schnozX.toFixed(1)}" cy="${schnozY.toFixed(1)}" r="5" fill="#ffd9a6" stroke="#24120d" stroke-width="1.5" />`,
+        `<circle cx="${(-attachment.bodyVisual.heading2d.y * 5).toFixed(1)}" cy="${(attachment.bodyVisual.heading2d.x * 5).toFixed(1)}" r="2" fill="#120c08" />`,
+        `<title>${escapeXml(attachment.id)} proxy_schnoz_sphere proxy_body_visual_only orientationSource ${escapeXml(attachment.bodyVisual.orientationSource)} ${behavior} depth ${attachment.depth.toFixed(3)}</title>`,
+        '</g>',
+      ].join('');
+    }
     return [
       `<g id="${escapeXml(attachment.id)}" class="surface-lerm" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">`,
       `<ellipse cx="0" cy="0" rx="13" ry="7" fill="${color}" stroke="#24120d" stroke-width="2" />`,
@@ -562,6 +595,7 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
     `webcam: ${report.webcam.status} frame=${report.webcam.frameId}`,
     `surface: ${report.surfaceFrame.status} landmarks=${report.surfaceFrame.landmarks2d.length}`,
     `mesh: ${report.surfaceFrame.mesh.status} vertices=${report.surfaceFrame.mesh.vertices.length} faces=${report.surfaceFrame.mesh.faces.length}`,
+    `body: ${report.attachments.some((attachment) => attachment.bodyVisual?.kind === 'proxy_schnoz_sphere') ? 'proxy_schnoz_sphere proxy_body_visual_only' : 'flat_placeholder'}`,
     `moge: ${report.moge.status}`,
     ...downgradeText.slice(0, 8),
   ].map((line) => truncateReceiptLine(line, 44));
@@ -765,6 +799,67 @@ function chooseBehavior(anchor: LermAnchor, palmNormal: Vec3 | null): HandSurfac
   if (anchor.behaviorHint === 'finger_walk' || anchor.behaviorHint === 'curious') return anchor.behaviorHint;
   if ((palmNormal?.z ?? 1) < -0.15) return 'slide';
   return anchor.behaviorHint ?? 'cling';
+}
+
+function createProxySchnozBodyVisual(
+  projected2d: Vec2[],
+  vertices3d: Vec3[],
+  face: number[],
+  orientationSource: 'mano_triangle_frame' | 'landmark_proxy_frame',
+): NonNullable<HandSurfaceReport['attachments'][number]['bodyVisual']> {
+  const a2 = projected2d[face[0]] ?? { x: 0, y: 0 };
+  const b2 = projected2d[face[1]] ?? { x: a2.x + 1, y: a2.y };
+  const heading2d = normalizeVec2({ x: b2.x - a2.x, y: b2.y - a2.y });
+  const normal = triangleNormal(vertices3d, face);
+  return {
+    kind: 'proxy_schnoz_sphere',
+    downgrade: 'proxy_body_visual_only',
+    source: 'kaminos.origin-main.3a373d5.makeLermsPreviewActorVisualMesh',
+    provisional: true,
+    orientationSource,
+    heading2d,
+    normal,
+    radius: 0.18,
+    schnozDistance: roundForReport(0.18 * 1.45),
+  };
+}
+
+function normalizeVec2(value: Vec2): Vec2 {
+  const length = Math.hypot(value.x, value.y);
+  if (length < 1e-6) return { x: 1, y: 0 };
+  return roundVec2({ x: value.x / length, y: value.y / length });
+}
+
+function triangleNormal(vertices: Vec3[], face: number[]): Vec3 | null {
+  const a = vertices[face[0]];
+  const b = vertices[face[1]];
+  const c = vertices[face[2]];
+  if (!a || !b || !c) return null;
+  const ab = subtractVec3(b, a);
+  const ac = subtractVec3(c, a);
+  return normalizeVec3(crossVec3(ab, ac));
+}
+
+function subtractVec3(left: Vec3, right: Vec3): Vec3 {
+  return { x: left.x - right.x, y: left.y - right.y, z: left.z - right.z };
+}
+
+function crossVec3(left: Vec3, right: Vec3): Vec3 {
+  return {
+    x: left.y * right.z - left.z * right.y,
+    y: left.z * right.x - left.x * right.z,
+    z: left.x * right.y - left.y * right.x,
+  };
+}
+
+function normalizeVec3(value: Vec3): Vec3 | null {
+  const length = Math.hypot(value.x, value.y, value.z);
+  if (length < 1e-6) return null;
+  return {
+    x: roundForReport(value.x / length),
+    y: roundForReport(value.y / length),
+    z: roundForReport(value.z / length),
+  };
 }
 
 function barycentricPoint2(points: Vec2[], face: number[], barycentric: number[]): Vec2 {

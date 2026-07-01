@@ -587,7 +587,7 @@ function drawHandSurface(report: HandSurfaceReport, width: number, height: numbe
   }
   for (const attachment of report.attachments) {
     if (attachment.mode !== 'hand_surface') continue;
-    drawLerm(attachment.id, attachment.screen, attachment.behavior, width, height);
+    drawLerm(attachment, width, height);
   }
   ctx.restore();
 }
@@ -709,7 +709,59 @@ function drawMeshGhostHand(report: HandSurfaceReport, width: number, height: num
   ctx.restore();
 }
 
-function drawLerm(id: string, screen: Vec2, behavior: string, width: number, height: number): void {
+function drawLerm(attachment: HandSurfaceReport['attachments'][number], width: number, height: number): void {
+  if (attachment.bodyVisual?.kind === 'proxy_schnoz_sphere') {
+    drawProxySchnozLerm(attachment, width, height);
+    return;
+  }
+  drawFlatLerm(attachment.id, attachment.screen, attachment.behavior, width, height);
+}
+
+function drawProxySchnozLerm(attachment: HandSurfaceReport['attachments'][number], width: number, height: number): void {
+  const bodyVisual = attachment.bodyVisual;
+  if (!bodyVisual) return;
+  const frame = handMeshMode ? meshGhostFrame(width, height) : null;
+  const x = frame ? frame.offsetX + attachment.screen.x * frame.scale : attachment.screen.x * width;
+  const y = frame ? frame.offsetY + attachment.screen.y * frame.scale : attachment.screen.y * height;
+  const radius = attachment.behavior === 'finger_walk' ? 15 : attachment.behavior === 'curious' ? 12 : 13.5;
+  const schnozDistance = radius * 1.45;
+  const schnozX = bodyVisual.heading2d.x * schnozDistance;
+  const schnozY = bodyVisual.heading2d.y * schnozDistance;
+  const color = attachment.id.includes('yellow') ? '#f6d95f' : attachment.id.includes('blue') ? '#5aa8f5' : '#e95a4d';
+  ctx.save();
+  ctx.translate(x, y);
+  const bodyGradient = ctx.createRadialGradient(-radius * 0.4, -radius * 0.48, radius * 0.2, 0, 0, radius * 1.25);
+  bodyGradient.addColorStop(0, 'rgba(255, 250, 214, 0.82)');
+  bodyGradient.addColorStop(0.3, color);
+  bodyGradient.addColorStop(1, 'rgba(62, 14, 10, 0.98)');
+  ctx.fillStyle = bodyGradient;
+  ctx.strokeStyle = '#20100a';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffd9a6';
+  ctx.strokeStyle = '#20100a';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.arc(schnozX, schnozY, radius * 0.38, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#140a07';
+  ctx.beginPath();
+  ctx.arc(-bodyVisual.heading2d.y * radius * 0.38, bodyVisual.heading2d.x * radius * 0.38, 2.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255, 217, 166, 0.72)';
+  ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillText('proxy_schnoz_sphere', -34, radius + 14);
+  ctx.restore();
+}
+
+function drawFlatLerm(id: string, screen: Vec2, behavior: string, width: number, height: number): void {
   const frame = handMeshMode ? meshGhostFrame(width, height) : null;
   const x = frame ? frame.offsetX + screen.x * frame.scale : screen.x * width;
   const y = frame ? frame.offsetY + screen.y * frame.scale : screen.y * height;
@@ -765,6 +817,9 @@ function drawReceipt(report: HandSurfaceReport, width: number, height: number): 
     `webcam ${report.webcam.status}`,
     `surface ${report.surfaceFrame.status} landmarks ${report.surfaceFrame.landmarks2d.length}`,
     `mesh ${report.surfaceFrame.mesh.status} faces ${report.surfaceFrame.mesh.faces.length}`,
+    report.attachments.some((attachment) => attachment.bodyVisual?.kind === 'proxy_schnoz_sphere')
+      ? 'body proxy_schnoz_sphere downgrade proxy_body_visual_only'
+      : 'body flat_placeholder',
     `moge ${report.moge.status}`,
     latestSidecarStatus,
     latestFramePostStatus,
