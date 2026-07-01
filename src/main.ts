@@ -29,6 +29,11 @@ import {
   hillMaterialTransitionPreviewStyleFor,
   type HillMaterialTransitionPreviewStyle
 } from './terrain/hill-of-hills-transition-preview-style.js';
+import {
+  hillPlacementAffordanceAnchorsFor,
+  type HillPlacementAffordanceAnchor,
+  type HillPlacementVec2
+} from './terrain/hill-of-hills-placement-affordance.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -438,6 +443,13 @@ function drawMaterialTransitionEdge(
   if (style.fillRgb && style.fillAlpha > 0) {
     drawTransitionMotifClusters(style, center, tangent, normal, length, cross, normalSide, jitter);
   }
+
+  drawPlacementAffordanceGlyphs(
+    hillPlacementAffordanceAnchorsFor(placementAffordanceInput(currentBuffer, fromIndex, toIndex, descriptor, axis)),
+    center,
+    tangent,
+    normal
+  );
 }
 
 function materialTransitionDescriptor(
@@ -470,6 +482,156 @@ function transitionFragmentStyle(
     intensity: descriptor.intensity,
     averageColor: averageColor(colorAt(buffer, fromIndex), colorAt(buffer, toIndex))
   });
+}
+
+function placementAffordanceInput(
+  buffer: HillOfHillsTerrainBuffer,
+  fromIndex: number,
+  toIndex: number,
+  descriptor: HillMaterialTransitionDescriptor,
+  axis: 'x' | 'z'
+) {
+  const domain = transitionDomainVectors(buffer, fromIndex, toIndex, axis);
+  return {
+    law: descriptor.law,
+    intensity: descriptor.intensity,
+    seedKey: descriptor.seedKey,
+    edgeKind: strongerMaterialEdgeAt(buffer, fromIndex, toIndex),
+    anchor: strongerSurfaceAnchorAt(buffer, fromIndex, toIndex),
+    midpoint: domain.midpoint,
+    tangent: domain.tangent,
+    normal: domain.normal,
+    wetness: Math.max(metricAt(buffer, fromIndex, 'wetness'), metricAt(buffer, toIndex, 'wetness')),
+    growth: Math.max(metricAt(buffer, fromIndex, 'growthTint'), metricAt(buffer, toIndex, 'growthTint')),
+    routePressure: Math.max(metricAt(buffer, fromIndex, 'routePressure'), metricAt(buffer, toIndex, 'routePressure')),
+    slope: Math.max(metricAt(buffer, fromIndex, 'slope'), metricAt(buffer, toIndex, 'slope'))
+  };
+}
+
+function transitionDomainVectors(
+  buffer: HillOfHillsTerrainBuffer,
+  fromIndex: number,
+  toIndex: number,
+  axis: 'x' | 'z'
+): { midpoint: HillPlacementVec2; tangent: HillPlacementVec2; normal: HillPlacementVec2 } {
+  const fromOffset = fromIndex * 3;
+  const toOffset = toIndex * 3;
+  const from = {
+    x: buffer.positions[fromOffset],
+    z: buffer.positions[fromOffset + 2]
+  };
+  const to = {
+    x: buffer.positions[toOffset],
+    z: buffer.positions[toOffset + 2]
+  };
+  const normal = normalizeDomain2d({
+    x: to.x - from.x,
+    z: to.z - from.z
+  });
+  const tangent = axis === 'x' ? { x: -normal.z, z: normal.x } : { x: normal.z, z: -normal.x };
+  return {
+    midpoint: {
+      x: (from.x + to.x) * 0.5,
+      z: (from.z + to.z) * 0.5
+    },
+    tangent,
+    normal
+  };
+}
+
+function drawPlacementAffordanceGlyphs(
+  anchors: readonly HillPlacementAffordanceAnchor[],
+  center: { x: number; y: number },
+  tangent: { x: number; y: number },
+  normal: { x: number; y: number }
+): void {
+  if (anchors.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  for (const anchor of anchors) {
+    const point = {
+      x: center.x + tangent.x * anchor.localOffset.along * 9 + normal.x * anchor.localOffset.cross * 9,
+      y: center.y + tangent.y * anchor.localOffset.along * 9 + normal.y * anchor.localOffset.cross * 9
+    };
+    drawPlacementAffordanceGlyph(anchor, point, tangent, normal);
+  }
+  ctx.restore();
+}
+
+function drawPlacementAffordanceGlyph(
+  anchor: HillPlacementAffordanceAnchor,
+  point: { x: number; y: number },
+  tangent: { x: number; y: number },
+  normal: { x: number; y: number }
+): void {
+  const radius = 1.15 + anchor.scale * 1.4;
+  const alpha = 0.1 + anchor.strength * 0.25;
+
+  switch (anchor.family) {
+    case 'vegetation':
+      ctx.fillStyle = rgba([28, 112, 54], alpha);
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      if (anchor.kind === 'edge-grass' || anchor.kind === 'root-clump') {
+        ctx.strokeStyle = rgba([58, 150, 72], alpha * 0.95);
+        ctx.lineWidth = 0.75 + anchor.scale * 0.45;
+        ctx.beginPath();
+        ctx.moveTo(point.x - tangent.x * radius, point.y - tangent.y * radius);
+        ctx.lineTo(point.x + normal.x * radius * 1.2, point.y + normal.y * radius * 1.2);
+        ctx.lineTo(point.x + tangent.x * radius, point.y + tangent.y * radius);
+        ctx.stroke();
+      }
+      break;
+    case 'wet-bank':
+      ctx.strokeStyle = rgba([31, 53, 86], alpha);
+      ctx.lineWidth = 1 + anchor.scale * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(point.x - tangent.x * radius * 1.4, point.y - tangent.y * radius * 1.4);
+      ctx.lineTo(point.x + tangent.x * radius * 1.4, point.y + tangent.y * radius * 1.4);
+      ctx.stroke();
+      if (anchor.kind === 'reed-edge') {
+        ctx.strokeStyle = rgba([62, 129, 74], alpha * 0.9);
+        ctx.beginPath();
+        ctx.moveTo(point.x, point.y);
+        ctx.lineTo(point.x + normal.x * radius * 1.8, point.y + normal.y * radius * 1.8);
+        ctx.stroke();
+      }
+      break;
+    case 'route-wear':
+    case 'ground-fiber':
+      ctx.strokeStyle = rgba([218, 199, 126], alpha);
+      ctx.lineWidth = 0.75 + anchor.scale * 0.35;
+      ctx.beginPath();
+      ctx.moveTo(point.x - tangent.x * radius * 1.8, point.y - tangent.y * radius * 1.8);
+      ctx.lineTo(point.x + tangent.x * radius * 1.8, point.y + tangent.y * radius * 1.8);
+      ctx.stroke();
+      break;
+    case 'dry-break':
+      ctx.strokeStyle = rgba([176, 139, 79], alpha);
+      drawAngularPlacementGlyph(point, tangent, normal, radius);
+      break;
+    case 'stone-break':
+      ctx.strokeStyle = rgba([78, 78, 83], alpha);
+      drawAngularPlacementGlyph(point, tangent, normal, radius * 1.08);
+      break;
+  }
+}
+
+function drawAngularPlacementGlyph(
+  point: { x: number; y: number },
+  tangent: { x: number; y: number },
+  normal: { x: number; y: number },
+  radius: number
+): void {
+  ctx.lineWidth = 0.85;
+  ctx.beginPath();
+  ctx.moveTo(point.x - tangent.x * radius, point.y - tangent.y * radius);
+  ctx.lineTo(point.x + normal.x * radius * 0.75, point.y + normal.y * radius * 0.75);
+  ctx.lineTo(point.x + tangent.x * radius * 0.8, point.y + tangent.y * radius * 0.8);
+  ctx.stroke();
 }
 
 function drawTransitionMotifStroke(
@@ -606,6 +768,17 @@ function normalize2d(vector: { x: number; y: number }): { x: number; y: number }
   return {
     x: vector.x / length,
     y: vector.y / length
+  };
+}
+
+function normalizeDomain2d(vector: HillPlacementVec2): HillPlacementVec2 {
+  const length = Math.hypot(vector.x, vector.z);
+  if (length < 0.001) {
+    return { x: 1, z: 0 };
+  }
+  return {
+    x: vector.x / length,
+    z: vector.z / length
   };
 }
 
