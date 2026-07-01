@@ -148,7 +148,9 @@ export type HandSurfaceReport = {
       coordinateSpace: string | null;
       projection: {
         mirrorX: boolean;
+        mirrorZ: boolean;
         reason: 'align_mano_mesh_to_mirrored_operator_webcam';
+        viewAxisReason: 'align_mano_depth_to_operator_webcam_view_axis';
       };
       vertices: Vec3[];
       faces: number[][];
@@ -720,6 +722,7 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
     `webcam: ${report.webcam.status} frame=${report.webcam.frameId}`,
     `surface: ${report.surfaceFrame.status} landmarks=${report.surfaceFrame.landmarks2d.length}`,
     `mesh: ${report.surfaceFrame.mesh.status} vertices=${report.surfaceFrame.mesh.vertices.length} faces=${report.surfaceFrame.mesh.faces.length}`,
+    `projection: mirrorX=${report.surfaceFrame.mesh.projection.mirrorX} mirrorZ=${report.surfaceFrame.mesh.projection.mirrorZ}`,
     `body: ${report.attachments.some((attachment) => attachment.bodyVisual?.kind === 'proxy_schnoz_sphere') ? 'proxy_schnoz_sphere proxy_body_visual_only' : 'flat_placeholder'}`,
     `moge: ${report.moge.status}`,
     ...downgradeText.slice(0, 8),
@@ -804,21 +807,22 @@ function normalizeManoSurface(value: unknown): HandSurfaceReport['surfaceFrame']
     return {
       status: 'missing',
       coordinateSpace: null,
-      projection: { mirrorX: true, reason: 'align_mano_mesh_to_mirrored_operator_webcam' },
+      projection: manoProjectionTruth(),
       vertices: [],
       faces: [],
       projected2d: [],
     };
   }
   const candidate = value as ManoSurface;
-  const vertices = validVec3List(candidate.vertices);
+  const rawVertices = validVec3List(candidate.vertices);
+  const vertices = mirrorViewAxisVertices(rawVertices);
   const faces = validFaceList(candidate.faces, vertices.length);
   const coordinateSpace = typeof candidate.coordinate_space === 'string' ? candidate.coordinate_space : null;
   if (!vertices.length || !faces.length) {
     return {
       status: 'missing',
       coordinateSpace,
-      projection: { mirrorX: true, reason: 'align_mano_mesh_to_mirrored_operator_webcam' },
+      projection: manoProjectionTruth(),
       vertices,
       faces,
       projected2d: [],
@@ -827,11 +831,28 @@ function normalizeManoSurface(value: unknown): HandSurfaceReport['surfaceFrame']
   return {
     status: 'valid',
     coordinateSpace,
-    projection: { mirrorX: true, reason: 'align_mano_mesh_to_mirrored_operator_webcam' },
+    projection: manoProjectionTruth(),
     vertices,
     faces,
     projected2d: projectMeshVertices(vertices),
   };
+}
+
+function manoProjectionTruth(): HandSurfaceReport['surfaceFrame']['mesh']['projection'] {
+  return {
+    mirrorX: true,
+    mirrorZ: true,
+    reason: 'align_mano_mesh_to_mirrored_operator_webcam',
+    viewAxisReason: 'align_mano_depth_to_operator_webcam_view_axis',
+  };
+}
+
+function mirrorViewAxisVertices(vertices: Vec3[]): Vec3[] {
+  return vertices.map((vertex) => ({
+    x: vertex.x,
+    y: vertex.y,
+    z: roundForReport(-vertex.z),
+  }));
 }
 
 function validFaceList(value: unknown, vertexCount: number): number[][] {

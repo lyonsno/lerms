@@ -817,6 +817,7 @@ function drawReceipt(report: HandSurfaceReport, width: number, height: number): 
     `webcam ${report.webcam.status}`,
     `surface ${report.surfaceFrame.status} landmarks ${report.surfaceFrame.landmarks2d.length}`,
     `mesh ${report.surfaceFrame.mesh.status} faces ${report.surfaceFrame.mesh.faces.length}`,
+    `projection mirrorX ${report.surfaceFrame.mesh.projection.mirrorX} mirrorZ ${report.surfaceFrame.mesh.projection.mirrorZ}`,
     report.attachments.some((attachment) => attachment.bodyVisual?.kind === 'proxy_schnoz_sphere')
       ? 'body proxy_schnoz_sphere downgrade proxy_body_visual_only'
       : 'body flat_placeholder',
