@@ -267,21 +267,21 @@ export function buildGloveWellBrowserSmokeState({
     return degraded({ ...prior, source: sourceBase }, advancedGoins, endpoint, 'synthetic_fixture', 'synthetic', ['kaminos_event_cache_synthetic_webcam'], 'Kaminos event webcam frame is synthetic or not visible');
   }
 
-  const landmarks = event.landmarks_2d ?? [];
-  if (landmarks.length < 21) {
+  const sourceLandmarks = event.landmarks_2d ?? [];
+  if (sourceLandmarks.length < 21) {
     return degraded({ ...prior, source: sourceBase }, advancedGoins, endpoint, 'invalid', 'invalid', ['kaminos_event_cache_missing_landmarks'], 'Kaminos event has fewer than 21 landmarks');
   }
 
+  const landmarks = sourceLandmarks.map((point) => mirrorOperatorX(point));
   const wrist = landmarks[0];
   const thumbTip = landmarks[4];
   const indexTip = landmarks[8];
   const pinkyBase = landmarks[17];
   const pinkyTip = landmarks[20];
-  const palmCenter = event.palm_center ?? average([landmarks[5], landmarks[9], landmarks[13], landmarks[17]]);
+  const palmCenter = mirrorOperatorX(event.palm_center ?? average([sourceLandmarks[5], sourceLandmarks[9], sourceLandmarks[13], sourceLandmarks[17]]));
   const pinchDistance = distance(thumbTip, indexTip);
   const pinchActive = pinchDistance <= 0.07;
-  const rawPinkyDirection = subtract(pinkyTip, pinkyBase);
-  const pinkyDirection = normalize({ x: -rawPinkyDirection.x, y: rawPinkyDirection.y });
+  const pinkyDirection = normalize(subtract(pinkyTip, pinkyBase));
   const pinkyLength = distance(pinkyTip, pinkyBase);
   const referenceLength = Math.max(0.08, distance(wrist, landmarks[9]));
   const pinkyActive = pinkyLength / referenceLength >= 0.7;
@@ -550,6 +550,13 @@ function subtract(a: BrowserSmokePoint, b: BrowserSmokePoint): BrowserSmokePoint
   return {
     x: a.x - b.x,
     y: a.y - b.y
+  };
+}
+
+function mirrorOperatorX(point: BrowserSmokePoint): BrowserSmokePoint {
+  return {
+    x: round3(1 - point.x),
+    y: round3(point.y)
   };
 }
 

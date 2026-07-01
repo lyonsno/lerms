@@ -78,10 +78,16 @@ assert.equal(state.statusCode, 'tracking');
 assert.equal(state.releaseCount, 0);
 assert.equal(state.source.sequence, 31);
 assert.equal(state.source.frameId, 'browser-smoke-prime-31');
+assert.deepEqual(state.hand.palmCenter, { x: 0.57, y: 0.68 }, 'palm is mirrored into operator-visible webcam space');
+assert.deepEqual(state.hand.thumbTip, { x: 0.588, y: 0.614 }, 'thumb tip is mirrored for display/tracking alignment');
+assert.deepEqual(state.hand.indexTip, { x: 0.565, y: 0.606 }, 'index tip is mirrored for display/tracking alignment');
+assert.deepEqual(state.goin.position, state.hand.palmCenter, 'held goin follows the mirrored palm position');
 assert.equal(state.handSkeleton.visible, true);
 assert.equal(state.handSkeleton.schema, 'lerms.glove-well-hand-skeleton-overlay.v0');
 assert.equal(state.handSkeleton.landmarkCount, 21);
 assert.equal(state.handSkeleton.segments.length >= 20, true, 'skeleton overlay exposes full hand bone segments');
+assert.deepEqual(state.handSkeleton.landmarks[0], { x: 0.57, y: 0.86 }, 'skeleton wrist is mirrored into operator-visible space');
+assert.deepEqual(state.handSkeleton.landmarks[20], { x: 0.33, y: 0.595 }, 'skeleton pinky tip is mirrored into operator-visible space');
 assert.equal(state.handSkeleton.debugPoints.some((point) => point.id === 'thumb_tip' && point.landmarkIndex === 4), true);
 assert.equal(state.handSkeleton.debugPoints.some((point) => point.id === 'index_tip' && point.landmarkIndex === 8), true);
 assert.equal(state.handSkeleton.debugPoints.some((point) => point.id === 'pinky_base' && point.landmarkIndex === 17), true);
@@ -94,6 +100,7 @@ assert.equal(state.aim.active, true);
 assert.equal(state.aim.arcSamples.length, 7);
 assert.ok(state.aim.direction.x < 0, 'operator-visible aim flips mirrored source x so right-hand fixture points left on canvas');
 assert.ok(state.aim.direction.y < 0);
+assert.deepEqual(state.aim.origin, { x: 0.33, y: 0.595 }, 'aim dots originate at the mirrored pinky tip');
 assert.deepEqual(state.handSkeleton.aimVector, {
   origin: state.aim.origin,
   direction: state.aim.direction
