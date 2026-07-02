@@ -99,7 +99,7 @@ export type ComposeHandSurfaceOptions = {
   effectiveEndpoint?: string;
 };
 
-const manoViewAxisParallax = Object.freeze({ x: 0.18, y: -0.04 });
+const manoViewAxisParallax = Object.freeze({ x: -0.18, y: 0.04 });
 
 export type HandSurfaceReport = {
   schema: 'lerms.hand-surface-lerm-witness.v0';
