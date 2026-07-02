@@ -1,6 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+import {
+  DEFAULT_GLOVE_WELL_LIVE_EVENT_ENDPOINT,
+  GLOVE_WELL_LIVE_HOST_PACKET_ROUTE,
+  createGloveWellLiveHostPacketStream,
+  type GloveWellLiveHostPacketStream
+} from './src/glove-well-live-host-packet-stream.ts';
 
 interface CaptureStatus {
   state: 'idle' | 'running' | 'complete' | 'failed';
@@ -33,9 +39,10 @@ let captureStatus: CaptureStatus = {
   completedAtIso: null,
   exitCode: null
 };
+const liveHostPacketStreams = new Map<string, GloveWellLiveHostPacketStream>();
 
 export default defineConfig({
-  plugins: [lermsGloveWellCapturePlugin()],
+  plugins: [lermsGloveWellCapturePlugin(), lermsGloveWellLiveHostPacketPlugin()],
   server: {
     proxy: {
       '/kaminos-hand-control-sidecar-event': {
@@ -67,6 +74,81 @@ function lermsGloveWellCapturePlugin() {
       });
     }
   };
+}
+
+function lermsGloveWellLiveHostPacketPlugin() {
+  return {
+    name: 'lerms-glove-well-live-host-packet',
+    configureServer(server) {
+      server.middlewares.use('/__lerms/glove-well-host-packet/live', (req, res) => {
+        setCorsHeaders(res);
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+        if (req.method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'live Glove Well host packet requires GET' });
+          return;
+        }
+
+        void buildLiveHostPacketFromRequest(req)
+          .then((packet) => sendJson(res, 200, packet))
+          .catch((error) => sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) }));
+      });
+    }
+  };
+}
+
+async function buildLiveHostPacketFromRequest(req: { headers: Record<string, string | string[] | undefined>; url?: string | undefined }): Promise<unknown> {
+  const requestUrl = liveHostPacketRequestUrl(req);
+  const eventEndpoint = requestUrl.searchParams.get('eventUrl') || DEFAULT_GLOVE_WELL_LIVE_EVENT_ENDPOINT;
+  const maxCacheAgeMs = positiveNumberFromString(requestUrl.searchParams.get('maxCacheAgeMs'));
+  const stream = liveHostPacketStreams.get(eventEndpoint) ?? createAndStoreLiveHostPacketStream(eventEndpoint, requestUrl, maxCacheAgeMs);
+  const fetchUrl = new URL(eventEndpoint);
+  const sequence = stream.lastSequence();
+  if (sequence !== null) {
+    fetchUrl.searchParams.set('after', String(sequence));
+  }
+
+  try {
+    const response = await fetch(fetchUrl, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return stream.ingestCache(await response.json(), {
+      nowMs: Date.now(),
+      generatedAtMs: Date.now(),
+      sourceUrl: requestUrl.href
+    });
+  } catch (error) {
+    return stream.ingestFetchFailure(error, {
+      nowMs: Date.now(),
+      generatedAtMs: Date.now(),
+      sourceUrl: requestUrl.href
+    });
+  }
+}
+
+function liveHostPacketRequestUrl(req: { headers: Record<string, string | string[] | undefined>; url?: string | undefined }): URL {
+  const host = headerValue(req.headers.host) ?? '127.0.0.1';
+  const mountedUrl = req.url ?? '';
+  const routeUrl = mountedUrl.startsWith('?')
+    ? `${GLOVE_WELL_LIVE_HOST_PACKET_ROUTE}${mountedUrl}`
+    : mountedUrl === '/' || mountedUrl === ''
+      ? GLOVE_WELL_LIVE_HOST_PACKET_ROUTE
+      : `${GLOVE_WELL_LIVE_HOST_PACKET_ROUTE}${mountedUrl}`;
+  return new URL(routeUrl, `http://${host}`);
+}
+
+function createAndStoreLiveHostPacketStream(eventEndpoint: string, requestUrl: URL, maxCacheAgeMs: number | null): GloveWellLiveHostPacketStream {
+  const stream = createGloveWellLiveHostPacketStream({
+    eventEndpoint,
+    sourceUrl: requestUrl.href,
+    maxCacheAgeMs
+  });
+  liveHostPacketStreams.set(eventEndpoint, stream);
+  return stream;
 }
 
 function startCapture(body: CaptureRequestBody): CaptureStatus {
@@ -171,7 +253,26 @@ function readJsonBody(req: NodeJS.ReadableStream): Promise<CaptureRequestBody> {
 function sendJson(res: NodeJS.WritableStream & { statusCode?: number; setHeader?: (name: string, value: string) => void }, statusCode: number, payload: unknown): void {
   res.statusCode = statusCode;
   res.setHeader?.('content-type', 'application/json');
+  setCorsHeaders(res);
   res.end(JSON.stringify(payload));
+}
+
+function setCorsHeaders(res: { setHeader?: (name: string, value: string) => void }): void {
+  res.setHeader?.('Access-Control-Allow-Origin', '*');
+  res.setHeader?.('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader?.('Access-Control-Allow-Headers', 'content-type');
+  res.setHeader?.('Cache-Control', 'no-store');
+}
+
+function headerValue(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+function positiveNumberFromString(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function stringOption(value: unknown, fallback: string): string {
