@@ -99,6 +99,8 @@ export type ComposeHandSurfaceOptions = {
   effectiveEndpoint?: string;
 };
 
+const manoViewAxisParallax = Object.freeze({ x: 0.18, y: -0.04 });
+
 export type HandSurfaceReport = {
   schema: 'lerms.hand-surface-lerm-witness.v0';
   authority: WitnessAuthority;
@@ -151,6 +153,8 @@ export type HandSurfaceReport = {
         mirrorZ: boolean;
         reason: 'align_mano_mesh_to_mirrored_operator_webcam';
         viewAxisReason: 'align_mano_depth_to_operator_webcam_view_axis';
+        viewAxisProjection: 'mirrored_z_parallax';
+        viewAxisParallax: { x: number; y: number };
       };
       vertices: Vec3[];
       faces: number[][];
@@ -722,7 +726,7 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
     `webcam: ${report.webcam.status} frame=${report.webcam.frameId}`,
     `surface: ${report.surfaceFrame.status} landmarks=${report.surfaceFrame.landmarks2d.length}`,
     `mesh: ${report.surfaceFrame.mesh.status} vertices=${report.surfaceFrame.mesh.vertices.length} faces=${report.surfaceFrame.mesh.faces.length}`,
-    `projection: mirrorX=${report.surfaceFrame.mesh.projection.mirrorX} mirrorZ=${report.surfaceFrame.mesh.projection.mirrorZ}`,
+    `proj: mx=${report.surfaceFrame.mesh.projection.mirrorX} mz=${report.surfaceFrame.mesh.projection.mirrorZ} zp=${report.surfaceFrame.mesh.projection.viewAxisProjection === 'mirrored_z_parallax'}`,
     `body: ${report.attachments.some((attachment) => attachment.bodyVisual?.kind === 'proxy_schnoz_sphere') ? 'proxy_schnoz_sphere proxy_body_visual_only' : 'flat_placeholder'}`,
     `moge: ${report.moge.status}`,
     ...downgradeText.slice(0, 8),
@@ -844,6 +848,8 @@ function manoProjectionTruth(): HandSurfaceReport['surfaceFrame']['mesh']['proje
     mirrorZ: true,
     reason: 'align_mano_mesh_to_mirrored_operator_webcam',
     viewAxisReason: 'align_mano_depth_to_operator_webcam_view_axis',
+    viewAxisProjection: 'mirrored_z_parallax',
+    viewAxisParallax: manoViewAxisParallax,
   };
 }
 
@@ -867,16 +873,26 @@ function validFaceList(value: unknown, vertexCount: number): number[][] {
 function projectMeshVertices(vertices: Vec3[]): Vec2[] {
   const xs = vertices.map((vertex) => vertex.x);
   const ys = vertices.map((vertex) => vertex.y);
+  const zs = vertices.map((vertex) => vertex.z);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
+  const minZ = Math.min(...zs);
+  const maxZ = Math.max(...zs);
   const spanX = Math.max(1e-6, maxX - minX);
   const spanY = Math.max(1e-6, maxY - minY);
-  return vertices.map((vertex) => ({
-    x: roundForReport(1 - ((vertex.x - minX) / spanX)),
-    y: roundForReport((vertex.y - minY) / spanY),
-  }));
+  const spanZ = Math.max(1e-6, maxZ - minZ);
+  const midZ = (minZ + maxZ) / 2;
+  return vertices.map((vertex) => {
+    const zUnit = (vertex.z - midZ) / spanZ;
+    const x = 1 - ((vertex.x - minX) / spanX) + zUnit * manoViewAxisParallax.x;
+    const y = ((vertex.y - minY) / spanY) + zUnit * manoViewAxisParallax.y;
+    return {
+      x: roundForReport(x),
+      y: roundForReport(y),
+    };
+  });
 }
 
 function webcamTruthStatus(webcam: WebcamTruth): HandSurfaceReport['webcam']['status'] {

@@ -244,8 +244,10 @@ test('actual WiLoR MANO mesh supports barycentric lerms on mesh triangles', () =
   assert.equal(report.surfaceFrame.mesh.projection.mirrorZ, true);
   assert.equal(report.surfaceFrame.mesh.projection.reason, 'align_mano_mesh_to_mirrored_operator_webcam');
   assert.equal(report.surfaceFrame.mesh.projection.viewAxisReason, 'align_mano_depth_to_operator_webcam_view_axis');
-  assert.equal(report.attachments[0].screen.x, 0.25);
-  assert.equal(report.attachments[0].screen.y, 0.75);
+  assert.equal(report.surfaceFrame.mesh.projection.viewAxisProjection, 'mirrored_z_parallax');
+  assert.deepEqual(report.surfaceFrame.mesh.projection.viewAxisParallax, { x: 0.18, y: -0.04 });
+  assert.equal(report.attachments[0].screen.x, 0.205);
+  assert.equal(report.attachments[0].screen.y, 0.76);
   assert.equal(report.attachments[0].depth, -0.225);
 });
 
@@ -264,7 +266,7 @@ test('mesh lerm attachments expose provisional proxy schnoz bodies oriented by t
   assert.equal(bodyVisual.provisional, true);
   assert.equal(bodyVisual.orientationSource, 'mano_triangle_frame');
   assert.equal(bodyVisual.source, 'kaminos.origin-main.3a373d5.makeLermsPreviewActorVisualMesh');
-  assert.deepEqual(bodyVisual.heading2d, { x: 0, y: 1 });
+  assert.deepEqual(bodyVisual.heading2d, { x: -0.116093, y: 0.993238 });
   assert.ok(bodyVisual.normal && bodyVisual.normal.z > 0.9, 'expected outward-ish triangle normal');
 });
 
@@ -293,6 +295,8 @@ test('hand-surface host packet exports source-owned MANO anchors and proxy body 
   assert.equal(packet.surfaceAnchorFrame.projection.mirrorX, true);
   assert.equal(packet.surfaceAnchorFrame.projection.mirrorZ, true);
   assert.equal(packet.surfaceAnchorFrame.projection.viewAxisReason, 'align_mano_depth_to_operator_webcam_view_axis');
+  assert.equal(packet.surfaceAnchorFrame.projection.viewAxisProjection, 'mirrored_z_parallax');
+  assert.deepEqual(packet.surfaceAnchorFrame.projection.viewAxisParallax, { x: 0.18, y: -0.04 });
   assert.equal(packet.bodyStatus.kind, 'proxy_schnoz_sphere');
   assert.equal(packet.bodyStatus.downgrade, 'proxy_body_visual_only');
   assert.equal(packet.bodyStatus.finalAssets, false);
@@ -324,7 +328,7 @@ test('witness svg renders mesh lerms as proxy schnoz spheres with downgrade trut
   assert.match(svg, /proxy_body_visual_only/);
   assert.match(svg, /schnoz-nub/);
   assert.match(svg, /orientationSource mano_triangle_frame/);
-  assert.match(svg, /projection: mirrorX=true mirrorZ=true/);
+  assert.match(svg, /proj: mx=true mz=true zp=true/);
 });
 
 test('hand mesh mode rejects landmark-only packets instead of silently falling back to stickers', () => {
