@@ -1174,7 +1174,6 @@ function scoreTrailCandidates(params: HillOfHillsTerrainParams): TrailCandidateS
       const centerFloor = 1 - smoothstep(halfFloor * 0.2, params.channelRadius * 0.76, lateral);
       const traversable = 1 - smoothstep(0.9, 2.2, slope);
       const crownPull = 1 - clamp(Math.abs(z - params.crownZ) / Math.max(0.001, params.length * 0.5), 0, 1);
-      const fixedGutterPenalty = Math.exp(-Math.pow((lateral - halfFloor * 1.28) / Math.max(0.35, halfFloor * 0.33), 2));
       const crossSlopeSignal = clamp(Math.abs(topology.flowDirection[0]) * 0.06 + slope * 0.03, 0, 0.12);
       const regionBias =
         region === 'approach'
@@ -1185,9 +1184,7 @@ function scoreTrailCandidates(params: HillOfHillsTerrainParams): TrailCandidateS
               ? 0.05
               : region === 'crown'
                 ? 0.04
-                : region === 'gutter'
-                  ? -0.12
-                  : -0.22;
+                : -0.22;
       const score = clamp(
         topology.routePressure * 0.25 +
           topology.valleyStrength * 0.24 +
@@ -1197,8 +1194,7 @@ function scoreTrailCandidates(params: HillOfHillsTerrainParams): TrailCandidateS
           crownPull * 0.05 +
           topology.ditchPotential * 0.04 +
           crossSlopeSignal +
-          regionBias -
-          fixedGutterPenalty * 0.12,
+          regionBias,
         0,
         1
       );
@@ -1849,7 +1845,6 @@ function topologyAt(
   const uphill = (z + params.length * 0.5) / params.length;
   const centerRoute = 1 - smoothstep(halfFloor * 0.42, halfFloor * 1.08, lateral);
   const crownPull = 1 - clamp(Math.abs(z - params.crownZ) / Math.max(0.001, params.length * 0.48), 0, 1);
-  const gutterBand = Math.exp(-Math.pow((lateral - halfFloor * 1.28) / Math.max(0.35, halfFloor * 0.33), 2));
   const valleyStrength = clamp(
     heightParts.valleys / Math.max(0.001, params.valleyHeight * 1.9) +
       phaseInfluence.sideDitchAmount * 0.2 +
@@ -1858,13 +1853,13 @@ function topologyAt(
     1
   );
   const ridgeStrength = clamp(Math.max(heightParts.hills, heightParts.wall * 0.42) / Math.max(0.001, params.hillHeight * 1.8 + params.wallHeight * 0.35), 0, 1);
-  const flowAccumulation = clamp(gutterBand * 0.66 + valleyStrength * 0.52 + uphill * 0.18 + phaseInfluence.sideDitchAmount * 0.32, 0, 1);
+  const flowAccumulation = clamp(valleyStrength * 0.58 + uphill * 0.18 + phaseInfluence.sideDitchAmount * 0.42 + phaseInfluence.trailAmount * 0.08, 0, 1);
   const routePressure = clamp(
     centerRoute * 0.58 + crownPull * 0.24 + flowAccumulation * 0.2 + phaseInfluence.trailAmount * 0.42 + phaseInfluence.sideDitchAmount * 0.08 - slope * 0.12,
     0,
     1
   );
-  const ditchPotential = clamp(gutterBand * 0.72 + valleyStrength * 0.48 + phaseInfluence.sideDitchAmount * 0.58 + (region === 'gutter' ? 0.18 : 0), 0, 1);
+  const ditchPotential = clamp(valleyStrength * 0.56 + flowAccumulation * 0.18 + phaseInfluence.sideDitchAmount * 0.64, 0, 1);
   const growthPotential = clamp(ridgeStrength * 0.46 + slope * 0.2 + crownPull * 0.12 - ditchPotential * 0.2, 0, 1);
   const flowDirection = normalize([dx, 0.18 + flowAccumulation * 0.22, dz + 0.28]);
 
@@ -1906,7 +1901,6 @@ function proxyMaterialFor(region: TerrainRegion, topology: HillOfHillsTopology):
 function proxyMaterialKindFor(region: TerrainRegion, topology: HillOfHillsTopology): HillOfHillsProxyMaterialKind {
   if (region === 'crown') return 'crown-warmth';
   if (topology.growthPotential > 0.54 && (region === 'slope' || region === 'rim')) return 'growth-lip';
-  if (region === 'gutter') return 'ditch-shadow';
   if (region === 'basin') {
     if (topology.ditchPotential > 0.76 && topology.flowAccumulation > 0.78) return 'basin-pool';
     if (topology.growthPotential > 0.28 || topology.routePressure > 0.42) return 'basin-meadow';
@@ -2057,8 +2051,7 @@ function stableHeightAt(params: HillOfHillsTerrainParams, x: number, z: number):
   const wallT = smoothstep(halfFloor, params.channelRadius, lateral);
   const cylindricalLift = 1 - Math.sqrt(Math.max(0, 1 - wallT * wallT));
   const wall = params.wallHeight * Math.pow(cylindricalLift, 0.8 / params.channelCurvature);
-  const gutterT = Math.exp(-Math.pow((lateral - halfFloor * 1.28) / Math.max(0.35, halfFloor * 0.33), 2));
-  const gutter = -0.26 * gutterT * (0.75 + 0.25 * Math.sin(z * 1.4));
+  const gutter = 0;
   const floorProtection = 1 - smoothstep(halfFloor * 0.45, halfFloor * 0.95, lateral);
   const hillFeatures = terrainFeatures(params, 'hill');
   const valleyFeatures = terrainFeatures(params, 'valley');
@@ -2141,10 +2134,6 @@ function classifyRegion(
 
   if (lateral > params.channelRadius * 0.88) {
     return 'rim';
-  }
-
-  if (lateral > halfFloor * 0.78 && lateral < params.channelRadius * 0.74 && heightParts.gutter < -0.12) {
-    return 'gutter';
   }
 
   if (heightParts.valleys > heightParts.hills + 0.28 && heightParts.height < heightParts.base + heightParts.wall + 0.06) {

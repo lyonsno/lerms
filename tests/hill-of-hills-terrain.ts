@@ -123,7 +123,7 @@ for (const x of [-1.25, -0.6, 0, 0.6, 1.25]) {
 }
 
 const regions = new Set(baseline.samples.map((terrainSample) => terrainSample.region));
-for (const region of ['approach', 'slope', 'basin', 'gutter', 'rim', 'crown'] as const) {
+for (const region of ['approach', 'slope', 'basin', 'rim', 'crown'] as const) {
   assert(regions.has(region), `terrain grid classifies ${region} samples`);
 }
 
@@ -180,15 +180,33 @@ assert(
   'ordinary basin terrain emits tuft/scuff anchors for procedural asset placement'
 );
 
-const gutterSamples = baseline.samples.filter((terrainSample) => terrainSample.region === 'gutter');
-assert(gutterSamples.some((terrainSample) => (terrainSample as any).topology?.ditchPotential > 0.55), 'gutters advertise ditch potential');
+const noValleyStableRails = createHillOfHillsTerrain({
+  seed: 83025,
+  gridResolutionX: 52,
+  gridResolutionZ: 68,
+  valleyHeight: 0,
+  valleyCount: 1,
+  ditchPhaseIntensity: 0,
+  trailPhaseIntensity: 0
+});
+const oldRailOffset = noValleyStableRails.params.floorWidth * 0.64;
+const oldRailZs = [-0.36, -0.24, -0.12, 0, 0.12, 0.24, 0.36].map((z) => z * noValleyStableRails.params.length);
+const oldFixedRailSamples = oldRailZs.flatMap((z) => [
+  sampleHillOfHillsTerrain(noValleyStableRails, -oldRailOffset, z),
+  sampleHillOfHillsTerrain(noValleyStableRails, oldRailOffset, z)
+]);
+assert(
+  oldFixedRailSamples.every(
+    (terrainSample) =>
+      terrainSample.region !== 'gutter' &&
+      terrainSample.proxyMaterial.kind !== 'ditch-shadow' &&
+      terrainSample.topology.ditchPotential < 0.58
+  ),
+  'stable terrain no longer installs two permanent side-gutter ditch rails'
+);
 assert(
   baseline.samples.some((terrainSample) => (terrainSample as any).topology?.growthPotential > 0.5),
   'terrain exposes growth/tree candidate zones'
-);
-assert(
-  baseline.samples.some((terrainSample) => (terrainSample as any).proxyMaterial?.kind === 'ditch-shadow'),
-  'proxy materials include ditch-shadow shader band'
 );
 assert(
   baseline.samples.some((terrainSample) => (terrainSample as any).proxyMaterial?.kind === 'growth-lip'),
@@ -391,6 +409,10 @@ const trailSamples = trailPhaseA.samples.filter((terrainSample) => terrainSample
 const sideDitchSamples = trailPhaseA.samples.filter((terrainSample) => terrainSample.phaseInfluence.sideDitchAmount > 0.25);
 assert(trailSamples.length > 0, 'trail phase marks pathlike route samples');
 assert(sideDitchSamples.length > 0, 'trail phase marks side-ditch samples');
+assert(
+  sideDitchSamples.some((terrainSample) => terrainSample.proxyMaterial.kind === 'ditch-shadow' || terrainSample.proxyMaterial.blends['ditch-shadow']),
+  'active trail side ditches expose ditch-shadow shader material'
+);
 assert(
   trailSamples.some((terrainSample) => terrainSample.support.motionClass === 'phase_morph'),
   'active trail samples expose phase-morph support motion'
@@ -595,17 +617,17 @@ assert((baseline.witness.supportFrame.shockClassCounts.none ?? 0) === baseline.s
 assert(typeof baseline.witness.supportFrame.supportFrameChecksum === 'string', 'support frame exposes checksum for fluid witness freshness');
 assert((baseline.witness as any).topologyRanges.routePressure.max > 0.45, 'witness records route pressure range');
 assert((baseline.witness as any).topologyRanges.growthPotential.max > 0.5, 'witness records growth candidate range');
-assert((baseline.witness as any).proxyMaterialCounts['ditch-shadow'] > 0, 'witness counts ditch-shadow proxy material');
 assert(typeof (baseline.witness as any).surfaceDetailChecksum === 'string', 'witness records surface detail checksum');
 assert((baseline.witness as any).surfaceDetailCounts['slope-striation'] > 0, 'witness counts slope striation detail');
-assert((baseline.witness as any).surfaceDetailCounts['damp-edge'] > 0, 'witness counts damp edge detail');
 assert((baseline.witness as any).surfaceDetailCounts['growth-bud'] > 0, 'witness counts growth bud detail');
 assert((trailPhaseA.witness as any).surfaceDetailCounts['trail-wear'] > 0, 'trail phase witness counts trail-worn detail');
+assert((trailPhaseA.witness as any).surfaceDetailCounts['damp-edge'] > 0, 'active trail witness counts damp edge detail');
+assert((trailPhaseA.witness as any).proxyMaterialCounts['ditch-shadow'] > 0, 'active trail witness counts ditch-shadow proxy material');
 assert(typeof (baseline.witness as any).materialEdgeChecksum === 'string', 'witness records material edge checksum');
-assert((baseline.witness as any).materialEdgeCounts['damp-rim'] > 0, 'witness counts damp rim material edges');
 assert((baseline.witness as any).materialEdgeCounts['growth-cluster'] > 0, 'witness counts growth cluster material edges');
-assert((baseline.witness as any).surfaceAnchorCounts['wet-rim'] > 0, 'witness counts wet rim surface anchors');
 assert((baseline.witness as any).surfaceAnchorCounts['growth-cluster'] > 0, 'witness counts growth cluster surface anchors');
+assert((trailPhaseA.witness as any).materialEdgeCounts['damp-rim'] > 0, 'active trail witness counts damp rim material edges');
+assert((trailPhaseA.witness as any).surfaceAnchorCounts['wet-rim'] > 0, 'active trail witness counts wet rim surface anchors');
 assert((trailPhaseA.witness as any).materialEdgeCounts['route-wear'] > 0, 'trail phase witness counts route-wear material edges');
 assert((trailPhaseA.witness as any).surfaceAnchorCounts['trail-accent'] > 0, 'trail phase witness counts trail accent anchors');
 assert(
