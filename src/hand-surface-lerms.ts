@@ -155,6 +155,7 @@ export type HandSurfaceReport = {
         viewAxisReason: 'align_mano_depth_to_operator_webcam_view_axis';
         viewAxisProjection: 'mirrored_z_parallax';
         viewAxisParallax: { x: number; y: number };
+        postProjectionFlipX: boolean;
       };
       vertices: Vec3[];
       faces: number[][];
@@ -726,7 +727,7 @@ export function renderHandSurfaceWitnessSvg(report: HandSurfaceReport, size: { w
     `webcam: ${report.webcam.status} frame=${report.webcam.frameId}`,
     `surface: ${report.surfaceFrame.status} landmarks=${report.surfaceFrame.landmarks2d.length}`,
     `mesh: ${report.surfaceFrame.mesh.status} vertices=${report.surfaceFrame.mesh.vertices.length} faces=${report.surfaceFrame.mesh.faces.length}`,
-    `proj: mx=${report.surfaceFrame.mesh.projection.mirrorX} mz=${report.surfaceFrame.mesh.projection.mirrorZ} zp=${report.surfaceFrame.mesh.projection.viewAxisProjection === 'mirrored_z_parallax'}`,
+    `proj mx/mz/zp/ppx=${report.surfaceFrame.mesh.projection.mirrorX ? 1 : 0}/${report.surfaceFrame.mesh.projection.mirrorZ ? 1 : 0}/${report.surfaceFrame.mesh.projection.viewAxisProjection === 'mirrored_z_parallax' ? 1 : 0}/${report.surfaceFrame.mesh.projection.postProjectionFlipX ? 1 : 0}`,
     `body: ${report.attachments.some((attachment) => attachment.bodyVisual?.kind === 'proxy_schnoz_sphere') ? 'proxy_schnoz_sphere proxy_body_visual_only' : 'flat_placeholder'}`,
     `moge: ${report.moge.status}`,
     ...downgradeText.slice(0, 8),
@@ -850,6 +851,7 @@ function manoProjectionTruth(): HandSurfaceReport['surfaceFrame']['mesh']['proje
     viewAxisReason: 'align_mano_depth_to_operator_webcam_view_axis',
     viewAxisProjection: 'mirrored_z_parallax',
     viewAxisParallax: manoViewAxisParallax,
+    postProjectionFlipX: true,
   };
 }
 
@@ -886,7 +888,8 @@ function projectMeshVertices(vertices: Vec3[]): Vec2[] {
   const midZ = (minZ + maxZ) / 2;
   return vertices.map((vertex) => {
     const zUnit = (vertex.z - midZ) / spanZ;
-    const x = 1 - ((vertex.x - minX) / spanX) + zUnit * manoViewAxisParallax.x;
+    const xBeforePostFlip = 1 - ((vertex.x - minX) / spanX) + zUnit * manoViewAxisParallax.x;
+    const x = 1 - xBeforePostFlip;
     const y = ((vertex.y - minY) / spanY) + zUnit * manoViewAxisParallax.y;
     return {
       x: roundForReport(x),
