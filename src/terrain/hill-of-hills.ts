@@ -2058,16 +2058,15 @@ function stableHeightAt(params: HillOfHillsTerrainParams, x: number, z: number):
   const featureDistanceScale = params.distanceScale / params.featureSpacing;
   const hills = featureContribution(hillFeatures, x, z, featureDistanceScale);
   const valleys = featureContribution(valleyFeatures, x, z, featureDistanceScale);
-  const macroDamping = 1 - floorProtection * 0.58;
-  const valleyFloorDamping = 1 - floorProtection * 0.82;
+  const macroDamping = 1 - floorProtection * 0.44;
+  const valleyFloorDamping = 1 - floorProtection * 0.34;
   const textureAmplitude = 0.18 * (1 - params.textureDamping);
   const detailAmplitude = 0.1 * (1 - params.detailDamping);
   const detail =
     textureAmplitude * Math.sin((x * 1.55 + z * 0.42 + params.seed * 0.001) * params.textureScale) +
     detailAmplitude * Math.cos((x * 3.6 - z * 2.1 + params.seed * 0.002) * params.textureScale);
   const openFloor = base + wall + gutter + hills * macroDamping - valleys * valleyFloorDamping + detail;
-  const floorMinimum = base - 0.12 - Math.max(0, params.valleyHeight - 1.2) * 0.08;
-  const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum) : openFloor;
+  const height = openFloor;
 
   return {
     base,
@@ -2093,8 +2092,8 @@ function applyPhaseToStableHeightParts(
     phaseInfluence.sideDitchAmount * (0.18 + params.valleyHeight * 0.24 + params.wallHeight * 0.035) +
     phaseInfluence.trailAmount * (0.06 + params.valleyHeight * 0.05);
   const floorProtection = 1 - smoothstep(halfFloor * 0.45, halfFloor * 0.95, lateral);
-  const macroDamping = 1 - floorProtection * 0.58;
-  const valleyFloorDamping = 1 - floorProtection * 0.82;
+  const macroDamping = 1 - floorProtection * 0.44;
+  const valleyFloorDamping = 1 - floorProtection * 0.34;
   const openFloor =
     stableParts.base +
     stableParts.wall +
@@ -2103,8 +2102,7 @@ function applyPhaseToStableHeightParts(
     stableParts.valleys * valleyFloorDamping +
     stableParts.detail -
     phaseDitch;
-  const floorMinimum = stableParts.base - 0.12 - Math.max(0, params.valleyHeight - 1.2) * 0.08;
-  const height = lateral <= halfFloor * 0.9 ? Math.max(openFloor, floorMinimum - phaseDitch * 0.86) : openFloor;
+  const height = openFloor;
 
   return {
     base: stableParts.base,

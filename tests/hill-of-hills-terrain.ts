@@ -204,6 +204,61 @@ assert(
   ),
   'stable terrain no longer installs two permanent side-gutter ditch rails'
 );
+
+const floorWidthContinuityTerrain = createHillOfHillsTerrain({
+  seed: 70303,
+  gridResolutionX: 72,
+  gridResolutionZ: 92,
+  floorWidth: 5.1,
+  channelRadius: 5.8,
+  channelCurvature: 1.15,
+  wallHeight: 2.4,
+  hillCount: 5,
+  hillHeight: 0.36,
+  hillRadius: 1.2,
+  valleyCount: 36,
+  valleyHeight: 2.35,
+  valleyRadius: 1.65,
+  valleyVariance: 1.05,
+  distanceScale: 1.9,
+  featureSpacing: 0.78,
+  textureDamping: 0.2,
+  detailDamping: 0.16,
+  ditchPhaseIntensity: 0,
+  trailPhaseIntensity: 0
+});
+const floorShelfBoundary = floorWidthContinuityTerrain.params.floorWidth * 0.5 * 0.9;
+const shelfProbeZs = [-0.42, -0.32, -0.22, -0.12, -0.02, 0.08, 0.18, 0.28, 0.38].map(
+  (z) => z * floorWidthContinuityTerrain.params.length
+);
+const shelfBoundarySteps = shelfProbeZs.map((z) => {
+  const justInside = sampleHillOfHillsTerrain(floorWidthContinuityTerrain, floorShelfBoundary - 0.035, z);
+  const justOutside = sampleHillOfHillsTerrain(floorWidthContinuityTerrain, floorShelfBoundary + 0.035, z);
+  return Math.abs(justInside.height - justOutside.height);
+});
+const maxShelfBoundaryStep = Math.max(...shelfBoundarySteps);
+assert(
+  maxShelfBoundaryStep < 0.32,
+  `floor width changes should not install a hard lateral height shelf; max boundary step ${maxShelfBoundaryStep.toFixed(3)}`
+);
+
+const noValleyFloorBaseline = createHillOfHillsTerrain({
+  ...floorWidthContinuityTerrain.params,
+  valleyHeight: 0,
+  valleyCount: 1
+});
+const centerValleyDig = [-0.32, -0.16, 0, 0.16, 0.32].flatMap((xFactor) =>
+  shelfProbeZs.map((z) => {
+    const x = xFactor * floorWidthContinuityTerrain.params.floorWidth;
+    const noValley = sampleHillOfHillsTerrain(noValleyFloorBaseline, x, z);
+    const valley = sampleHillOfHillsTerrain(floorWidthContinuityTerrain, x, z);
+    return noValley.height - valley.height;
+  })
+);
+assert(
+  Math.max(...centerValleyDig) > 0.36,
+  'floor valleys can dig materially below the no-valley travel floor instead of being clamped flat'
+);
 assert(
   baseline.samples.some((terrainSample) => (terrainSample as any).topology?.growthPotential > 0.5),
   'terrain exposes growth/tree candidate zones'
