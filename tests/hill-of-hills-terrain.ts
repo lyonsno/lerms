@@ -24,6 +24,10 @@ function assertUnit(value: number, message: string): void {
   assert(value >= 0 && value <= 1, `${message} is normalized`);
 }
 
+function maxAbsSupportDelta(samples: readonly { support: { heightDelta: number } }[]): number {
+  return samples.reduce((maxDelta, terrainSample) => Math.max(maxDelta, Math.abs(terrainSample.support.heightDelta)), 0);
+}
+
 function sample(params: Partial<HillOfHillsTerrainParams>, x: number, z: number) {
   return sampleHillOfHillsTerrain(createHillOfHillsTerrain(params), x, z);
 }
@@ -379,6 +383,12 @@ const ditchPhaseA = createHillOfHillsTerrain(ditchPhaseParams);
 const ditchPhaseB = createHillOfHillsTerrain(ditchPhaseParams);
 assert(ditchPhaseA.phaseState.mode === 'ditch_forming', 'ditch phase activates terrain phase state');
 assert(ditchPhaseA.phaseState.activeEpisodes.length > 0, 'ditch phase creates active local episodes');
+assert(
+  ditchPhaseA.phaseState.activeEpisodes.every(
+    (episode) => episode.kind !== 'ditch_forming' || (episode.seedDitchPotential > 0.42 && episode.seedValleyStrength > 0.22)
+  ),
+  'ditch phase seeds from local valley/flow evidence instead of fixed side gutters'
+);
 assert(ditchPhaseA.witness.phaseMode === 'ditch_forming', 'ditch phase witness records ditch-forming mode');
 assert(ditchPhaseA.witness.activePhaseCount === ditchPhaseA.phaseState.activeEpisodes.length, 'witness active phase count matches phase state');
 assert(ditchPhaseA.witness.phaseChecksum === ditchPhaseB.witness.phaseChecksum, 'ditch phase checksum is deterministic');
@@ -405,6 +415,24 @@ assert(loweredInfluenced.length > 0, 'ditch phase locally deepens selected sampl
 assert(
   ditchPhaseA.witness.topologyChecksum !== stablePhase.witness.topologyChecksum,
   'ditch phase changes topology checksum without changing feature density'
+);
+const railProbeXs = [
+  -ditchPhaseA.params.floorWidth * 0.56,
+  ditchPhaseA.params.floorWidth * 0.56
+];
+let railProbeInfluenceCount = 0;
+for (const x of railProbeXs) {
+  for (let i = 0; i < 17; i += 1) {
+    const z = -ditchPhaseA.params.length * 0.42 + (ditchPhaseA.params.length * 0.84 * i) / 16;
+    const terrainSample = sampleHillOfHillsTerrain(ditchPhaseA, x, z);
+    if (terrainSample.phaseInfluence.sideDitchAmount > 0.24 && terrainSample.topology.valleyStrength < 0.18) {
+      railProbeInfluenceCount += 1;
+    }
+  }
+}
+assert(
+  railProbeInfluenceCount <= 2,
+  'active ditch phase does not paint long low-evidence paired rails beside the old central path'
 );
 
 const trailPhaseParams: Partial<HillOfHillsTerrainParams> = {
@@ -684,6 +712,38 @@ assert(
 );
 assert(topologyPhaseEarlier.witness.trailPhaseProgress === 0, 'topology-only motion keeps trail progress separate');
 assert(topologyPhaseEarlier.witness.ditchPhaseProgress === 0, 'topology-only motion keeps ditch progress separate');
+
+const topologyLowHeight = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseHeightScale: 0.22
+} as TopologyMotionParams);
+const topologyHighHeight = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseHeightScale: 1.45
+} as TopologyMotionParams);
+assert(
+  topologyLowHeight.witness.topologyInfluenceRange.max > 0.2 && topologyHighHeight.witness.topologyInfluenceRange.max > 0.2,
+  'topology height scaling preserves active topology influence'
+);
+assert(
+  maxAbsSupportDelta(topologyHighHeight.samples) > maxAbsSupportDelta(topologyLowHeight.samples) * 1.8,
+  'topology height scale changes vertical terrain motion independently from topology influence placement'
+);
+
+const topologyBasinBiased = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseBasinBias: 1.8,
+  topologyPhaseHillBias: 0,
+  topologyPhaseSaddleBias: 0
+} as TopologyMotionParams);
+assert(
+  topologyBasinBiased.phaseState.activeEpisodes.length > 0,
+  'topology kind bias still creates topology motion episodes'
+);
+assert(
+  topologyBasinBiased.phaseState.activeEpisodes.every((episode) => episode.kind === 'basin_deepen'),
+  'topology kind bias can steer topology motion toward basin deepening'
+);
 
 const cacheSource = {
   timestampMs: 11_000,

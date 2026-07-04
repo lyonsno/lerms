@@ -58,6 +58,11 @@ import {
   type HillPreviewSettings,
   type HillPreviewSettingsStorage
 } from './terrain/hill-of-hills-preview-settings.js';
+import {
+  loadHillOfHillsParamSettings,
+  saveHillOfHillsParamSettings,
+  type HillOfHillsParamSettingsStorage
+} from './terrain/hill-of-hills-param-settings.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -138,7 +143,7 @@ const MATERIAL_FRAY_NEIGHBOR_OFFSETS: readonly (readonly [number, number])[] = [
   [3, -3],
   [-3, -3]
 ];
-let params: HillOfHillsTerrainParams = {
+const defaultPreviewParams: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
   ditchPhaseIntensity: 0.18,
   ditchPhaseLimit: 1,
@@ -153,10 +158,18 @@ let params: HillOfHillsTerrainParams = {
   topologyPhaseIntensity: 0.42,
   topologyPhaseLimit: 3,
   topologyPhaseRadius: 1.45,
+  topologyPhaseHeightScale: 1,
+  topologyPhaseBasinBias: 1,
+  topologyPhaseHillBias: 1,
+  topologyPhaseSaddleBias: 1,
   topologyPhaseTimeMs: 720,
   topologyPhaseDurationMs: 2200,
   gridResolutionX: 116,
   gridResolutionZ: 148
+};
+let params: HillOfHillsTerrainParams = {
+  ...defaultPreviewParams,
+  ...loadHillOfHillsParamSettings(safeParamSettingsStorage(), defaultPreviewParams)
 };
 const terrainCache = createHillOfHillsLayerTileCache();
 const previewSourceOptions = {
@@ -266,14 +279,21 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'ditchPhaseLimit', label: 'Ditch count', min: 0, max: 8, step: 1 },
   { key: 'ditchPhaseRadius', label: 'Ditch radius', min: 0.5, max: 2.4, step: 0.05 },
   { key: 'ditchPhaseTimeMs', label: 'Ditch phase', min: 0, max: 2400, step: 40 },
+  { key: 'ditchPhaseDurationMs', label: 'Ditch cadence', min: 800, max: 5200, step: 80 },
   { key: 'trailPhaseIntensity', label: 'Trail forming', min: 0, max: 1, step: 0.05 },
   { key: 'trailPhaseLimit', label: 'Trail count', min: 0, max: 6, step: 1 },
   { key: 'trailPhaseRadius', label: 'Trail radius', min: 0.5, max: 2.8, step: 0.05 },
   { key: 'trailPhaseTimeMs', label: 'Trail phase', min: 0, max: 2600, step: 40 },
+  { key: 'trailPhaseDurationMs', label: 'Trail cadence', min: 800, max: 5200, step: 80 },
   { key: 'topologyPhaseIntensity', label: 'Topology motion', min: 0, max: 1, step: 0.05 },
   { key: 'topologyPhaseLimit', label: 'Topology count', min: 0, max: 8, step: 1 },
   { key: 'topologyPhaseRadius', label: 'Topology radius', min: 0.5, max: 2.8, step: 0.05 },
-  { key: 'topologyPhaseTimeMs', label: 'Topology phase', min: 0, max: 2600, step: 40 }
+  { key: 'topologyPhaseHeightScale', label: 'Topology height', min: 0, max: 2, step: 0.05 },
+  { key: 'topologyPhaseBasinBias', label: 'Basin bias', min: 0, max: 2, step: 0.05 },
+  { key: 'topologyPhaseHillBias', label: 'Hill bias', min: 0, max: 2, step: 0.05 },
+  { key: 'topologyPhaseSaddleBias', label: 'Saddle bias', min: 0, max: 2, step: 0.05 },
+  { key: 'topologyPhaseTimeMs', label: 'Topology phase', min: 0, max: 2600, step: 40 },
+  { key: 'topologyPhaseDurationMs', label: 'Topology cadence', min: 800, max: 5200, step: 80 }
 ];
 
 const viewControlSpecs: readonly ViewControlSpec[] = [
@@ -1792,6 +1812,7 @@ function createControls(): { element: HTMLElement } {
         ...params,
         [spec.key]: nextValue
       };
+      persistParamSettings();
       value.value = nextValue.toFixed(2);
     });
 
@@ -2171,6 +2192,18 @@ function createPreviewDebugRange(
 
 function persistPreviewSettings(): void {
   saveHillPreviewSettings(safePreviewSettingsStorage(), previewSettings);
+}
+
+function persistParamSettings(): void {
+  saveHillOfHillsParamSettings(safeParamSettingsStorage(), params);
+}
+
+function safeParamSettingsStorage(): HillOfHillsParamSettingsStorage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 function safePreviewSettingsStorage(): HillPreviewSettingsStorage | undefined {
