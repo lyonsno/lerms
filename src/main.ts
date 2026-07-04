@@ -48,6 +48,9 @@ import {
 import {
   HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE,
   HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE,
+  HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE,
+  HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE,
+  HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE,
   defaultHillPreviewSettings,
   loadHillPreviewSettings,
   saveHillPreviewSettings,
@@ -1301,6 +1304,9 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
+  drawTopographicContours(currentBuffer, width, height);
+
+  const overlayControls = previewSettings.overlays;
   for (let zi = 2; zi < gridResolutionZ - 2; zi += 5) {
     ctx.beginPath();
     let drawing = false;
@@ -1322,7 +1328,7 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
       }
     }
     if (strength > 0) {
-      strokeOverlayPath(hillOverlayStrokeStyle('ditch', strength));
+      strokeOverlayPath(hillOverlayStrokeStyle('ditch', strength, overlayControls));
     }
   }
 
@@ -1347,7 +1353,7 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
       }
     }
     if (strength > 0) {
-      strokeOverlayPath(hillOverlayStrokeStyle('phaseDitch', strength));
+      strokeOverlayPath(hillOverlayStrokeStyle('phaseDitch', strength, overlayControls));
     }
   }
 
@@ -1379,7 +1385,7 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
         ctx.lineTo(point.x, point.y);
       }
       if (shouldBreakHillTrailStroke(runSampleCount, trailAmount)) {
-        strokeOverlayPath(hillOverlayStrokeStyle('trail', strength));
+        strokeOverlayPath(hillOverlayStrokeStyle('trail', strength, overlayControls));
         ctx.beginPath();
         drawing = false;
         strength = 0;
@@ -1387,7 +1393,7 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
       }
     }
     if (strength > 0) {
-      strokeOverlayPath(hillOverlayStrokeStyle('trail', strength));
+      strokeOverlayPath(hillOverlayStrokeStyle('trail', strength, overlayControls));
     }
   }
 
@@ -1408,6 +1414,106 @@ function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: nu
   }
 
   ctx.restore();
+}
+
+function drawTopographicContours(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const strength = previewSettings.overlays.topographicContourStrength;
+  if (strength <= 0) {
+    return;
+  }
+
+  const spacing = previewSettings.overlays.topographicContourSpacing;
+  const style = hillOverlayStrokeStyle('topographicContour', 1, {
+    topographicContourStrength: strength
+  });
+  if (style.alpha <= 0) {
+    return;
+  }
+
+  const gridResolutionX = currentBuffer.gridResolution.x;
+  const gridResolutionZ = currentBuffer.gridResolution.z;
+
+  ctx.strokeStyle = style.strokeStyle;
+  ctx.lineWidth = style.lineWidth;
+  ctx.beginPath();
+  for (let zi = 0; zi < gridResolutionZ - 1; zi += 1) {
+    for (let xi = 0; xi < gridResolutionX - 1; xi += 1) {
+      const a = zi * gridResolutionX + xi;
+      const b = a + 1;
+      const c = a + gridResolutionX + 1;
+      const d = a + gridResolutionX;
+      drawTopographicContourCell(currentBuffer, a, b, c, d, spacing, width, height);
+    }
+  }
+  ctx.stroke();
+}
+
+function drawTopographicContourCell(
+  currentBuffer: HillOfHillsTerrainBuffer,
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+  spacing: number,
+  width: number,
+  height: number
+): void {
+  const ha = metricAt(currentBuffer, a, 'height');
+  const hb = metricAt(currentBuffer, b, 'height');
+  const hc = metricAt(currentBuffer, c, 'height');
+  const hd = metricAt(currentBuffer, d, 'height');
+  const minHeight = Math.min(ha, hb, hc, hd);
+  const maxHeight = Math.max(ha, hb, hc, hd);
+  const firstLevel = Math.ceil(minHeight / spacing) * spacing;
+
+  for (let level = firstLevel; level <= maxHeight; level += spacing) {
+    const crossings: { x: number; y: number }[] = [];
+    addContourCrossing(currentBuffer, crossings, a, b, ha, hb, level, width, height);
+    addContourCrossing(currentBuffer, crossings, b, c, hb, hc, level, width, height);
+    addContourCrossing(currentBuffer, crossings, c, d, hc, hd, level, width, height);
+    addContourCrossing(currentBuffer, crossings, d, a, hd, ha, level, width, height);
+
+    for (let i = 1; i < crossings.length; i += 2) {
+      const from = crossings[i - 1];
+      const to = crossings[i];
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+    }
+  }
+}
+
+function addContourCrossing(
+  currentBuffer: HillOfHillsTerrainBuffer,
+  crossings: { x: number; y: number }[],
+  fromIndex: number,
+  toIndex: number,
+  fromHeight: number,
+  toHeight: number,
+  level: number,
+  width: number,
+  height: number
+): void {
+  if (fromHeight === toHeight) {
+    return;
+  }
+  const lower = Math.min(fromHeight, toHeight);
+  const upper = Math.max(fromHeight, toHeight);
+  if (level < lower || level > upper) {
+    return;
+  }
+  const t = clamp((level - fromHeight) / (toHeight - fromHeight), 0, 1);
+  const fromOffset = fromIndex * 3;
+  const toOffset = toIndex * 3;
+  crossings.push(
+    project(
+      lerp(currentBuffer.positions[fromOffset], currentBuffer.positions[toOffset], t),
+      lerp(currentBuffer.positions[fromOffset + 1], currentBuffer.positions[toOffset + 1], t) + 0.14,
+      lerp(currentBuffer.positions[fromOffset + 2], currentBuffer.positions[toOffset + 2], t),
+      currentBuffer,
+      width,
+      height
+    )
+  );
 }
 
 function surfaceDetailAt(buffer: HillOfHillsTerrainBuffer, index: number): HillOfHillsSurfaceDetailKind {
@@ -1443,6 +1549,9 @@ function detailAngle(buffer: HillOfHillsTerrainBuffer, index: number, jitter: nu
 }
 
 function strokeOverlayPath(style: HillOverlayStrokeStyle): void {
+  if (style.alpha <= 0 || style.lineWidth <= 0) {
+    return;
+  }
   ctx.strokeStyle = style.strokeStyle;
   ctx.lineWidth = style.lineWidth;
   ctx.stroke();
@@ -1638,6 +1747,7 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
     `layers: ${activePreviewLayerSummary()}`,
     `growth skin: density ${previewSettings.growthSkin.density.toFixed(2)} opacity ${previewSettings.growthSkin.opacity.toFixed(2)}`,
+    `overlays: lines ${previewSettings.overlays.topologyLineStrength.toFixed(2)} contours ${previewSettings.overlays.topographicContourStrength.toFixed(2)} spacing ${previewSettings.overlays.topographicContourSpacing.toFixed(2)}`,
     latestGrowthPlacementSummary,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
@@ -1774,6 +1884,8 @@ function createControls(): { element: HTMLElement } {
       left: 16px;
       top: 16px;
       max-width: min(390px, calc(100vw - 32px));
+      max-height: calc(100vh - 360px);
+      overflow: auto;
       white-space: pre-wrap;
       padding: 12px;
       border: 1px solid rgba(136, 224, 186, 0.25);
@@ -1941,8 +2053,59 @@ function createPreviewDebugControls(): { element: HTMLElement; refresh: () => vo
       persistPreviewSettings();
     }
   );
+  const topologyLines = createPreviewDebugRange(
+    'Topology lines',
+    previewSettings.overlays.topologyLineStrength,
+    HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE.min,
+    HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE.max,
+    0.05,
+    (value) => {
+      previewSettings = {
+        ...previewSettings,
+        overlays: {
+          ...previewSettings.overlays,
+          topologyLineStrength: value
+        }
+      };
+      persistPreviewSettings();
+    }
+  );
+  const topographicContours = createPreviewDebugRange(
+    'Topo contours',
+    previewSettings.overlays.topographicContourStrength,
+    HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE.min,
+    HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE.max,
+    0.05,
+    (value) => {
+      previewSettings = {
+        ...previewSettings,
+        overlays: {
+          ...previewSettings.overlays,
+          topographicContourStrength: value
+        }
+      };
+      persistPreviewSettings();
+    }
+  );
+  const contourSpacing = createPreviewDebugRange(
+    'Contour spacing',
+    previewSettings.overlays.topographicContourSpacing,
+    HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE.min,
+    HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE.max,
+    0.05,
+    (value) => {
+      previewSettings = {
+        ...previewSettings,
+        overlays: {
+          ...previewSettings.overlays,
+          topographicContourSpacing: value
+        }
+      };
+      persistPreviewSettings();
+    }
+  );
 
-  element.append(density.row, opacity.row);
+  element.append(density.row, opacity.row, topologyLines.row, topographicContours.row, contourSpacing.row);
 
   const reset = document.createElement('button');
   reset.type = 'button';
@@ -1961,6 +2124,9 @@ function createPreviewDebugControls(): { element: HTMLElement; refresh: () => vo
     }
     density.setValue(previewSettings.growthSkin.density);
     opacity.setValue(previewSettings.growthSkin.opacity);
+    topologyLines.setValue(previewSettings.overlays.topologyLineStrength);
+    topographicContours.setValue(previewSettings.overlays.topographicContourStrength);
+    contourSpacing.setValue(previewSettings.overlays.topographicContourSpacing);
   }
 
   return { element, refresh };
@@ -2068,4 +2234,8 @@ function createWitnessPanel(): HTMLElement {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function lerp(from: number, to: number, t: number): number {
+  return from + (to - from) * t;
 }

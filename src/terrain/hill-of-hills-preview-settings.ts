@@ -16,9 +16,16 @@ export interface HillPreviewGrowthSkinSettings {
   opacity: number;
 }
 
+export interface HillPreviewOverlaySettings {
+  topologyLineStrength: number;
+  topographicContourStrength: number;
+  topographicContourSpacing: number;
+}
+
 export interface HillPreviewSettings {
   layers: HillPreviewLayerSettings;
   growthSkin: HillPreviewGrowthSkinSettings;
+  overlays: HillPreviewOverlaySettings;
 }
 
 export interface HillPreviewSettingsStorage {
@@ -41,6 +48,12 @@ const DEFAULT_GROWTH_SKIN_SETTINGS: HillPreviewGrowthSkinSettings = {
   opacity: 1
 };
 
+const DEFAULT_OVERLAY_SETTINGS: HillPreviewOverlaySettings = {
+  topologyLineStrength: 0.35,
+  topographicContourStrength: 0.55,
+  topographicContourSpacing: 0.6
+};
+
 export const HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE = {
   min: 0,
   max: 2.5
@@ -51,10 +64,26 @@ export const HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE = {
   max: 1.6
 } as const;
 
+export const HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE = {
+  min: 0,
+  max: 1
+} as const;
+
+export const HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE = {
+  min: 0,
+  max: 1
+} as const;
+
+export const HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE = {
+  min: 0.25,
+  max: 1.2
+} as const;
+
 export function defaultHillPreviewSettings(): HillPreviewSettings {
   return {
     layers: { ...DEFAULT_LAYER_SETTINGS },
-    growthSkin: { ...DEFAULT_GROWTH_SKIN_SETTINGS }
+    growthSkin: { ...DEFAULT_GROWTH_SKIN_SETTINGS },
+    overlays: { ...DEFAULT_OVERLAY_SETTINGS }
   };
 }
 
@@ -91,6 +120,7 @@ export function sanitizeHillPreviewSettings(input: unknown): HillPreviewSettings
 
   const layersInput = isPlainObject(input.layers) ? input.layers : {};
   const growthSkinInput = isPlainObject(input.growthSkin) ? input.growthSkin : {};
+  const overlayInput = isPlainObject(input.overlays) ? input.overlays : {};
 
   return {
     layers: {
@@ -114,6 +144,26 @@ export function sanitizeHillPreviewSettings(input: unknown): HillPreviewSettings
         defaults.growthSkin.opacity,
         HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE.min,
         HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE.max
+      )
+    },
+    overlays: {
+      topologyLineStrength: numberOrDefault(
+        overlayInput.topologyLineStrength,
+        defaults.overlays.topologyLineStrength,
+        HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE.min,
+        HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE.max
+      ),
+      topographicContourStrength: numberOrDefault(
+        overlayInput.topographicContourStrength,
+        defaults.overlays.topographicContourStrength,
+        HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE.min,
+        HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE.max
+      ),
+      topographicContourSpacing: numberOrDefault(
+        overlayInput.topographicContourSpacing,
+        defaults.overlays.topographicContourSpacing,
+        HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE.min,
+        HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE.max
       )
     }
   };
