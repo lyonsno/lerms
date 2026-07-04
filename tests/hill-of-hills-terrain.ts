@@ -572,6 +572,119 @@ assert(trailPhaseNextCycle.phaseState.mode === 'stable', 'trail phase can fully 
 assert(trailPhaseNextCycle.witness.trailSeedMethod === 'none', 'fully faded trail phase stops claiming topology-seeded active trails');
 assert(trailPhaseNextCycle.witness.trailPhaseProgress === 0, 'fully faded trail phase witness exposes zero trail progress');
 
+type TopologyMotionParams = Partial<HillOfHillsTerrainParams> & {
+  topologyPhaseSeed: number;
+  topologyPhaseIntensity: number;
+  topologyPhaseLimit: number;
+  topologyPhaseRadius: number;
+  topologyPhaseTimeMs: number;
+  topologyPhaseDurationMs: number;
+};
+const topologyPhaseParams: TopologyMotionParams = {
+  seed: 9876,
+  gridResolutionX: 42,
+  gridResolutionZ: 58,
+  ditchPhaseIntensity: 0,
+  trailPhaseIntensity: 0,
+  topologyPhaseSeed: 7331,
+  topologyPhaseIntensity: 0.82,
+  topologyPhaseLimit: 3,
+  topologyPhaseRadius: 1.55,
+  topologyPhaseTimeMs: 820,
+  topologyPhaseDurationMs: 1800
+};
+const topologyPhaseA = createHillOfHillsTerrain(topologyPhaseParams);
+const topologyPhaseB = createHillOfHillsTerrain(topologyPhaseParams);
+assert((topologyPhaseA.phaseState.mode as string) === 'topology_morphing', 'topology motion activates topology-morphing phase state');
+assert(topologyPhaseA.phaseState.activeEpisodes.length > 0, 'topology motion creates active local episodes');
+assert(
+  topologyPhaseA.phaseState.activeEpisodes.every((episode) =>
+    ['basin_deepen', 'hill_swell', 'saddle_pinch'].includes(episode.kind as string)
+  ),
+  'topology motion episodes stay in topology-specific kinds'
+);
+assert((topologyPhaseA.witness.phaseMode as string) === 'topology_morphing', 'topology motion witness records topology-morphing mode');
+assert(topologyPhaseA.witness.phaseChecksum === topologyPhaseB.witness.phaseChecksum, 'topology motion checksum is deterministic');
+assert(
+  topologyPhaseA.witness.phaseInfluenceChecksum === topologyPhaseB.witness.phaseInfluenceChecksum,
+  'topology motion influence checksum is deterministic'
+);
+assert(topologyPhaseA.witness.topologyPhaseProgress > 0.35, 'topology motion witness exposes topology-specific progress');
+assert(topologyPhaseA.witness.topologyPhaseClock > 0, 'topology motion witness exposes topology-specific clock');
+assert(topologyPhaseA.witness.topologyInfluenceRange.max > 0.28, 'topology motion creates visible local topology influence');
+assert(
+  ((topologyPhaseA.witness.activePhaseKinds as Record<string, number>).basin_deepen ?? 0) +
+    ((topologyPhaseA.witness.activePhaseKinds as Record<string, number>).hill_swell ?? 0) +
+    ((topologyPhaseA.witness.activePhaseKinds as Record<string, number>).saddle_pinch ?? 0) >
+    0,
+  'witness counts active topology motion episode kinds'
+);
+assert(
+  ((topologyPhaseA.witness.phaseInfluenceKinds as Record<string, number>).basin_deepen ?? 0) +
+    ((topologyPhaseA.witness.phaseInfluenceKinds as Record<string, number>).hill_swell ?? 0) +
+    ((topologyPhaseA.witness.phaseInfluenceKinds as Record<string, number>).saddle_pinch ?? 0) >
+    0,
+  'witness counts topology motion influenced samples'
+);
+assert(topologyPhaseA.witness.dirtyTileCount > 0, 'topology motion marks localized dirty tiles');
+assert(topologyPhaseA.witness.dirtyTileCount < topologyPhaseA.witness.recomputeTileCount, 'topology motion dirty tiles are localized');
+assert(topologyPhaseA.witness.supportFrame.dirtySubstrateTileCount === topologyPhaseA.witness.dirtyTileCount, 'support frame tracks topology motion dirty tiles');
+const stableTopologyCounterpart = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseIntensity: 0
+} as TopologyMotionParams);
+const stableTopologyById = new Map(stableTopologyCounterpart.samples.map((terrainSample) => [terrainSample.id, terrainSample]));
+const topologyInfluencedSamples = topologyPhaseA.samples.filter((terrainSample) =>
+  ['basin_deepen', 'hill_swell', 'saddle_pinch'].includes(terrainSample.phaseInfluence.kind as string)
+);
+assert(topologyInfluencedSamples.length > 0, 'topology motion marks topology-influenced samples');
+assert(
+  topologyInfluencedSamples.some((terrainSample) => {
+    const stableSample = stableTopologyById.get(terrainSample.id);
+    return stableSample ? Math.abs(terrainSample.height - stableSample.height) > 0.04 : false;
+  }),
+  'topology motion changes local geometry versus stable terrain'
+);
+assert(
+  topologyInfluencedSamples.every((terrainSample) => Number.isFinite(terrainSample.height) && Math.abs(terrainSample.support.heightDelta) < 0.25),
+  'topology motion keeps local height/support deltas finite and bounded'
+);
+assert(
+  topologyInfluencedSamples.some((terrainSample) => Math.abs(terrainSample.support.surfaceVelocity[1]) > 0.0001),
+  'topology motion exposes vertical support velocity for fluid contact'
+);
+assert(
+  topologyPhaseA.witness.topologyChecksum !== stableTopologyCounterpart.witness.topologyChecksum,
+  'topology motion changes topology checksum without changing stable feature density'
+);
+assert(
+  topologyPhaseA.witness.proxyMaterialChecksum !== stableTopologyCounterpart.witness.proxyMaterialChecksum ||
+    topologyPhaseA.witness.materialEdgeChecksum !== stableTopologyCounterpart.witness.materialEdgeChecksum,
+  'topology motion reaches material or edge consumers, not only raw height'
+);
+const topologyPhaseEarlier = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: 620
+} as TopologyMotionParams);
+const topologyPhaseLater = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: 1320
+} as TopologyMotionParams);
+assert(
+  topologyPhaseEarlier.witness.topologyPhaseClock < topologyPhaseLater.witness.topologyPhaseClock,
+  'topology motion witness clock moves across phase ticks'
+);
+assert(
+  topologyPhaseEarlier.witness.phaseChecksum !== topologyPhaseLater.witness.phaseChecksum,
+  'topology motion checksum moves when topology phase time changes'
+);
+assert(
+  topologyPhaseEarlier.witness.phaseInfluenceChecksum !== topologyPhaseLater.witness.phaseInfluenceChecksum,
+  'topology motion influence checksum moves when topology phase time changes'
+);
+assert(topologyPhaseEarlier.witness.trailPhaseProgress === 0, 'topology-only motion keeps trail progress separate');
+assert(topologyPhaseEarlier.witness.ditchPhaseProgress === 0, 'topology-only motion keeps ditch progress separate');
+
 const cacheSource = {
   timestampMs: 11_000,
   frameId: 'cached-terrain-contract',

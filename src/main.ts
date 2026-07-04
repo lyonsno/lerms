@@ -147,6 +147,11 @@ let params: HillOfHillsTerrainParams = {
   trailPhaseRadius: 1.45,
   trailPhaseTimeMs: 880,
   trailPhaseDurationMs: 2600,
+  topologyPhaseIntensity: 0.42,
+  topologyPhaseLimit: 3,
+  topologyPhaseRadius: 1.45,
+  topologyPhaseTimeMs: 720,
+  topologyPhaseDurationMs: 2200,
   gridResolutionX: 116,
   gridResolutionZ: 148
 };
@@ -261,7 +266,11 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'trailPhaseIntensity', label: 'Trail forming', min: 0, max: 1, step: 0.05 },
   { key: 'trailPhaseLimit', label: 'Trail count', min: 0, max: 6, step: 1 },
   { key: 'trailPhaseRadius', label: 'Trail radius', min: 0.5, max: 2.8, step: 0.05 },
-  { key: 'trailPhaseTimeMs', label: 'Trail phase', min: 0, max: 2600, step: 40 }
+  { key: 'trailPhaseTimeMs', label: 'Trail phase', min: 0, max: 2600, step: 40 },
+  { key: 'topologyPhaseIntensity', label: 'Topology motion', min: 0, max: 1, step: 0.05 },
+  { key: 'topologyPhaseLimit', label: 'Topology count', min: 0, max: 8, step: 1 },
+  { key: 'topologyPhaseRadius', label: 'Topology radius', min: 0.5, max: 2.8, step: 0.05 },
+  { key: 'topologyPhaseTimeMs', label: 'Topology phase', min: 0, max: 2600, step: 40 }
 ];
 
 const viewControlSpecs: readonly ViewControlSpec[] = [
@@ -313,10 +322,15 @@ function render(timestampMs: number): void {
     params.trailPhaseIntensity > 0
       ? (params.trailPhaseTimeMs + motionTimestampMs * 0.38) % params.trailPhaseDurationMs
       : params.trailPhaseTimeMs;
+  const topologyPhaseTimeMs =
+    params.topologyPhaseIntensity > 0
+      ? (params.topologyPhaseTimeMs + motionTimestampMs * 0.3) % params.topologyPhaseDurationMs
+      : params.topologyPhaseTimeMs;
   requestTerrain({
     ...params,
     ditchPhaseTimeMs,
     trailPhaseTimeMs,
+    topologyPhaseTimeMs,
     crownZ: defaultHillOfHillsParams.crownZ + motion
   });
 
@@ -1610,11 +1624,12 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `phase clock: ${witness.phaseClock.toFixed(2)} progress ${witness.phaseProgress.toFixed(2)}`,
     `ditch phase: ${witness.effectiveParams.ditchPhaseTimeMs.toFixed(0)}ms clock ${witness.ditchPhaseClock.toFixed(2)} progress ${witness.ditchPhaseProgress.toFixed(2)}`,
     `trail phase: ${witness.effectiveParams.trailPhaseTimeMs.toFixed(0)}ms clock ${witness.trailPhaseClock.toFixed(2)} progress ${witness.trailPhaseProgress.toFixed(2)}`,
+    `topology phase: ${witness.effectiveParams.topologyPhaseTimeMs.toFixed(0)}ms clock ${witness.topologyPhaseClock.toFixed(2)} progress ${witness.topologyPhaseProgress.toFixed(2)}`,
     `phase checksum: ${witness.phaseChecksum} / influence ${witness.phaseInfluenceChecksum}`,
     `trail seed: ${witness.trailSeedMethod} / candidates ${witness.trailCandidateChecksum}`,
     `trail score: ${witness.trailCandidateScoreRange.min.toFixed(2)} .. ${witness.trailCandidateScoreRange.max.toFixed(2)} / selected ${witness.selectedTrailScoreRange.min.toFixed(2)} .. ${witness.selectedTrailScoreRange.max.toFixed(2)}`,
     `phase influence: ${witness.phaseInfluenceRange.min.toFixed(2)} .. ${witness.phaseInfluenceRange.max.toFixed(2)}`,
-    `trail ${witness.trailInfluenceRange.max.toFixed(2)} side-ditch ${witness.sideDitchInfluenceRange.max.toFixed(2)}`,
+    `trail ${witness.trailInfluenceRange.max.toFixed(2)} side-ditch ${witness.sideDitchInfluenceRange.max.toFixed(2)} topology ${witness.topologyInfluenceRange.max.toFixed(2)}`,
     `support: ${witness.supportFrame.supportClass} / ${witness.supportFrame.mappingMode}`,
     `support motion: delta ${witness.supportFrame.maxHeightDelta.toFixed(3)} speed ${witness.supportFrame.maxSurfaceSpeed.toFixed(2)} dirty ${witness.supportFrame.dirtySubstrateTileCount}/${witness.supportFrame.substrateTileCount}`,
     `worker: ${workerStatus} req ${latestTerrainRequestId} pending ${pendingTerrainRequestId || 'none'} duration ${latestWorkerDurationMs.toFixed(1)}ms`,
