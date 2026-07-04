@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 
 import {
   GLOVE_WELL_HOST_PACKET_ROUTE,
@@ -66,6 +66,14 @@ export interface GloveWellSmokeBenchOfferReport {
     artifacts: Array<{ id: string; kind: string; ref: string }>;
     downgrades: string[];
   };
+  offer: GloveWellSmokeBenchOfferReport['smokeBench'];
+  adapterState: GloveWellSmokeBenchAdapterState;
+  requiredPrimitiveRoles: string[];
+  screenshot: {
+    path: string | null;
+    kind: 'filmstrip_html_supporting_artifact' | 'capture_report_supporting_artifact' | 'missing_supporting_artifact';
+    bytes: null;
+  };
   minionContract: {
     campaign: 'smoke-bench-native-host';
     requiredTerms: ['offer', 'primaryTarget', 'hostPayload', 'stateStream'];
@@ -111,9 +119,37 @@ interface GloveWellSmokeBenchStateStream {
   downgrade: 'hand_state_runtime_not_extracted';
 }
 
+interface GloveWellSmokeBenchAdapterState {
+  schema: 'kaminos.host-surface.state.v0';
+  route: 'kaminos/host-surface';
+  hostId: 'glove-well';
+  hostLabel: 'Glove Well';
+  hostRoute: 'kaminos/glove-well-host';
+  hostStateSchema: 'kaminos.glove-well-host.state.v0';
+  packetSchema: typeof GLOVE_WELL_HOST_PACKET_SCHEMA;
+  packetRoute: typeof GLOVE_WELL_HOST_PACKET_ROUTE;
+  sourceAuthority: SmokeBenchAuthority | string;
+  sourceTruthAuthority: 'lerms.gloveWellBrowserSmokeState';
+  freshness: {
+    status: GloveWellHostPacket['freshness']['status'];
+    sampleAgeMs: number | null;
+    cameraAgeMs: number | null;
+    budgetMs: number;
+  };
+  visual: {
+    canvasNonblank: boolean;
+    defaultMarkers: false;
+    syntheticDefaultMarkers: false;
+    primitiveRoleCounts: Record<string, number>;
+  };
+  downgrades: string[];
+  rejectedDebugSurfaces: GloveWellHostPacket['rejectedDebugSurfaces'];
+}
+
 interface CliOptions extends BuildGloveWellSmokeBenchOfferOptions {
   help: boolean;
   report: string | null;
+  conformanceFixture: string | null;
 }
 
 const DEFAULT_LIVE_HOST_PAYLOAD_URL = 'http://127.0.0.1:5191/__lerms/glove-well-host-packet/live';
@@ -155,12 +191,43 @@ export function buildGloveWellSmokeBenchOffer(
   const handStateRuntimeReport = options.handStateRuntimeReport ?? DEFAULT_HAND_STATE_RUNTIME_REPORT;
   const stateStream = buildStateStream(hostPacket, transitionalHandEventUrl, handStateRuntimeReport);
   const hostPayload = buildHostPayload(hostPacket, liveHostPayloadUrl);
+  const requiredPrimitiveRoles = [...hostPacket.surface.witnessExpectations.requiredPrimitiveRoles];
   const downgrades = uniqueStrings([
     ...hostPacket.downgrades,
     'hand_state_runtime_not_extracted',
     'current_hand_input_is_perceptasia_compat_not_neutral_hand_state',
     'smoke_bench_offer_is_not_kaminos_acceptance'
   ]);
+  const smokeBenchOffer = {
+    schema: KAMINOS_SMOKE_BENCH_OFFER_SCHEMA,
+    id: 'offer:greedy:glove-well-native-host',
+    producerDiaulos: 'greedy-glove-fucker',
+    title: 'Glove Well Native Host Payload',
+    sourceRef,
+    authority: hostPacket.source.authority,
+    displayState: 'available',
+    freshness: hostPacket.freshness.status,
+    primaryTarget: {
+      schema: KAMINOS_SMOKE_BENCH_PRIMARY_TARGET_SCHEMA,
+      id: 'target:greedy-glove-well-native-host',
+      kind: 'native-host',
+      surface: 'glove-well',
+      url: kaminosHostUrl,
+      adapter: {
+        id: 'glove-well',
+        kind: 'native_host',
+        acceptancePredicate: 'source_owned_glove_well_primitives_visible_in_kaminos_adapter',
+        hostRouteExpectation: 'kaminos/glove-well-host'
+      },
+      hostPayload,
+      stateStream
+    },
+    hostPayload,
+    stateStream,
+    artifacts: buildArtifacts(hostPacket),
+    downgrades
+  } as const;
+  const adapterState = buildAdapterState(hostPacket, downgrades);
 
   return {
     schema: GLOVE_WELL_SMOKE_BENCH_OFFER_SCHEMA,
@@ -176,35 +243,11 @@ export function buildGloveWellSmokeBenchOffer(
       effectiveRoute: hostPacket.source.effectiveRoute,
       depthLoadBearing: false
     },
-    smokeBench: {
-      schema: KAMINOS_SMOKE_BENCH_OFFER_SCHEMA,
-      id: 'offer:greedy:glove-well-native-host',
-      producerDiaulos: 'greedy-glove-fucker',
-      title: 'Glove Well Native Host Payload',
-      sourceRef,
-      authority: hostPacket.source.authority,
-      displayState: 'available',
-      freshness: hostPacket.freshness.status,
-      primaryTarget: {
-        schema: KAMINOS_SMOKE_BENCH_PRIMARY_TARGET_SCHEMA,
-        id: 'target:greedy-glove-well-native-host',
-        kind: 'native-host',
-        surface: 'glove-well',
-        url: kaminosHostUrl,
-        adapter: {
-          id: 'glove-well',
-          kind: 'native_host',
-          acceptancePredicate: 'source_owned_glove_well_primitives_visible_in_kaminos_adapter',
-          hostRouteExpectation: 'kaminos/glove-well-host'
-        },
-        hostPayload,
-        stateStream
-      },
-      hostPayload,
-      stateStream,
-      artifacts: buildArtifacts(hostPacket),
-      downgrades
-    },
+    smokeBench: smokeBenchOffer,
+    offer: smokeBenchOffer,
+    adapterState,
+    requiredPrimitiveRoles,
+    screenshot: buildScreenshotMetadata(hostPacket),
     minionContract: {
       campaign: 'smoke-bench-native-host',
       requiredTerms: ['offer', 'primaryTarget', 'hostPayload', 'stateStream'],
@@ -231,11 +274,15 @@ export function runGloveWellSmokeBenchOfferCli(argv = process.argv.slice(2)): nu
   const reportPath = options.report ?? '/tmp/lerms-glove-well-smoke-bench-offer-0704.json';
   const report = buildFixtureGloveWellSmokeBenchOffer(options);
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  if (options.conformanceFixture) {
+    writeFileSync(options.conformanceFixture, `${JSON.stringify(buildNativeHostConformanceFixture(report), null, 2)}\n`);
+  }
   console.log(JSON.stringify({
     ok: true,
     schema: GLOVE_WELL_SMOKE_BENCH_OFFER_SCHEMA,
     route: GLOVE_WELL_SMOKE_BENCH_OFFER_ROUTE,
     reportPath,
+    conformanceFixturePath: options.conformanceFixture,
     smokeBenchSchema: report.smokeBench.schema,
     primaryTarget: report.smokeBench.primaryTarget.kind,
     hostPayload: report.smokeBench.hostPayload.schema,
@@ -243,6 +290,51 @@ export function runGloveWellSmokeBenchOfferCli(argv = process.argv.slice(2)): nu
     downgrades: report.smokeBench.downgrades
   }, null, 2));
   return 0;
+}
+
+export function buildNativeHostConformanceFixture(report: GloveWellSmokeBenchOfferReport): {
+  observedAt: string;
+  requiredPrimitiveRoles: string[];
+  screenshot: GloveWellSmokeBenchOfferReport['screenshot'];
+  offer: GloveWellSmokeBenchOfferReport['offer'];
+  adapterState: GloveWellSmokeBenchOfferReport['adapterState'];
+} {
+  return {
+    observedAt: report.generatedAt,
+    requiredPrimitiveRoles: report.requiredPrimitiveRoles,
+    screenshot: report.screenshot,
+    offer: report.offer,
+    adapterState: report.adapterState
+  };
+}
+
+function buildAdapterState(hostPacket: GloveWellHostPacket, downgrades: string[]): GloveWellSmokeBenchAdapterState {
+  return {
+    schema: 'kaminos.host-surface.state.v0',
+    route: 'kaminos/host-surface',
+    hostId: 'glove-well',
+    hostLabel: 'Glove Well',
+    hostRoute: 'kaminos/glove-well-host',
+    hostStateSchema: 'kaminos.glove-well-host.state.v0',
+    packetSchema: GLOVE_WELL_HOST_PACKET_SCHEMA,
+    packetRoute: GLOVE_WELL_HOST_PACKET_ROUTE,
+    sourceAuthority: hostPacket.source.authority,
+    sourceTruthAuthority: hostPacket.source.sourceTruthAuthority,
+    freshness: {
+      status: hostPacket.freshness.status,
+      sampleAgeMs: hostPacket.freshness.ageMs,
+      cameraAgeMs: hostPacket.freshness.cameraAgeMs,
+      budgetMs: hostPacket.freshness.budgetMs
+    },
+    visual: {
+      canvasNonblank: hostPacket.surface.primitives.length > 0,
+      defaultMarkers: false,
+      syntheticDefaultMarkers: false,
+      primitiveRoleCounts: primitiveRoleCounts(hostPacket)
+    },
+    downgrades,
+    rejectedDebugSurfaces: hostPacket.rejectedDebugSurfaces
+  };
 }
 
 function buildHostPayload(hostPacket: GloveWellHostPacket, liveUrl: string | null): GloveWellSmokeBenchHostPayload {
@@ -257,6 +349,36 @@ function buildHostPayload(hostPacket: GloveWellHostPacket, liveUrl: string | nul
     primitiveCount: hostPacket.surface.primitives.length,
     requiredPrimitiveRoles: [...hostPacket.surface.witnessExpectations.requiredPrimitiveRoles],
     capture: hostPacket.capture
+  };
+}
+
+function primitiveRoleCounts(hostPacket: GloveWellHostPacket): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const primitive of hostPacket.surface.primitives) {
+    counts[primitive.role] = (counts[primitive.role] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function buildScreenshotMetadata(hostPacket: GloveWellHostPacket): GloveWellSmokeBenchOfferReport['screenshot'] {
+  if (hostPacket.capture.filmstripPath && existsSync(hostPacket.capture.filmstripPath)) {
+    return {
+      path: hostPacket.capture.filmstripPath,
+      kind: 'filmstrip_html_supporting_artifact',
+      bytes: null
+    };
+  }
+  if (hostPacket.capture.reportPath && existsSync(hostPacket.capture.reportPath)) {
+    return {
+      path: hostPacket.capture.reportPath,
+      kind: 'capture_report_supporting_artifact',
+      bytes: null
+    };
+  }
+  return {
+    path: null,
+    kind: 'missing_supporting_artifact',
+    bytes: null
   };
 }
 
@@ -317,6 +439,7 @@ function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     help: false,
     report: null,
+    conformanceFixture: null,
     generatedAt: null,
     sourceRef: null,
     liveHostPayloadUrl: null,
@@ -331,6 +454,9 @@ function parseArgs(argv: string[]): CliOptions {
       options.help = true;
     } else if (arg === '--report') {
       options.report = requiredValue(arg, next);
+      index += 1;
+    } else if (arg === '--conformance-fixture') {
+      options.conformanceFixture = requiredValue(arg, next);
       index += 1;
     } else if (arg === '--generated-at') {
       options.generatedAt = requiredValue(arg, next);
@@ -372,6 +498,7 @@ function usage(): string {
     '',
     'Options:',
     '  --report <path>                    JSON offer report path (default: /tmp/lerms-glove-well-smoke-bench-offer-0704.json)',
+    '  --conformance-fixture <path>       JSON fixture path for Kaminos smoke-bench-native-host-witness.mjs',
     '  --live-host-payload-url <url>       LERMS Glove Well hostPayload live URL',
     '  --kaminos-host-url <url>            Kaminos Glove Well host surface URL',
     '  --hand-event-url <url>              Transitional hand-control event stream URL',

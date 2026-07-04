@@ -69,6 +69,31 @@ assert.ok(offer.minionContract.requiredTerms.includes('primaryTarget'));
 assert.ok(offer.minionContract.requiredTerms.includes('hostPayload'));
 assert.ok(offer.minionContract.requiredTerms.includes('stateStream'));
 assert.equal(offer.minionContract.acceptanceSurface, 'Kaminos-controlled native adapter surface');
+assert.deepEqual(offer.requiredPrimitiveRoles, [
+  'wealth_source',
+  'rolling_goin',
+  'hand_skeleton_bone',
+  'aim_arc_sample',
+  'lerm_desire_link'
+]);
+assert.equal(offer.offer.schema, 'kaminos.smoke-bench.offer.v0');
+assert.equal(offer.offer.primaryTarget.kind, 'native-host');
+assert.equal(offer.offer.primaryTarget.hostPayload.schema, 'lerms.glove-well-host-packet.v0');
+assert.equal(offer.adapterState.schema, 'kaminos.host-surface.state.v0');
+assert.equal(offer.adapterState.hostId, 'glove-well');
+assert.equal(offer.adapterState.hostRoute, 'kaminos/glove-well-host');
+assert.equal(offer.adapterState.packetSchema, 'lerms.glove-well-host-packet.v0');
+assert.equal(offer.adapterState.packetRoute, 'lerms/glove-well/host-packet');
+assert.equal(offer.adapterState.visual.canvasNonblank, true);
+assert.equal(offer.adapterState.visual.defaultMarkers, false);
+assert.equal(offer.adapterState.visual.primitiveRoleCounts.wealth_source > 0, true);
+assert.equal(offer.adapterState.visual.primitiveRoleCounts.rolling_goin > 0, true);
+assert.equal(offer.adapterState.visual.primitiveRoleCounts.hand_skeleton_bone > 0, true);
+assert.equal(offer.adapterState.visual.primitiveRoleCounts.aim_arc_sample > 0, true);
+assert.equal(offer.adapterState.visual.primitiveRoleCounts.lerm_desire_link > 0, true);
+assert.equal(offer.adapterState.rejectedDebugSurfaces.every((surface) => surface.acceptanceSurface === false), true);
+assert.equal(offer.screenshot.path, null);
+assert.equal(offer.screenshot.kind, 'missing_supporting_artifact');
 
 const fixtureOffer = buildFixtureGloveWellSmokeBenchOffer({
   generatedAt: '2026-07-04T04:12:00.000Z',
@@ -79,8 +104,10 @@ assert.equal(fixtureOffer.smokeBench.authority, 'live_simulation');
 
 const tmp = mkdtempSync(join(tmpdir(), 'lerms-glove-well-smoke-bench-offer-'));
 const reportPath = join(tmp, 'offer.json');
+const conformanceFixturePath = join(tmp, 'native-host-conformance-fixture.json');
 const exitCode = runGloveWellSmokeBenchOfferCli([
   '--report', reportPath,
+  '--conformance-fixture', conformanceFixturePath,
   '--live-host-payload-url', 'http://127.0.0.1:5191/__lerms/glove-well-host-packet/live',
   '--kaminos-host-url', 'http://127.0.0.1:18156/?kaminos_glove_well_host=1',
   '--hand-event-url', 'http://127.0.0.1:18158/hand-control-sidecar-event'
@@ -90,9 +117,19 @@ assert.equal(existsSync(reportPath), true);
 const written = JSON.parse(readFileSync(reportPath, 'utf8'));
 assert.equal(written.schema, 'lerms.glove-well-smoke-bench-offer.v0');
 assert.equal(written.smokeBench.schema, 'kaminos.smoke-bench.offer.v0');
+assert.equal(written.offer.schema, 'kaminos.smoke-bench.offer.v0');
+assert.equal(written.adapterState.schema, 'kaminos.host-surface.state.v0');
 assert.equal(written.smokeBench.primaryTarget.kind, 'native-host');
 assert.equal(written.smokeBench.primaryTarget.hostPayload.liveUrl, 'http://127.0.0.1:5191/__lerms/glove-well-host-packet/live');
 assert.equal(written.smokeBench.stateStream.url, 'http://127.0.0.1:18158/hand-control-sidecar-event');
+assert.equal(existsSync(conformanceFixturePath), true);
+const conformanceFixture = JSON.parse(readFileSync(conformanceFixturePath, 'utf8'));
+assert.equal(conformanceFixture.route, undefined);
+assert.equal(conformanceFixture.offer.schema, 'kaminos.smoke-bench.offer.v0');
+assert.equal(conformanceFixture.adapterState.schema, 'kaminos.host-surface.state.v0');
+assert.deepEqual(conformanceFixture.requiredPrimitiveRoles, offer.requiredPrimitiveRoles);
+assert.equal(conformanceFixture.screenshot.path, null);
+assert.equal(conformanceFixture.screenshot.kind, 'missing_supporting_artifact');
 
 const help = spawnSync(process.execPath, ['--experimental-strip-types', 'src/glove-well-smoke-bench-offer.ts', '--help'], {
   cwd: process.cwd(),
@@ -101,5 +138,6 @@ const help = spawnSync(process.execPath, ['--experimental-strip-types', 'src/glo
 assert.equal(help.status, 0);
 assert.match(help.stdout, /--live-host-payload-url/);
 assert.match(help.stdout, /--hand-event-url/);
+assert.match(help.stdout, /--conformance-fixture/);
 
 console.log('glove well smoke bench offer contracts passed');
