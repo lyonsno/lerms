@@ -67,6 +67,14 @@ import {
   saveHillOfHillsParamSettings,
   type HillOfHillsParamSettingsStorage
 } from './terrain/hill-of-hills-param-settings.js';
+import {
+  HILL_PHASE_FILMSTRIP_FRAME_COUNTS,
+  createHillPhaseFilmstripSchedule,
+  fitHillPhaseFilmstripLayout,
+  normalizeHillPhaseFilmstripFrameCount,
+  type HillPhaseFilmstripFrame,
+  type HillPhaseFilmstripFrameCount
+} from './terrain/hill-of-hills-phase-filmstrip.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -81,7 +89,7 @@ if (!context) {
 }
 
 const appCanvas = canvas;
-const ctx = context;
+let ctx = context;
 const SURFACE_DETAIL_CODEBOOK: readonly HillOfHillsSurfaceDetailKind[] = [
   'none',
   'meadow-tuft',
@@ -1945,6 +1953,31 @@ function createControls(): { element: HTMLElement } {
       color: #f4e3b0;
       font: inherit;
     }
+    .phase-filmstrip-export {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(242, 223, 160, 0.18);
+    }
+    .phase-filmstrip-export label {
+      display: grid;
+      grid-template-columns: minmax(96px, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+    }
+    .phase-filmstrip-export select {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid rgba(136, 224, 186, 0.24);
+      background: rgba(3, 9, 8, 0.86);
+      color: #f4e3b0;
+      font: inherit;
+    }
+    .phase-filmstrip-status {
+      color: rgba(215, 247, 232, 0.82);
+      min-height: 1.25em;
+    }
     .preview-debug-toggle {
       display: grid;
       grid-template-columns: 18px minmax(0, 1fr);
@@ -2303,6 +2336,7 @@ function createPreviewDebugControls(): { element: HTMLElement; refresh: () => vo
   );
 
   element.append(density.row, opacity.row, topologyLines.row, topographicContours.row, contourSpacing.row);
+  element.append(createPhaseFilmstripExportControls());
 
   const reset = document.createElement('button');
   reset.type = 'button';
@@ -2327,6 +2361,148 @@ function createPreviewDebugControls(): { element: HTMLElement; refresh: () => vo
   }
 
   return { element, refresh };
+}
+
+function createPhaseFilmstripExportControls(): HTMLElement {
+  const section = document.createElement('div');
+  const label = document.createElement('label');
+  const name = document.createElement('span');
+  const select = document.createElement('select');
+  const button = document.createElement('button');
+  const status = document.createElement('div');
+
+  section.className = 'phase-filmstrip-export';
+  name.textContent = 'Phase strip';
+  for (const count of HILL_PHASE_FILMSTRIP_FRAME_COUNTS) {
+    const option = document.createElement('option');
+    option.value = String(count);
+    option.textContent = `${count} frames`;
+    select.append(option);
+  }
+  select.value = '10';
+  button.type = 'button';
+  button.textContent = 'Export phase strip';
+  status.className = 'phase-filmstrip-status';
+  status.textContent = 'next salient topology points';
+  button.addEventListener('click', () => {
+    const frameCount = normalizeHillPhaseFilmstripFrameCount(select.value);
+    button.disabled = true;
+    status.textContent = `rendering ${frameCount} frames`;
+    window.setTimeout(() => {
+      try {
+        const result = exportHillPhaseFilmstrip(frameCount);
+        status.textContent = `${result.filename} (${result.frameCount} frames)`;
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : String(error);
+      } finally {
+        button.disabled = false;
+      }
+    }, 0);
+  });
+
+  label.append(name, select);
+  section.append(label, button, status);
+  return section;
+}
+
+function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { filename: string; frameCount: number } {
+  const schedule = createHillPhaseFilmstripSchedule(params, frameCount);
+  const layout = fitHillPhaseFilmstripLayout(frameCount);
+  const stripCanvas = document.createElement('canvas');
+  const stripCtx = stripCanvas.getContext('2d');
+  const frameCanvas = document.createElement('canvas');
+  const frameCtx = frameCanvas.getContext('2d');
+
+  if (!stripCtx || !frameCtx) {
+    throw new Error('phase strip canvas unavailable');
+  }
+
+  stripCanvas.width = layout.width;
+  stripCanvas.height = layout.height;
+  frameCanvas.width = layout.cellWidth;
+  frameCanvas.height = layout.cellHeight;
+
+  stripCtx.fillStyle = '#06100d';
+  stripCtx.fillRect(0, 0, layout.width, layout.height);
+
+  const savedCtx = ctx;
+  const filmstripCache = createHillOfHillsLayerTileCache();
+
+  try {
+    ctx = frameCtx;
+    for (const frame of schedule) {
+      const frameParams = phaseFilmstripParamsFor(frame);
+      const frameBuffer = createHillOfHillsTerrainBuffer(
+        createHillOfHillsTerrainWithCache(filmstripCache, frameParams, {
+          ...previewSourceOptions,
+          frameId: `hill-of-hills-phase-filmstrip-${frame.index}`,
+          timestampMs: performance.now() + frame.phaseTimeMs
+        })
+      );
+      const column = frame.index % layout.columns;
+      const row = Math.floor(frame.index / layout.columns);
+      const x = column * (layout.cellWidth + layout.gutter);
+      const y = row * (layout.cellHeight + layout.gutter);
+
+      frameCtx.setTransform(1, 0, 0, 1, 0, 0);
+      frameCtx.clearRect(0, 0, layout.cellWidth, layout.cellHeight);
+      frameCtx.fillStyle = '#06100d';
+      frameCtx.fillRect(0, 0, layout.cellWidth, layout.cellHeight);
+      drawTerrain(frameBuffer, layout.cellWidth, layout.cellHeight);
+      if (previewSettings.layers.routeMarkers) {
+        drawRouteMarkers(frameBuffer, layout.cellWidth, layout.cellHeight);
+      }
+      drawPhaseFilmstripCaption(frameCtx, frameBuffer, frame, layout.cellWidth, layout.cellHeight);
+      stripCtx.drawImage(frameCanvas, x, y);
+    }
+  } finally {
+    ctx = savedCtx;
+  }
+
+  const filename = `hill-of-hills-phase-strip-${frameCount}-${Date.now()}.png`;
+  const anchor = document.createElement('a');
+  anchor.href = stripCanvas.toDataURL('image/png');
+  anchor.download = filename;
+  anchor.click();
+
+  return { filename, frameCount };
+}
+
+function phaseFilmstripParamsFor(frame: HillPhaseFilmstripFrame): HillOfHillsTerrainParams {
+  return {
+    ...params,
+    topologyPhaseTimeMs: frame.phaseTimeMs
+  };
+}
+
+function drawPhaseFilmstripCaption(
+  targetCtx: CanvasRenderingContext2D,
+  currentBuffer: HillOfHillsTerrainBuffer,
+  frame: HillPhaseFilmstripFrame,
+  width: number,
+  height: number
+): void {
+  const activeKinds = Object.entries(currentBuffer.witness.activePhaseKinds)
+    .filter(([, count]) => (count ?? 0) > 0)
+    .map(([kind, count]) => `${kind.replaceAll('_', ' ')} ${count}`)
+    .slice(0, 2)
+    .join(' / ') || 'none';
+  const captionHeight = 34;
+
+  targetCtx.save();
+  targetCtx.fillStyle = 'rgba(3, 9, 8, 0.74)';
+  targetCtx.fillRect(0, height - captionHeight, width, captionHeight);
+  targetCtx.fillStyle = '#d7f7e8';
+  targetCtx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  targetCtx.textBaseline = 'top';
+  targetCtx.fillText(
+    `#${String(frame.index + 1).padStart(2, '0')} ${frame.reason} clock ${frame.clock.toFixed(2)} epoch ${frame.epoch}`,
+    8,
+    height - captionHeight + 5
+  );
+  targetCtx.fillStyle = 'rgba(244, 227, 176, 0.9)';
+  targetCtx.fillText(`active ${activeKinds}`, 8, height - captionHeight + 18);
+  targetCtx.restore();
 }
 
 function createPreviewDebugRange(
