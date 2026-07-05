@@ -1,4 +1,11 @@
-import { type HillOfHillsTerrainParams } from './hill-of-hills.js';
+import {
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
+  HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS,
+  type HillOfHillsTerrainParams,
+  type HillOfHillsTopologyEventClassConfig,
+  type HillOfHillsTopologyEventClassConfigMap,
+  type HillOfHillsTopologyGesturePreset
+} from './hill-of-hills.js';
 
 export const HILL_OF_HILLS_PARAM_SETTINGS_STORAGE_KEY = 'lerms.hill-of-hills.terrain-params.v0' as const;
 
@@ -53,7 +60,9 @@ export const HILL_OF_HILLS_PERSISTED_PARAM_RANGES = {
 
 export type HillOfHillsPersistedParamKey = keyof typeof HILL_OF_HILLS_PERSISTED_PARAM_RANGES;
 
-export type HillOfHillsPersistedParamSettings = Pick<HillOfHillsTerrainParams, HillOfHillsPersistedParamKey>;
+export type HillOfHillsPersistedParamSettings = Pick<HillOfHillsTerrainParams, HillOfHillsPersistedParamKey> & {
+  topologyEventClasses: HillOfHillsTopologyEventClassConfigMap;
+};
 
 export const HILL_OF_HILLS_PERSISTED_PARAM_KEYS = Object.keys(HILL_OF_HILLS_PERSISTED_PARAM_RANGES) as HillOfHillsPersistedParamKey[];
 
@@ -65,6 +74,7 @@ export function sanitizeHillOfHillsParamSettings(input: unknown, defaults: HillO
     const range = HILL_OF_HILLS_PERSISTED_PARAM_RANGES[key];
     sanitized[key] = numberOrDefault(source[key], defaults[key], range.min, range.max) as never;
   }
+  sanitized.topologyEventClasses = sanitizeTopologyEventClasses(source.topologyEventClasses, defaults.topologyEventClasses);
 
   return sanitized;
 }
@@ -105,6 +115,34 @@ function numberOrDefault(value: unknown, fallback: number, min: number, max: num
     return round(clamp(fallback, min, max));
   }
   return round(clamp(value, min, max));
+}
+
+function sanitizeTopologyEventClasses(input: unknown, defaults: HillOfHillsTopologyEventClassConfigMap): HillOfHillsTopologyEventClassConfigMap {
+  const source = isPlainObject(input) ? input : {};
+  const sanitized = {} as HillOfHillsTopologyEventClassConfigMap;
+
+  for (const kind of HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS) {
+    const fallback = defaults[kind];
+    const candidate = isPlainObject(source[kind]) ? source[kind] : {};
+    sanitized[kind] = sanitizeTopologyEventClass(candidate, fallback);
+  }
+
+  return sanitized;
+}
+
+function sanitizeTopologyEventClass(input: Record<string, unknown>, fallback: HillOfHillsTopologyEventClassConfig): HillOfHillsTopologyEventClassConfig {
+  return {
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : fallback.enabled,
+    appetite: numberOrDefault(input.appetite, fallback.appetite, 0, 2),
+    force: numberOrDefault(input.force, fallback.force, 0, 2),
+    gesture: isTopologyGesturePreset(input.gesture) ? input.gesture : fallback.gesture,
+    phaseOffset: numberOrDefault(input.phaseOffset, fallback.phaseOffset, 0, 1),
+    spread: numberOrDefault(input.spread, fallback.spread, 0.25, 2)
+  };
+}
+
+function isTopologyGesturePreset(value: unknown): value is HillOfHillsTopologyGesturePreset {
+  return typeof value === 'string' && (HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS as readonly string[]).includes(value);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

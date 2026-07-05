@@ -5,6 +5,7 @@ import {
   createHillOfHillsTerrain,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
+  HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS,
   HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
   sampleHillOfHillsTerrain,
   type HillOfHillsTerrainParams
@@ -626,6 +627,8 @@ const topologyPhaseA = createHillOfHillsTerrain(topologyPhaseParams);
 const topologyPhaseB = createHillOfHillsTerrain(topologyPhaseParams);
 const topologyEventKinds = HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS;
 const topologyEventKindSet = new Set<string>(topologyEventKinds);
+const topologyGesturePresets = HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS;
+const topologyGesturePresetSet = new Set<string>(topologyGesturePresets);
 assert(
   topologyEventKindSet.size === 10 &&
     topologyEventKinds.includes('hill_swell') &&
@@ -639,6 +642,18 @@ assert(
     topologyEventKinds.includes('basin_bloom') &&
     topologyEventKinds.includes('strata_reveal'),
   'topology motion publishes the full typed terrain-event vocabulary'
+);
+assert(
+  topologyGesturePresetSet.size === 8 &&
+    topologyGesturePresets.includes('flicker') &&
+    topologyGesturePresets.includes('pulse') &&
+    topologyGesturePresets.includes('breath') &&
+    topologyGesturePresets.includes('surge') &&
+    topologyGesturePresets.includes('creep') &&
+    topologyGesturePresets.includes('aftershock') &&
+    topologyGesturePresets.includes('tide') &&
+    topologyGesturePresets.includes('rupture'),
+  'topology motion publishes gesture presets for event-class phase controls'
 );
 assert((topologyPhaseA.phaseState.mode as string) === 'topology_morphing', 'topology motion activates topology-morphing phase state');
 assert(topologyPhaseA.phaseState.activeEpisodes.length > 0, 'topology motion creates active local episodes');
@@ -662,10 +677,16 @@ assert(
       episode.topologyEvent.envelope.amount > 0 &&
       episode.topologyEvent.envelope.durationMs === topologyPhaseA.params.topologyPhaseDurationMs &&
       episode.topologyEvent.envelope.supportRadius === episode.radius &&
+      topologyGesturePresetSet.has(episode.topologyEvent.envelope.gesture) &&
+      episode.topologyEvent.envelope.appetite >= 0 &&
+      episode.topologyEvent.envelope.force >= 0 &&
+      episode.topologyEvent.envelope.spread > 0 &&
+      episode.topologyEvent.envelope.phaseOffset >= 0 &&
+      episode.topologyEvent.envelope.phaseOffset <= 1 &&
       episode.topologyEvent.materialHint.length > 0 &&
       episode.topologyEvent.assetHint.length > 0
   ),
-  'topology episodes carry eligibility evidence, semantic reasons, envelopes, and material/asset hints'
+  'topology episodes carry eligibility evidence, semantic reasons, gesture envelopes, and material/asset hints'
 );
 assert((topologyPhaseA.witness.phaseMode as string) === 'topology_morphing', 'topology motion witness records topology-morphing mode');
 assert(topologyPhaseA.witness.phaseChecksum === topologyPhaseB.witness.phaseChecksum, 'topology motion checksum is deterministic');
@@ -691,10 +712,13 @@ assert(
       event.semanticReason.length > 8 &&
       event.eligibility.score > 0 &&
       event.envelope.amount > 0 &&
+      topologyGesturePresetSet.has(event.envelope.gesture) &&
+      event.envelope.force >= 0 &&
+      event.envelope.spread > 0 &&
       event.materialHint.length > 0 &&
       event.assetHint.length > 0
   ),
-  'topology witness debug records preserve event kind, reason, eligibility, envelope, and hint channels'
+  'topology witness debug records preserve event kind, reason, eligibility, gesture envelope, and hint channels'
 );
 assert(
   topologyPhaseA.witness.topologyEventCandidateChecksum === topologyPhaseB.witness.topologyEventCandidateChecksum,
@@ -836,6 +860,74 @@ assert(
 assert(
   topologyBasinBiased.phaseState.activeEpisodes.every((episode) => episode.kind === 'valley_deepen'),
   'topology valley bias can steer topology motion toward valley deepening'
+);
+
+const topologyValleySurge = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: 1040,
+  topologyPhaseValleyBias: 1.8,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseHillBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: {
+    ...defaultHillOfHillsParams.topologyEventClasses,
+    valley_deepen: {
+      ...defaultHillOfHillsParams.topologyEventClasses.valley_deepen,
+      enabled: true,
+      appetite: 1.75,
+      force: 1.6,
+      gesture: 'surge',
+      phaseOffset: 0.24,
+      spread: 0.62
+    }
+  }
+} as TopologyMotionParams);
+assert(topologyValleySurge.phaseState.activeEpisodes.length > 0, 'configured topology event class can still select active valley episodes');
+assert(
+  topologyValleySurge.phaseState.activeEpisodes.every(
+    (episode) =>
+      episode.kind === 'valley_deepen' &&
+      episode.topologyEvent?.envelope.gesture === 'surge' &&
+      episode.topologyEvent.envelope.appetite === 1.75 &&
+      episode.topologyEvent.envelope.force === 1.6 &&
+      episode.topologyEvent.envelope.phaseOffset === 0.24 &&
+      episode.topologyEvent.envelope.spread === 0.62
+  ),
+  'topology event-class cards drive per-kind gesture, appetite, force, phase, and spread envelopes'
+);
+const topologyValleySuppressed = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseValleyBias: 1.8,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseHillBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: {
+    ...defaultHillOfHillsParams.topologyEventClasses,
+    valley_deepen: {
+      ...defaultHillOfHillsParams.topologyEventClasses.valley_deepen,
+      enabled: false,
+      appetite: 0,
+      force: 1,
+      gesture: 'surge',
+      phaseOffset: 0,
+      spread: 1
+    },
+    valley_fill: {
+      ...defaultHillOfHillsParams.topologyEventClasses.valley_fill,
+      enabled: false,
+      appetite: 0,
+      force: 1,
+      gesture: 'tide',
+      phaseOffset: 0,
+      spread: 1
+    }
+  }
+} as TopologyMotionParams);
+assert(
+  topologyValleySuppressed.phaseState.activeEpisodes.length === 0,
+  'disabling topology event classes suppresses otherwise eligible topology events'
 );
 
 const cacheSource = {

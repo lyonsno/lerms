@@ -54,6 +54,24 @@ const sanitized = sanitizeHillOfHillsParamSettings(
     topologyPhaseSaddleBias: 0,
     topologyPhaseOverlap: 0.44,
     topologyPhaseDetailScale: 1.7,
+    topologyEventClasses: {
+      valley_deepen: {
+        enabled: true,
+        appetite: 1.65,
+        force: 1.3,
+        gesture: 'surge',
+        phaseOffset: 0.25,
+        spread: 0.62
+      },
+      ridge_shear: {
+        enabled: false,
+        appetite: 0.15,
+        force: 1.85,
+        gesture: 'rupture',
+        phaseOffset: 0.75,
+        spread: 1.7
+      }
+    },
     yaw: 0.91,
     tilt: 0.35,
     cameraZoom: 1.6,
@@ -74,6 +92,13 @@ assert(sanitized.topologyPhaseRidgeBias === 1.8, 'terrain param settings persist
 assert(sanitized.topologyPhaseSaddleBias === 0, 'terrain param settings persist saddle kind bias');
 assert(sanitized.topologyPhaseOverlap === 0.44, 'terrain param settings persist topology overlap');
 assert(sanitized.topologyPhaseDetailScale === 1.7, 'terrain param settings persist topology detail scale');
+assert(sanitized.topologyEventClasses.valley_deepen.gesture === 'surge', 'terrain param settings persist valley gesture preset');
+assert(sanitized.topologyEventClasses.valley_deepen.appetite === 1.65, 'terrain param settings persist valley appetite');
+assert(sanitized.topologyEventClasses.valley_deepen.force === 1.3, 'terrain param settings persist valley force');
+assert(sanitized.topologyEventClasses.valley_deepen.phaseOffset === 0.25, 'terrain param settings persist valley phase offset');
+assert(sanitized.topologyEventClasses.valley_deepen.spread === 0.62, 'terrain param settings persist valley support spread');
+assert(sanitized.topologyEventClasses.ridge_shear.enabled === false, 'terrain param settings persist event-class enabled flags');
+assert(sanitized.topologyEventClasses.ridge_shear.gesture === 'rupture', 'terrain param settings persist ridge gesture preset');
 assert(!('yaw' in sanitized), 'terrain param settings ignore camera yaw');
 assert(!('tilt' in sanitized), 'terrain param settings ignore camera tilt');
 assert(!('cameraZoom' in sanitized), 'terrain param settings ignore camera zoom');
@@ -93,7 +118,17 @@ const clamped = sanitizeHillOfHillsParamSettings(
     topologyPhaseRidgeBias: -4,
     topologyPhaseSaddleBias: Number.NaN,
     topologyPhaseOverlap: 3,
-    topologyPhaseDetailScale: -2
+    topologyPhaseDetailScale: -2,
+    topologyEventClasses: {
+      hill_swell: {
+        enabled: 'maybe',
+        appetite: 9,
+        force: -1,
+        gesture: 'nonsense',
+        phaseOffset: 4,
+        spread: -2
+      }
+    }
   },
   defaults
 );
@@ -109,6 +144,12 @@ assert(clamped.topologyPhaseRidgeBias === 0, 'persisted ridge bias clamps to min
 assert(clamped.topologyPhaseSaddleBias === defaults.topologyPhaseSaddleBias, 'invalid saddle bias falls back');
 assert(clamped.topologyPhaseOverlap === 0.5, 'persisted topology overlap clamps to max');
 assert(clamped.topologyPhaseDetailScale === 0, 'persisted topology detail scale clamps to min');
+assert(clamped.topologyEventClasses.hill_swell.enabled === defaults.topologyEventClasses.hill_swell.enabled, 'invalid event enabled flag falls back');
+assert(clamped.topologyEventClasses.hill_swell.gesture === defaults.topologyEventClasses.hill_swell.gesture, 'invalid event gesture falls back');
+assert(clamped.topologyEventClasses.hill_swell.appetite === 2, 'persisted event appetite clamps to max');
+assert(clamped.topologyEventClasses.hill_swell.force === 0, 'persisted event force clamps to min');
+assert(clamped.topologyEventClasses.hill_swell.phaseOffset === 1, 'persisted event phase offset clamps to max');
+assert(clamped.topologyEventClasses.hill_swell.spread === 0.25, 'persisted event spread clamps to min');
 
 const storage = memoryStorage();
 saveHillOfHillsParamSettings(storage, { ...defaults, ...sanitized });
@@ -116,12 +157,17 @@ const rawSaved = storage.getItem(HILL_OF_HILLS_PARAM_SETTINGS_STORAGE_KEY);
 assert(typeof rawSaved === 'string' && rawSaved.includes('"topologyPhaseHeightScale"'), 'save writes terrain settings payload');
 assert(rawSaved.includes('"topologyPhaseOverlap"'), 'save writes topology overlap');
 assert(rawSaved.includes('"topologyPhaseDetailScale"'), 'save writes topology detail scale');
+assert(rawSaved.includes('"topologyEventClasses"'), 'save writes topology event-class settings');
+assert(rawSaved.includes('"surge"') && rawSaved.includes('"rupture"'), 'save writes topology gesture presets');
 assert(!rawSaved.includes('yaw') && !rawSaved.includes('camera'), 'save excludes camera settings');
 const loaded = loadHillOfHillsParamSettings(storage, defaults);
 assert(loaded.topologyPhaseHeightScale === 0.35, 'load round-trips topology height scale');
 assert(loaded.topologyPhaseDurationMs === 4400, 'load round-trips topology cadence');
 assert(loaded.topologyPhaseOverlap === 0.44, 'load round-trips topology overlap');
 assert(loaded.topologyPhaseDetailScale === 1.7, 'load round-trips topology detail scale');
+assert(loaded.topologyEventClasses.valley_deepen.gesture === 'surge', 'load round-trips topology gesture preset');
+assert(loaded.topologyEventClasses.valley_deepen.force === 1.3, 'load round-trips topology event force');
+assert(loaded.topologyEventClasses.ridge_shear.enabled === false, 'load round-trips disabled topology event class');
 assert(loaded.hillCount === 28, 'load round-trips terrain count');
 
 const brokenStorage = memoryStorage({

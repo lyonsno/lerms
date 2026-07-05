@@ -24,9 +24,20 @@ export const HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS = [
   'basin_bloom',
   'strata_reveal'
 ] as const;
+export const HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS = [
+  'flicker',
+  'pulse',
+  'breath',
+  'surge',
+  'creep',
+  'aftershock',
+  'tide',
+  'rupture'
+] as const;
 
 export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 'invalid';
 export type HillOfHillsTopologyPhaseKind = (typeof HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS)[number];
+export type HillOfHillsTopologyGesturePreset = (typeof HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS)[number];
 export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming' | 'trail_forming' | 'topology_morphing' | 'mixed_forming';
 export type HillOfHillsPhaseKind = 'ditch_forming' | 'trail_forming' | HillOfHillsTopologyPhaseKind;
 export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
@@ -158,6 +169,17 @@ export interface HillOfHillsTopologyEventEligibility {
   slope: number;
 }
 
+export interface HillOfHillsTopologyEventClassConfig {
+  enabled: boolean;
+  appetite: number;
+  force: number;
+  gesture: HillOfHillsTopologyGesturePreset;
+  phaseOffset: number;
+  spread: number;
+}
+
+export type HillOfHillsTopologyEventClassConfigMap = Record<HillOfHillsTopologyPhaseKind, HillOfHillsTopologyEventClassConfig>;
+
 export interface HillOfHillsTopologyEventEnvelope {
   clock: number;
   phaseIn: number;
@@ -169,6 +191,11 @@ export interface HillOfHillsTopologyEventEnvelope {
   intensity: number;
   supportRadius: number;
   falloff: HillOfHillsTopologyEventFalloffKind;
+  gesture: HillOfHillsTopologyGesturePreset;
+  appetite: number;
+  force: number;
+  phaseOffset: number;
+  spread: number;
 }
 
 export interface HillOfHillsTopologyEventDebug {
@@ -332,6 +359,7 @@ export interface HillOfHillsTerrainParams {
   topologyPhaseDetailScale: number;
   topologyPhaseTimeMs: number;
   topologyPhaseDurationMs: number;
+  topologyEventClasses: HillOfHillsTopologyEventClassConfigMap;
   gridResolutionX: number;
   gridResolutionZ: number;
   crownZ: number;
@@ -691,6 +719,89 @@ const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
   'stone-scatter'
 ];
 
+export const defaultHillOfHillsTopologyEventClasses: HillOfHillsTopologyEventClassConfigMap = {
+  hill_swell: {
+    enabled: true,
+    appetite: 1,
+    force: 1,
+    gesture: 'breath',
+    phaseOffset: 0.04,
+    spread: 1.08
+  },
+  hill_slump: {
+    enabled: true,
+    appetite: 0.9,
+    force: 0.95,
+    gesture: 'creep',
+    phaseOffset: 0.18,
+    spread: 1.05
+  },
+  valley_deepen: {
+    enabled: true,
+    appetite: 1,
+    force: 1.05,
+    gesture: 'surge',
+    phaseOffset: 0.12,
+    spread: 1.12
+  },
+  valley_fill: {
+    enabled: true,
+    appetite: 0.82,
+    force: 0.78,
+    gesture: 'tide',
+    phaseOffset: 0.56,
+    spread: 1.25
+  },
+  ridge_lift: {
+    enabled: true,
+    appetite: 0.94,
+    force: 1,
+    gesture: 'breath',
+    phaseOffset: 0.22,
+    spread: 1
+  },
+  ridge_shear: {
+    enabled: true,
+    appetite: 0.84,
+    force: 1.15,
+    gesture: 'rupture',
+    phaseOffset: 0.34,
+    spread: 0.85
+  },
+  saddle_pinch: {
+    enabled: true,
+    appetite: 0.86,
+    force: 0.92,
+    gesture: 'pulse',
+    phaseOffset: 0.46,
+    spread: 0.95
+  },
+  saddle_pass: {
+    enabled: true,
+    appetite: 0.78,
+    force: 0.84,
+    gesture: 'creep',
+    phaseOffset: 0.62,
+    spread: 1.18
+  },
+  basin_bloom: {
+    enabled: true,
+    appetite: 0.9,
+    force: 0.72,
+    gesture: 'tide',
+    phaseOffset: 0.72,
+    spread: 1.35
+  },
+  strata_reveal: {
+    enabled: true,
+    appetite: 0.74,
+    force: 1.08,
+    gesture: 'aftershock',
+    phaseOffset: 0.38,
+    spread: 0.75
+  }
+};
+
 export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   seed: 52027,
   width: 11.5,
@@ -739,6 +850,7 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   topologyPhaseDetailScale: 1,
   topologyPhaseTimeMs: 0,
   topologyPhaseDurationMs: 1800,
+  topologyEventClasses: defaultHillOfHillsTopologyEventClasses,
   gridResolutionX: 72,
   gridResolutionZ: 96,
   crownZ: 5.2
@@ -1118,10 +1230,48 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     topologyPhaseDetailScale: clamp(finiteOr(params.topologyPhaseDetailScale, 1), 0, 2),
     topologyPhaseTimeMs: Math.max(0, finiteOr(params.topologyPhaseTimeMs, 0)),
     topologyPhaseDurationMs: finiteAtLeast(params.topologyPhaseDurationMs, 240),
+    topologyEventClasses: normalizeTopologyEventClasses(params.topologyEventClasses),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
     gridResolutionZ: Math.max(8, Math.round(finiteOr(params.gridResolutionZ, 96))),
     crownZ: clamp(finiteOr(params.crownZ, defaultHillOfHillsParams.crownZ) * worldScale, -length * 0.5, length * 0.5)
   };
+}
+
+function normalizeTopologyEventClasses(input: unknown): HillOfHillsTopologyEventClassConfigMap {
+  const source = isRecord(input) ? input : {};
+  const normalized = {} as HillOfHillsTopologyEventClassConfigMap;
+
+  for (const kind of HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS) {
+    const fallback = defaultHillOfHillsTopologyEventClasses[kind];
+    const candidate = isRecord(source[kind]) ? source[kind] : {};
+    const gesture = candidate.gesture;
+    normalized[kind] = {
+      enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
+      appetite: clamp(finiteOrValue(candidate.appetite, fallback.appetite), 0, 2),
+      force: clamp(finiteOrValue(candidate.force, fallback.force), 0, 2),
+      gesture: isTopologyGesturePreset(gesture) ? gesture : fallback.gesture,
+      phaseOffset: clamp(finiteOrValue(candidate.phaseOffset, fallback.phaseOffset), 0, 1),
+      spread: clamp(finiteOrValue(candidate.spread, fallback.spread), 0.25, 2)
+    };
+  }
+
+  return normalized;
+}
+
+function topologyEventClassConfig(params: HillOfHillsTerrainParams, kind: HillOfHillsTopologyPhaseKind): HillOfHillsTopologyEventClassConfig {
+  return params.topologyEventClasses[kind] ?? defaultHillOfHillsTopologyEventClasses[kind];
+}
+
+function isTopologyGesturePreset(value: unknown): value is HillOfHillsTopologyGesturePreset {
+  return typeof value === 'string' && (HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS as readonly string[]).includes(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function finiteOrValue(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function createTerrainSource(
@@ -1273,18 +1423,30 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
 
       for (let i = 0; i < selectedCandidates.length; i += 1) {
         const candidate = selectedCandidates[i];
+        const eventConfig = topologyEventClassConfig(params, candidate.topologyKind);
+        if (!eventConfig.enabled || eventConfig.appetite <= 0 || eventConfig.force <= 0) continue;
+        const gestureState = topologyGestureState(eventConfig.gesture, wrapUnit(window.clock + eventConfig.phaseOffset));
+        if (gestureState.amount <= 0.001) continue;
         const angle = (rng() - 0.5) * 0.5;
         const direction = normalize([
           candidate.direction[0] * Math.cos(angle) + candidate.direction[2] * Math.sin(angle),
           0,
           candidate.direction[2] * Math.cos(angle) - candidate.direction[0] * Math.sin(angle)
         ]);
-        const radius = params.topologyPhaseRadius * (0.78 + rng() * 0.52);
-        const localProgress = clamp(window.progress * (0.82 + rng() * 0.22), 0, 1);
-        const localIntensity = clamp(params.topologyPhaseIntensity * window.amount * (0.68 + rng() * 0.28), 0, 1);
+        const radius = params.topologyPhaseRadius * eventConfig.spread * (0.78 + rng() * 0.52);
+        const localProgress = clamp(gestureState.amount * (0.82 + rng() * 0.22), 0, 1);
+        const localIntensity = clamp(params.topologyPhaseIntensity * window.amount * eventConfig.force * (0.68 + rng() * 0.28), 0, 1);
         if (localIntensity <= 0.001) continue;
         const id = `topology-${window.epoch}-${i}-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
-        const envelope = topologyEventEnvelope(window, params, radius, localProgress, localIntensity, candidate.falloff);
+        const envelope = topologyEventEnvelope(
+          gestureState,
+          params,
+          radius,
+          localProgress,
+          localIntensity,
+          candidate.falloff,
+          eventConfig
+        );
         episodes.push({
           id,
           kind: candidate.topologyKind,
@@ -1414,6 +1576,14 @@ interface TopologyPhaseWindow {
   amount: number;
 }
 
+interface TopologyGestureState {
+  clock: number;
+  phaseIn: number;
+  hold: number;
+  phaseOut: number;
+  amount: number;
+}
+
 function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap: number): TopologyPhaseWindow[] {
   const windows: TopologyPhaseWindow[] = [];
   const clock = clamp(timing.clock, 0, 1);
@@ -1448,6 +1618,53 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
 
 function topologyPhaseProgressAtClock(clock: number): number {
   return smoothstep(0.04, 0.46, clamp(clock, 0, 1));
+}
+
+function topologyGestureState(gesture: HillOfHillsTopologyGesturePreset, clock: number): TopologyGestureState {
+  const c = clamp(clock, 0, 1);
+  switch (gesture) {
+    case 'flicker':
+      return gestureEnvelope(c, 0.02, 0.1, 0.12, 0.24);
+    case 'pulse':
+      return gestureEnvelope(c, 0.04, 0.22, 0.34, 0.62);
+    case 'breath':
+      return gestureEnvelope(c, 0.02, 0.38, 0.62, 0.96);
+    case 'surge':
+      return gestureEnvelope(c, 0.02, 0.18, 0.82, 0.96);
+    case 'creep':
+      return gestureEnvelope(c, 0.04, 0.68, 0.82, 1);
+    case 'aftershock': {
+      const primary = gestureEnvelope(c, 0.02, 0.18, 0.28, 0.48);
+      const echo = gestureEnvelope(c, 0.5, 0.62, 0.74, 0.92);
+      const amount = clamp(Math.max(primary.amount, echo.amount * 0.64), 0, 1);
+      return {
+        clock: c,
+        phaseIn: Math.max(primary.phaseIn, echo.phaseIn * 0.64),
+        hold: Math.max(primary.hold, echo.hold * 0.64),
+        phaseOut: primary.amount >= echo.amount * 0.64 ? primary.phaseOut : echo.phaseOut,
+        amount
+      };
+    }
+    case 'tide':
+      return gestureEnvelope(c, 0, 0.46, 0.54, 1);
+    case 'rupture':
+      return gestureEnvelope(c, 0.01, 0.08, 0.18, 0.7);
+  }
+}
+
+function gestureEnvelope(clock: number, attackEnd: number, holdStart: number, holdEnd: number, releaseEnd: number): TopologyGestureState {
+  const c = clamp(clock, 0, 1);
+  const phaseIn = smoothstep(0, Math.max(0.001, attackEnd), c);
+  const hold = smoothstep(holdStart, holdEnd, c) * (1 - smoothstep(holdEnd, releaseEnd, c));
+  const phaseOut = smoothstep(holdEnd, releaseEnd, c);
+  const amount = clamp(phaseIn * (1 - phaseOut), 0, 1);
+  return {
+    clock: c,
+    phaseIn,
+    hold,
+    phaseOut,
+    amount
+  };
 }
 
 function phaseModeFor(episodes: readonly HillOfHillsPhaseEpisode[]): HillOfHillsPhaseMode {
@@ -1871,8 +2088,15 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
           falloff: 'shear_band'
         }
       );
-      let selected = eventOptions[0];
-      for (const option of eventOptions) {
+      const configuredEventOptions = eventOptions.map((option) => {
+        const eventConfig = topologyEventClassConfig(params, option.kind);
+        return {
+          ...option,
+          score: eventConfig.enabled ? clamp(option.score * eventConfig.appetite, 0, 1) : 0
+        };
+      });
+      let selected = configuredEventOptions[0];
+      for (const option of configuredEventOptions) {
         if (option.score > selected.score) selected = option;
       }
       const score = clamp(selected.score * (0.76 + activeInterior * 0.24), 0, 1);
@@ -2031,25 +2255,30 @@ function emptyTopologyCandidateSummary(): TopologyMotionCandidateSummary {
 }
 
 function topologyEventEnvelope(
-  timing: { clock: number },
+  gestureState: TopologyGestureState,
   params: HillOfHillsTerrainParams,
   radius: number,
   progress: number,
   intensity: number,
-  falloff: HillOfHillsTopologyEventFalloffKind
+  falloff: HillOfHillsTopologyEventFalloffKind,
+  eventConfig: HillOfHillsTopologyEventClassConfig
 ): HillOfHillsTopologyEventEnvelope {
-  const clock = clamp(timing.clock, 0, 1);
   return {
-    clock,
-    phaseIn: smoothstep(0.04, 0.46, clock),
-    hold: smoothstep(0.18, 0.54, clock) * (1 - smoothstep(0.68, 0.86, clock)),
-    phaseOut: smoothstep(0.76, 1, clock),
+    clock: gestureState.clock,
+    phaseIn: gestureState.phaseIn,
+    hold: gestureState.hold,
+    phaseOut: gestureState.phaseOut,
     amount: clamp(progress * intensity, 0, 1),
     durationMs: params.topologyPhaseDurationMs,
     cadenceMs: params.topologyPhaseDurationMs,
     intensity,
     supportRadius: radius,
-    falloff
+    falloff,
+    gesture: eventConfig.gesture,
+    appetite: eventConfig.appetite,
+    force: eventConfig.force,
+    phaseOffset: eventConfig.phaseOffset,
+    spread: eventConfig.spread
   };
 }
 
@@ -2227,6 +2456,11 @@ function phaseEpisodeSignature(episode: HillOfHillsPhaseEpisode): string {
     episode.seedDitchPotential.toFixed(3),
     episode.seedSlope.toFixed(3),
     episode.topologyEvent?.reason ?? 'none',
+    episode.topologyEvent?.envelope.gesture ?? 'none',
+    episode.topologyEvent?.envelope.appetite.toFixed(3) ?? 'none',
+    episode.topologyEvent?.envelope.force.toFixed(3) ?? 'none',
+    episode.topologyEvent?.envelope.phaseOffset.toFixed(3) ?? 'none',
+    episode.topologyEvent?.envelope.spread.toFixed(3) ?? 'none',
     episode.topologyEvent?.materialHint ?? 'none',
     episode.topologyEvent?.assetHint ?? 'none'
   ].join(':');
@@ -3694,6 +3928,10 @@ function smoothstep(edge0: number, edge1: number, value: number): number {
 function smoothCap(value: number): number {
   const t = clamp(value, 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+function wrapUnit(value: number): number {
+  return ((value % 1) + 1) % 1;
 }
 
 function normalize(vector: Vec3): Vec3 {

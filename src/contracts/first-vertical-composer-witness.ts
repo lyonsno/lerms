@@ -10,7 +10,13 @@ import {
 } from './first-vertical.ts';
 import { buildRedLermBodyMotionWitness } from '../red-lerm-body-motion.ts';
 import { composeFirstVerticalFrame } from './first-vertical-composer.ts';
-import type { HillOfHillsTerrain, HillOfHillsTerrainParams, HillOfHillsTerrainSample } from '../terrain/hill-of-hills.ts';
+import {
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
+  defaultHillOfHillsParams,
+  type HillOfHillsTerrain,
+  type HillOfHillsTerrainParams,
+  type HillOfHillsTerrainSample
+} from '../terrain/hill-of-hills.ts';
 
 export const FIRST_VERTICAL_COMPOSER_WITNESS_ROUTE = 'first-vertical-composer/witness-file' as const;
 
@@ -284,7 +290,10 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       trailSeedMethod: 'none',
       trailCandidateChecksum: 'none',
       trailCandidateScoreRange: { min: 0, max: 0 },
-      selectedTrailScoreRange: { min: 0, max: 0 }
+      selectedTrailScoreRange: { min: 0, max: 0 },
+      topologyEventCandidateChecksum: 'none',
+      topologyEventCandidateScoreRange: { min: 0, max: 0 },
+      selectedTopologyEventScoreRange: { min: 0, max: 0 }
     },
     samples: [sample],
     witness: {
@@ -370,6 +379,11 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       trailCandidateChecksum: 'none',
       trailCandidateScoreRange: { min: 0, max: 0 },
       selectedTrailScoreRange: { min: 0, max: 0 },
+      topologyEventVocabulary: HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
+      topologyEventCandidateChecksum: 'none',
+      topologyEventCandidateScoreRange: { min: 0, max: 0 },
+      selectedTopologyEventScoreRange: { min: 0, max: 0 },
+      topologyEventDebug: [],
       topologyRanges: {
         flowAccumulation: { min: 0.42, max: 0.42 },
         ridgeStrength: { min: 0.5, max: 0.5 },
@@ -388,6 +402,7 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
 
 function buildTerrainParams(): HillOfHillsTerrainParams {
   return {
+    ...defaultHillOfHillsParams,
     seed: 1,
     width: 10,
     length: 12,

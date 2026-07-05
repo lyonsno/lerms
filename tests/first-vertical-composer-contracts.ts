@@ -3,7 +3,12 @@ import {
   summarizeFirstVerticalFrame,
   type FirstVerticalFrame
 } from '../src/contracts/first-vertical.ts';
-import type { HillOfHillsTerrain, HillOfHillsTerrainSample } from '../src/terrain/hill-of-hills.ts';
+import {
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
+  defaultHillOfHillsParams,
+  type HillOfHillsTerrain,
+  type HillOfHillsTerrainSample
+} from '../src/terrain/hill-of-hills.ts';
 import { buildRedLermBodyMotionWitness } from '../src/red-lerm-body-motion.ts';
 import { composeFirstVerticalFrame } from '../src/contracts/first-vertical-composer.ts';
 
@@ -104,6 +109,7 @@ const terrainSample: HillOfHillsTerrainSample = {
 const terrain: HillOfHillsTerrain = {
   source: terrainSource,
   params: {
+    ...defaultHillOfHillsParams,
     seed: 1,
     width: 10,
     length: 12,
@@ -167,7 +173,10 @@ const terrain: HillOfHillsTerrain = {
     trailSeedMethod: 'none',
     trailCandidateChecksum: 'none',
     trailCandidateScoreRange: { min: 0, max: 0 },
-    selectedTrailScoreRange: { min: 0, max: 0 }
+    selectedTrailScoreRange: { min: 0, max: 0 },
+    topologyEventCandidateChecksum: 'none',
+    topologyEventCandidateScoreRange: { min: 0, max: 0 },
+    selectedTopologyEventScoreRange: { min: 0, max: 0 }
   },
   samples: [terrainSample],
   witness: {
@@ -177,6 +186,7 @@ const terrain: HillOfHillsTerrain = {
     route: 'composer-test/terrain',
     fallbackStatus: 'none',
     effectiveParams: {
+      ...defaultHillOfHillsParams,
       seed: 1,
       width: 10,
       length: 12,
@@ -300,6 +310,11 @@ const terrain: HillOfHillsTerrain = {
     trailCandidateChecksum: 'none',
     trailCandidateScoreRange: { min: 0, max: 0 },
     selectedTrailScoreRange: { min: 0, max: 0 },
+    topologyEventVocabulary: HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
+    topologyEventCandidateChecksum: 'none',
+    topologyEventCandidateScoreRange: { min: 0, max: 0 },
+    selectedTopologyEventScoreRange: { min: 0, max: 0 },
+    topologyEventDebug: [],
     topologyRanges: {
       flowAccumulation: { min: 0.42, max: 0.42 },
       ridgeStrength: { min: 0.5, max: 0.5 },

@@ -3,6 +3,8 @@ import {
   createHillOfHillsTerrainBuffer,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
+  HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS,
   type HillOfHillsMaterialEdgeKind,
   type HillOfHillsProxyMaterialKind,
   type HillOfHillsSurfaceDetailKind,
@@ -10,6 +12,8 @@ import {
   type HillOfHillsTerrainBuffer,
   type HillOfHillsTerrainBufferMetricChannel,
   type HillOfHillsTerrainParams,
+  type HillOfHillsTopologyEventClassConfig,
+  type HillOfHillsTopologyPhaseKind,
 } from './terrain/hill-of-hills.js';
 import {
   createHillTerrainWorkerRequest,
@@ -1851,6 +1855,7 @@ function createControls(): { element: HTMLElement } {
     row.append(name, input, value);
     element.append(row);
   }
+  appendTopologyEventClassControls(element);
 
   const style = document.createElement('style');
   style.textContent = `
@@ -1897,6 +1902,48 @@ function createControls(): { element: HTMLElement } {
       gap: 8px;
       align-items: center;
       min-height: 26px;
+    }
+    .topology-event-controls {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(242, 223, 160, 0.18);
+    }
+    .topology-event-controls h2 {
+      margin: 0;
+      color: #d7f7e8;
+      font: inherit;
+      font-weight: 700;
+    }
+    .topology-event-card {
+      display: grid;
+      gap: 6px;
+      padding: 8px;
+      border: 1px solid rgba(136, 224, 186, 0.18);
+      background: rgba(8, 23, 19, 0.54);
+      border-radius: 6px;
+    }
+    .topology-event-card-header {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) minmax(84px, 0.8fr);
+      gap: 8px;
+      align-items: center;
+    }
+    .topology-event-card-header strong {
+      color: #d7f7e8;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .topology-event-card select {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid rgba(136, 224, 186, 0.24);
+      background: rgba(3, 9, 8, 0.86);
+      color: #f4e3b0;
+      font: inherit;
     }
     .preview-debug-toggle {
       display: grid;
@@ -1976,6 +2023,103 @@ function createControls(): { element: HTMLElement } {
   document.head.append(style);
 
   return { element };
+}
+
+function appendTopologyEventClassControls(parent: HTMLElement): void {
+  const section = document.createElement('div');
+  const title = document.createElement('h2');
+  section.className = 'topology-event-controls';
+  title.textContent = 'Topology gestures';
+  section.append(title);
+
+  for (const kind of HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS) {
+    section.append(createTopologyEventClassCard(kind));
+  }
+
+  parent.append(section);
+}
+
+function createTopologyEventClassCard(kind: HillOfHillsTopologyPhaseKind): HTMLElement {
+  const card = document.createElement('div');
+  const header = document.createElement('div');
+  const enabled = document.createElement('input');
+  const title = document.createElement('strong');
+  const gesture = document.createElement('select');
+  const config = params.topologyEventClasses[kind];
+
+  card.className = 'topology-event-card';
+  header.className = 'topology-event-card-header';
+  enabled.type = 'checkbox';
+  enabled.checked = config.enabled;
+  enabled.title = `${topologyEventLabel(kind)} enabled`;
+  enabled.addEventListener('input', () => updateTopologyEventClass(kind, { enabled: enabled.checked }));
+  title.textContent = topologyEventLabel(kind);
+  for (const preset of HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS) {
+    const option = document.createElement('option');
+    option.value = preset;
+    option.textContent = preset;
+    gesture.append(option);
+  }
+  gesture.value = config.gesture;
+  gesture.addEventListener('input', () => updateTopologyEventClass(kind, { gesture: gesture.value as HillOfHillsTopologyEventClassConfig['gesture'] }));
+  header.append(enabled, title, gesture);
+  card.append(header);
+
+  card.append(
+    createTopologyEventClassSlider(kind, 'appetite', 'Appetite', 0, 2, 0.05),
+    createTopologyEventClassSlider(kind, 'force', 'Force', 0, 2, 0.05),
+    createTopologyEventClassSlider(kind, 'phaseOffset', 'Phase', 0, 1, 0.01),
+    createTopologyEventClassSlider(kind, 'spread', 'Spread', 0.25, 2, 0.05)
+  );
+
+  return card;
+}
+
+function createTopologyEventClassSlider(
+  kind: HillOfHillsTopologyPhaseKind,
+  key: 'appetite' | 'force' | 'phaseOffset' | 'spread',
+  label: string,
+  min: number,
+  max: number,
+  step: number
+): HTMLElement {
+  const row = document.createElement('label');
+  const name = document.createElement('span');
+  const input = document.createElement('input');
+  const value = document.createElement('output');
+  const currentValue = params.topologyEventClasses[kind][key];
+  name.textContent = label;
+  input.type = 'range';
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(currentValue);
+  value.value = currentValue.toFixed(2);
+  input.addEventListener('input', () => {
+    const nextValue = Number(input.value);
+    updateTopologyEventClass(kind, { [key]: nextValue });
+    value.value = nextValue.toFixed(2);
+  });
+  row.append(name, input, value);
+  return row;
+}
+
+function updateTopologyEventClass(kind: HillOfHillsTopologyPhaseKind, patch: Partial<HillOfHillsTopologyEventClassConfig>): void {
+  params = {
+    ...params,
+    topologyEventClasses: {
+      ...params.topologyEventClasses,
+      [kind]: {
+        ...params.topologyEventClasses[kind],
+        ...patch
+      }
+    }
+  };
+  persistParamSettings();
+}
+
+function topologyEventLabel(kind: HillOfHillsTopologyPhaseKind): string {
+  return kind.replaceAll('_', ' ');
 }
 
 function createViewControls(): { element: HTMLElement; refresh: () => void } {
