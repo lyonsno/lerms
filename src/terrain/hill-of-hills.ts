@@ -324,8 +324,12 @@ export interface HillOfHillsTerrainParams {
   topologyPhaseRadius: number;
   topologyPhaseHeightScale: number;
   topologyPhaseBasinBias: number;
+  topologyPhaseValleyBias: number;
   topologyPhaseHillBias: number;
+  topologyPhaseRidgeBias: number;
   topologyPhaseSaddleBias: number;
+  topologyPhaseOverlap: number;
+  topologyPhaseDetailScale: number;
   topologyPhaseTimeMs: number;
   topologyPhaseDurationMs: number;
   gridResolutionX: number;
@@ -727,8 +731,12 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   topologyPhaseRadius: 1.45,
   topologyPhaseHeightScale: 1,
   topologyPhaseBasinBias: 1,
+  topologyPhaseValleyBias: 1,
   topologyPhaseHillBias: 1,
+  topologyPhaseRidgeBias: 1,
   topologyPhaseSaddleBias: 1,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseDetailScale: 1,
   topologyPhaseTimeMs: 0,
   topologyPhaseDurationMs: 1800,
   gridResolutionX: 72,
@@ -1102,8 +1110,12 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     topologyPhaseRadius: clamp(finiteAtLeast(params.topologyPhaseRadius, 0.35) * worldScale, 0.35 * worldScale, 3.5 * worldScale),
     topologyPhaseHeightScale: clamp(finiteOr(params.topologyPhaseHeightScale, 1), 0, 2),
     topologyPhaseBasinBias: clamp(finiteOr(params.topologyPhaseBasinBias, 1), 0, 2),
+    topologyPhaseValleyBias: clamp(finiteOr(params.topologyPhaseValleyBias, 1), 0, 2),
     topologyPhaseHillBias: clamp(finiteOr(params.topologyPhaseHillBias, 1), 0, 2),
+    topologyPhaseRidgeBias: clamp(finiteOr(params.topologyPhaseRidgeBias, 1), 0, 2),
     topologyPhaseSaddleBias: clamp(finiteOr(params.topologyPhaseSaddleBias, 1), 0, 2),
+    topologyPhaseOverlap: clamp(finiteOr(params.topologyPhaseOverlap, 0.32), 0, 0.5),
+    topologyPhaseDetailScale: clamp(finiteOr(params.topologyPhaseDetailScale, 1), 0, 2),
     topologyPhaseTimeMs: Math.max(0, finiteOr(params.topologyPhaseTimeMs, 0)),
     topologyPhaseDurationMs: finiteAtLeast(params.topologyPhaseDurationMs, 240),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
@@ -1158,9 +1170,11 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
   const ditchTiming = phaseTiming(params.ditchPhaseTimeMs, params.ditchPhaseDurationMs);
   const trailTiming = phaseTiming(params.trailPhaseTimeMs, params.trailPhaseDurationMs);
   const topologyTiming = phaseTiming(params.topologyPhaseTimeMs, params.topologyPhaseDurationMs);
+  const topologyWindows = topologyPhaseWindows(topologyTiming, params.topologyPhaseOverlap);
   const ditchIntensity = clamp(params.ditchPhaseIntensity * ditchTiming.progress, 0, 1);
   const trailIntensity = clamp(params.trailPhaseIntensity * trailTiming.progress, 0, 1);
-  const topologyIntensity = clamp(params.topologyPhaseIntensity * topologyTiming.progress, 0, 1);
+  const topologyProgress = topologyWindows.reduce((maxProgress, window) => Math.max(maxProgress, window.amount), 0);
+  const topologyIntensity = clamp(params.topologyPhaseIntensity * topologyProgress, 0, 1);
   const terrainEpoch = Math.max(ditchTiming.epoch, trailTiming.epoch, topologyTiming.epoch);
   let trailSeedMethod: HillOfHillsTrailSeedMethod = 'none';
   let trailCandidateSummary = emptyTrailCandidateSummary();
@@ -1247,57 +1261,65 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
     }
   }
 
-  if (topologyIntensity > 0 && params.topologyPhaseLimit > 0) {
-    const rng = mulberry32(params.topologyPhaseSeed + topologyTiming.epoch * 104729 + params.seed * 31);
+  if (params.topologyPhaseIntensity > 0 && params.topologyPhaseLimit > 0) {
     topologyCandidateSummary = scoreTopologyMotionCandidates(params);
-    const selectedCandidates = selectTopologyMotionCandidates(params, topologyCandidateSummary.candidates, params.topologyPhaseLimit, rng);
-    selectedTopologyEventScoreRange = scoreRangeForCandidates(selectedCandidates);
+    const selectedForScoreRange: TopologyMotionCandidate[] = [];
 
-    for (let i = 0; i < selectedCandidates.length; i += 1) {
-      const candidate = selectedCandidates[i];
-      const angle = (rng() - 0.5) * 0.5;
-      const direction = normalize([
-        candidate.direction[0] * Math.cos(angle) + candidate.direction[2] * Math.sin(angle),
-        0,
-        candidate.direction[2] * Math.cos(angle) - candidate.direction[0] * Math.sin(angle)
-      ]);
-      const radius = params.topologyPhaseRadius * (0.78 + rng() * 0.52);
-      const localProgress = clamp(topologyTiming.progress * (0.82 + rng() * 0.22), 0, 1);
-      const localIntensity = topologyIntensity * (0.68 + rng() * 0.28);
-      const id = `topology-${topologyTiming.epoch}-${i}-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
-      const envelope = topologyEventEnvelope(topologyTiming, params, radius, localProgress, localIntensity, candidate.falloff);
-      episodes.push({
-        id,
-        kind: candidate.topologyKind,
-        center: [candidate.x, 0, candidate.z],
-        radius,
-        progress: localProgress,
-        intensity: localIntensity,
-        direction,
-        trailWidth: Math.max(0.16, radius * (0.22 + rng() * 0.1)),
-        sideDitchOffset: radius * (0.4 + rng() * 0.14),
-        heightScale: params.topologyPhaseHeightScale,
-        seedMethod: 'topology_score',
-        seedScore: candidate.score,
-        seedRoutePressure: candidate.routePressure,
-        seedValleyStrength: candidate.valleyStrength,
-        seedFlowAccumulation: candidate.flowAccumulation,
-        seedDitchPotential: candidate.ditchPotential,
-        seedSlope: candidate.slope,
-        topologyEvent: {
+    for (const window of topologyWindows) {
+      if (window.amount <= 0.001) continue;
+      const rng = mulberry32(params.topologyPhaseSeed + window.epoch * 104729 + params.seed * 31);
+      const selectedCandidates = selectTopologyMotionCandidates(params, topologyCandidateSummary.candidates, params.topologyPhaseLimit, rng);
+      selectedForScoreRange.push(...selectedCandidates);
+
+      for (let i = 0; i < selectedCandidates.length; i += 1) {
+        const candidate = selectedCandidates[i];
+        const angle = (rng() - 0.5) * 0.5;
+        const direction = normalize([
+          candidate.direction[0] * Math.cos(angle) + candidate.direction[2] * Math.sin(angle),
+          0,
+          candidate.direction[2] * Math.cos(angle) - candidate.direction[0] * Math.sin(angle)
+        ]);
+        const radius = params.topologyPhaseRadius * (0.78 + rng() * 0.52);
+        const localProgress = clamp(window.progress * (0.82 + rng() * 0.22), 0, 1);
+        const localIntensity = clamp(params.topologyPhaseIntensity * window.amount * (0.68 + rng() * 0.28), 0, 1);
+        if (localIntensity <= 0.001) continue;
+        const id = `topology-${window.epoch}-${i}-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
+        const envelope = topologyEventEnvelope(window, params, radius, localProgress, localIntensity, candidate.falloff);
+        episodes.push({
           id,
           kind: candidate.topologyKind,
-          reason: candidate.reason,
-          semanticReason: candidate.semanticReason,
           center: [candidate.x, 0, candidate.z],
+          radius,
+          progress: localProgress,
+          intensity: localIntensity,
           direction,
-          eligibility: candidate.eligibility,
-          envelope,
-          materialHint: candidate.materialHint,
-          assetHint: candidate.assetHint
-        }
-      });
+          trailWidth: Math.max(0.16, radius * (0.22 + rng() * 0.1)),
+          sideDitchOffset: radius * (0.4 + rng() * 0.14),
+          heightScale: params.topologyPhaseHeightScale,
+          seedMethod: 'topology_score',
+          seedScore: candidate.score,
+          seedRoutePressure: candidate.routePressure,
+          seedValleyStrength: candidate.valleyStrength,
+          seedFlowAccumulation: candidate.flowAccumulation,
+          seedDitchPotential: candidate.ditchPotential,
+          seedSlope: candidate.slope,
+          topologyEvent: {
+            id,
+            kind: candidate.topologyKind,
+            reason: candidate.reason,
+            semanticReason: candidate.semanticReason,
+            center: [candidate.x, 0, candidate.z],
+            direction,
+            eligibility: candidate.eligibility,
+            envelope,
+            materialHint: candidate.materialHint,
+            assetHint: candidate.assetHint
+          }
+        });
+      }
     }
+
+    selectedTopologyEventScoreRange = scoreRangeForCandidates(selectedForScoreRange);
   }
 
   const mode = phaseModeFor(episodes);
@@ -1318,7 +1340,7 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
   const trailPhaseClock = trailIntensity > 0 ? trailTiming.clock : 0;
   const trailPhaseProgress = trailIntensity > 0 ? trailTiming.progress : 0;
   const topologyPhaseClock = topologyIntensity > 0 ? topologyTiming.clock : 0;
-  const topologyPhaseProgress = topologyIntensity > 0 ? topologyTiming.progress : 0;
+  const topologyPhaseProgress = topologyIntensity > 0 ? topologyProgress : 0;
 
   if (episodes.length === 0) {
     const checksumInput = [
@@ -1383,6 +1405,49 @@ function phaseTiming(timeMs: number, durationMs: number): { epoch: number; clock
   const clock = (timeMs % duration) / duration;
   const progress = smoothstep(0.04, 0.46, clock) * (1 - smoothstep(0.9, 1, clock));
   return { epoch, clock, progress };
+}
+
+interface TopologyPhaseWindow {
+  epoch: number;
+  clock: number;
+  progress: number;
+  amount: number;
+}
+
+function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap: number): TopologyPhaseWindow[] {
+  const windows: TopologyPhaseWindow[] = [];
+  const clock = clamp(timing.clock, 0, 1);
+  const currentProgress = topologyPhaseProgressAtClock(clock);
+  if (currentProgress > 0.001) {
+    windows.push({
+      epoch: timing.epoch,
+      clock,
+      progress: currentProgress,
+      amount: currentProgress
+    });
+  }
+
+  const overlapWidth = clamp(overlap, 0, 0.5);
+  if (timing.epoch > 0 && overlapWidth > 0 && clock < overlapWidth) {
+    const previousClock = 1 - overlapWidth + clock;
+    const fade = 1 - smoothstep(0, overlapWidth, clock);
+    const previousProgress = topologyPhaseProgressAtClock(previousClock);
+    const amount = clamp(previousProgress * fade, 0, 1);
+    if (amount > 0.001) {
+      windows.push({
+        epoch: timing.epoch - 1,
+        clock: previousClock,
+        progress: previousProgress,
+        amount
+      });
+    }
+  }
+
+  return windows;
+}
+
+function topologyPhaseProgressAtClock(clock: number): number {
+  return smoothstep(0.04, 0.46, clamp(clock, 0, 1));
 }
 
 function phaseModeFor(episodes: readonly HillOfHillsPhaseEpisode[]): HillOfHillsPhaseMode {
@@ -1671,7 +1736,7 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
       }[] = [];
       const valleyDeepenScore = clamp(
         (topology.valleyStrength * 0.36 + topology.flowAccumulation * 0.24 + topology.ditchPotential * 0.16 + traversable * 0.1) *
-          params.topologyPhaseBasinBias,
+          params.topologyPhaseValleyBias,
         0,
         1
       );
@@ -1703,7 +1768,12 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
         },
         {
           kind: 'valley_fill',
-          score: clamp((topology.valleyStrength * 0.32 + traversable * 0.22 + (1 - topology.flowAccumulation) * 0.14 + topology.growthPotential * 0.1) * params.topologyPhaseBasinBias, 0, 1),
+          score: clamp(
+            (topology.valleyStrength * 0.32 + traversable * 0.22 + (1 - topology.flowAccumulation) * 0.14 + topology.growthPotential * 0.1) *
+              params.topologyPhaseValleyBias,
+            0,
+            1
+          ),
           reason: 'sediment_fill_valley',
           semanticReason: 'shallow valley with weaker flow favors sediment fill',
           materialHint: 'meadow',
@@ -1740,7 +1810,7 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
           kind: 'ridge_lift',
           score: clamp(
             (topology.ridgeStrength * 0.42 + hill * 0.2 + activeInterior * 0.14 + (1 - smoothstep(0.34, 1.1, slope)) * 0.16) *
-              params.topologyPhaseHillBias,
+              params.topologyPhaseRidgeBias,
             0,
             1
           ),
@@ -1752,7 +1822,7 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
         },
         {
           kind: 'ridge_shear',
-          score: clamp((topology.ridgeStrength * 0.2 + strata * 0.18 + smoothstep(0.5, 1.65, slope) * 0.28) * params.topologyPhaseHillBias, 0, 1),
+          score: clamp((topology.ridgeStrength * 0.2 + strata * 0.18 + smoothstep(0.5, 1.65, slope) * 0.28) * params.topologyPhaseRidgeBias, 0, 1),
           reason: 'ridge_shear_exposure',
           semanticReason: 'steep ridge exposure favors a shear scar',
           materialHint: 'stone',
@@ -1793,7 +1863,7 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
         },
         {
           kind: 'strata_reveal',
-          score: clamp((strata * 0.44 + topology.ridgeStrength * 0.1 + (1 - topology.growthPotential) * 0.28) * params.topologyPhaseSaddleBias, 0, 1),
+          score: clamp((strata * 0.44 + topology.ridgeStrength * 0.1 + (1 - topology.growthPotential) * 0.28) * params.topologyPhaseRidgeBias, 0, 1),
           reason: 'eroded_strata_exposure',
           semanticReason: 'slope and low growth reveal exposed strata',
           materialHint: 'exposed_strata',
@@ -2394,27 +2464,34 @@ function surfaceDetailFor(
   );
   const seed = detailSeedFor(params.seed, x, z, proxyMaterial.kind);
   const jitter = seededUnit(seed);
+  const topologyDetailAmount = smoothstep(0.08, 0.32, phaseInfluence.topologyAmount * params.topologyPhaseDetailScale);
   let kind: HillOfHillsSurfaceDetailKind = 'none';
   let density = 0;
 
   if (phaseInfluence.trailAmount > 0.24) {
     kind = 'trail-wear';
     density = clamp(0.34 + phaseInfluence.trailAmount * 0.58 + topology.routePressure * 0.16 + jitter * 0.08, 0, 1);
-  } else if ((phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'basin_bloom') && topology.growthPotential > 0.42) {
+  } else if (topologyDetailAmount > 0 && (phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'basin_bloom') && topology.growthPotential > 0.42) {
     kind = 'growth-bud';
-    density = clamp(0.28 + phaseInfluence.topologyAmount * 0.48 + topology.growthPotential * 0.28 + jitter * 0.08, 0, 1);
-  } else if (phaseInfluence.kind === 'valley_deepen' && topology.ditchPotential > 0.48) {
+    density = clamp(0.18 + topologyDetailAmount * 0.58 + topology.growthPotential * 0.22 + jitter * 0.08, 0, 1);
+  } else if (topologyDetailAmount > 0 && phaseInfluence.kind === 'valley_deepen' && topology.ditchPotential > 0.48) {
     kind = 'damp-edge';
-    density = clamp(0.22 + phaseInfluence.topologyAmount * 0.44 + topology.ditchPotential * 0.26 + jitter * 0.08, 0, 1);
-  } else if (phaseInfluence.kind === 'valley_fill') {
+    density = clamp(0.14 + topologyDetailAmount * 0.5 + topology.ditchPotential * 0.22 + jitter * 0.08, 0, 1);
+  } else if (topologyDetailAmount > 0 && phaseInfluence.kind === 'valley_fill') {
     kind = 'meadow-tuft';
-    density = clamp(0.18 + phaseInfluence.topologyAmount * 0.38 + topology.growthPotential * 0.2 + jitter * 0.1, 0, 1);
-  } else if (phaseInfluence.kind === 'hill_slump' || phaseInfluence.kind === 'ridge_lift' || phaseInfluence.kind === 'ridge_shear' || phaseInfluence.kind === 'strata_reveal') {
+    density = clamp(0.12 + topologyDetailAmount * 0.44 + topology.growthPotential * 0.18 + jitter * 0.1, 0, 1);
+  } else if (
+    topologyDetailAmount > 0 &&
+    (phaseInfluence.kind === 'hill_slump' ||
+      phaseInfluence.kind === 'ridge_lift' ||
+      phaseInfluence.kind === 'ridge_shear' ||
+      phaseInfluence.kind === 'strata_reveal')
+  ) {
     kind = 'slope-striation';
-    density = clamp(0.22 + phaseInfluence.topologyAmount * 0.42 + slope * 0.24 + topology.ridgeStrength * 0.16 + jitter * 0.08, 0, 1);
-  } else if (phaseInfluence.kind === 'saddle_pass' || phaseInfluence.kind === 'saddle_pinch') {
+    density = clamp(0.14 + topologyDetailAmount * 0.5 + slope * 0.22 + topology.ridgeStrength * 0.14 + jitter * 0.08, 0, 1);
+  } else if (topologyDetailAmount > 0 && (phaseInfluence.kind === 'saddle_pass' || phaseInfluence.kind === 'saddle_pinch')) {
     kind = 'trail-wear';
-    density = clamp(0.2 + phaseInfluence.topologyAmount * 0.34 + topology.routePressure * 0.2 + jitter * 0.08, 0, 1);
+    density = clamp(0.12 + topologyDetailAmount * 0.42 + topology.routePressure * 0.18 + jitter * 0.08, 0, 1);
   } else if (region === 'approach' && topology.routePressure > 0.68) {
     kind = 'trail-wear';
     density = clamp(0.16 + topology.routePressure * 0.28 + topology.valleyStrength * 0.08 + jitter * 0.1, 0, 1);
@@ -2474,27 +2551,35 @@ function materialEdgeFor(
   let kind: HillOfHillsMaterialEdgeKind = 'none';
   let anchor: HillOfHillsSurfaceAnchorKind = 'none';
   let strength = clamp(Math.max(blendEdge, topologyEdge) * 0.78, 0, 1);
+  const topologyDetailAmount = smoothstep(0.08, 0.32, phaseInfluence.topologyAmount * params.topologyPhaseDetailScale);
 
   if (phaseInfluence.trailAmount > 0.2 || (region === 'approach' && topology.routePressure > 0.64)) {
     kind = 'route-wear';
     anchor = 'trail-accent';
     strength = clamp(Math.max(strength, 0.24 + topology.routePressure * 0.42 + phaseInfluence.trailAmount * 0.42), 0, 1);
-  } else if (phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'basin_bloom') {
+  } else if (topologyDetailAmount > 0 && (phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'basin_bloom')) {
     kind = 'growth-cluster';
     anchor = 'growth-cluster';
-    strength = clamp(Math.max(strength, 0.2 + phaseInfluence.topologyAmount * 0.46 + topology.growthPotential * 0.18 + slope * 0.12), 0, 1);
-  } else if (phaseInfluence.kind === 'saddle_pinch' || phaseInfluence.kind === 'saddle_pass' || phaseInfluence.kind === 'ridge_lift' || phaseInfluence.kind === 'ridge_shear' || phaseInfluence.kind === 'strata_reveal') {
+    strength = clamp(Math.max(strength, 0.18 + topologyDetailAmount * 0.48 + topology.growthPotential * 0.18 + slope * 0.12), 0, 1);
+  } else if (
+    topologyDetailAmount > 0 &&
+    (phaseInfluence.kind === 'saddle_pinch' ||
+      phaseInfluence.kind === 'saddle_pass' ||
+      phaseInfluence.kind === 'ridge_lift' ||
+      phaseInfluence.kind === 'ridge_shear' ||
+      phaseInfluence.kind === 'strata_reveal')
+  ) {
     kind = phaseInfluence.kind === 'saddle_pass' ? 'route-wear' : 'slope-break';
     anchor = phaseInfluence.kind === 'saddle_pass' ? 'trail-accent' : 'stone-scatter';
-    strength = clamp(Math.max(strength, 0.22 + phaseInfluence.topologyAmount * 0.44 + slope * 0.18 + topology.ridgeStrength * 0.12), 0, 1);
-  } else if (phaseInfluence.kind === 'valley_deepen') {
+    strength = clamp(Math.max(strength, 0.2 + topologyDetailAmount * 0.46 + slope * 0.18 + topology.ridgeStrength * 0.12), 0, 1);
+  } else if (topologyDetailAmount > 0 && phaseInfluence.kind === 'valley_deepen') {
     kind = 'damp-rim';
     anchor = 'wet-rim';
-    strength = clamp(Math.max(strength, 0.2 + phaseInfluence.topologyAmount * 0.4 + topology.ditchPotential * 0.24), 0, 1);
-  } else if (phaseInfluence.kind === 'valley_fill' || phaseInfluence.kind === 'hill_slump') {
+    strength = clamp(Math.max(strength, 0.18 + topologyDetailAmount * 0.42 + topology.ditchPotential * 0.24), 0, 1);
+  } else if (topologyDetailAmount > 0 && (phaseInfluence.kind === 'valley_fill' || phaseInfluence.kind === 'hill_slump')) {
     kind = 'meadow-dust';
     anchor = phaseInfluence.kind === 'valley_fill' ? 'tuft-line' : 'scuff-line';
-    strength = clamp(Math.max(strength, 0.18 + phaseInfluence.topologyAmount * 0.36 + topology.valleyStrength * 0.12), 0, 1);
+    strength = clamp(Math.max(strength, 0.16 + topologyDetailAmount * 0.38 + topology.valleyStrength * 0.12), 0, 1);
   } else if (topology.ditchPotential > 0.58 || phaseInfluence.sideDitchAmount > 0.18 || proxyMaterial.wetness > 0.56) {
     kind = 'damp-rim';
     anchor = 'wet-rim';

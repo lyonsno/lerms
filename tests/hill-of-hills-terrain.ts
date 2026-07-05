@@ -792,10 +792,41 @@ assert(
   'topology height scale changes vertical terrain motion independently from topology influence placement'
 );
 
+const topologyBeforeWrap = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs - 4,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseDetailScale: 1
+} as TopologyMotionParams);
+const topologyAfterWrap = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs + 4,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseDetailScale: 1
+} as TopologyMotionParams);
+assert(
+  topologyBeforeWrap.phaseState.mode === 'topology_morphing' && topologyAfterWrap.phaseState.mode === 'topology_morphing',
+  'topology motion crossfades active episodes across the phase wrap'
+);
+assert(
+  topologyBeforeWrap.witness.topologyInfluenceRange.max > 0.12 && topologyAfterWrap.witness.topologyInfluenceRange.max > 0.12,
+  'topology motion keeps visible influence on both sides of the phase wrap'
+);
+assert(
+  Math.abs(topologyBeforeWrap.witness.topologyInfluenceRange.max - topologyAfterWrap.witness.topologyInfluenceRange.max) < 0.48,
+  'topology motion avoids a full influence collapse at the phase wrap'
+);
+assert(
+  topologyAfterWrap.witness.topologyEventDebug.some((event) => event.envelope.amount > 0.1),
+  'topology event debug exposes nonzero semantic envelope just after wrap'
+);
+
 const topologyBasinBiased = createHillOfHillsTerrain({
   ...topologyPhaseParams,
-  topologyPhaseBasinBias: 1.8,
+  topologyPhaseValleyBias: 1.8,
+  topologyPhaseBasinBias: 0,
   topologyPhaseHillBias: 0,
+  topologyPhaseRidgeBias: 0,
   topologyPhaseSaddleBias: 0
 } as TopologyMotionParams);
 assert(
@@ -804,7 +835,7 @@ assert(
 );
 assert(
   topologyBasinBiased.phaseState.activeEpisodes.every((episode) => episode.kind === 'valley_deepen'),
-  'topology kind bias can steer topology motion toward valley deepening'
+  'topology valley bias can steer topology motion toward valley deepening'
 );
 
 const cacheSource = {

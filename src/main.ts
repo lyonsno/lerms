@@ -160,8 +160,12 @@ const defaultPreviewParams: HillOfHillsTerrainParams = {
   topologyPhaseRadius: 1.45,
   topologyPhaseHeightScale: 1,
   topologyPhaseBasinBias: 1,
+  topologyPhaseValleyBias: 1,
   topologyPhaseHillBias: 1,
+  topologyPhaseRidgeBias: 1,
   topologyPhaseSaddleBias: 1,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseDetailScale: 1,
   topologyPhaseTimeMs: 720,
   topologyPhaseDurationMs: 2200,
   gridResolutionX: 116,
@@ -184,6 +188,7 @@ let workerTerrain: Worker | undefined;
 let workerStatus = 'sync-fallback';
 let latestTerrainRequestId = 0;
 let pendingTerrainRequestId = 0;
+let queuedTerrainParams: HillOfHillsTerrainParams | undefined;
 let latestWorkerDurationMs = 0;
 let latestWorkerError = 'none';
 let latestGrowthPlacementSummary = 'placement none';
@@ -210,6 +215,7 @@ try {
     latestWorkerError = 'none';
     pendingTerrainRequestId = 0;
     workerStatus = 'worker-live';
+    flushQueuedTerrainRequest();
   };
   workerTerrain.onerror = (event) => {
     workerStatus = 'worker-error-sync-fallback';
@@ -290,8 +296,12 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'topologyPhaseRadius', label: 'Topology radius', min: 0.5, max: 2.8, step: 0.05 },
   { key: 'topologyPhaseHeightScale', label: 'Topology height', min: 0, max: 2, step: 0.05 },
   { key: 'topologyPhaseBasinBias', label: 'Basin bias', min: 0, max: 2, step: 0.05 },
+  { key: 'topologyPhaseValleyBias', label: 'Valley bias', min: 0, max: 2, step: 0.05 },
   { key: 'topologyPhaseHillBias', label: 'Hill bias', min: 0, max: 2, step: 0.05 },
+  { key: 'topologyPhaseRidgeBias', label: 'Ridge bias', min: 0, max: 2, step: 0.05 },
   { key: 'topologyPhaseSaddleBias', label: 'Saddle bias', min: 0, max: 2, step: 0.05 },
+  { key: 'topologyPhaseOverlap', label: 'Topology overlap', min: 0, max: 0.5, step: 0.01 },
+  { key: 'topologyPhaseDetailScale', label: 'Topology detail', min: 0, max: 2, step: 0.05 },
   { key: 'topologyPhaseTimeMs', label: 'Topology phase', min: 0, max: 2600, step: 40 },
   { key: 'topologyPhaseDurationMs', label: 'Topology cadence', min: 800, max: 5200, step: 80 }
 ];
@@ -347,7 +357,7 @@ function render(timestampMs: number): void {
       : params.trailPhaseTimeMs;
   const topologyPhaseTimeMs =
     params.topologyPhaseIntensity > 0
-      ? (params.topologyPhaseTimeMs + motionTimestampMs * 0.3) % params.topologyPhaseDurationMs
+      ? params.topologyPhaseTimeMs + motionTimestampMs * 0.3
       : params.topologyPhaseTimeMs;
   requestTerrain({
     ...params,
@@ -370,10 +380,13 @@ function render(timestampMs: number): void {
 
 function requestTerrain(nextParams: HillOfHillsTerrainParams): void {
   if (workerTerrain && pendingTerrainRequestId === 0) {
-    latestTerrainRequestId += 1;
-    pendingTerrainRequestId = latestTerrainRequestId;
-    workerStatus = 'worker-pending';
-    workerTerrain.postMessage(createHillTerrainWorkerRequest(latestTerrainRequestId, nextParams, previewSourceOptions));
+    dispatchTerrainWorkerRequest(nextParams);
+    return;
+  }
+
+  if (workerTerrain) {
+    queuedTerrainParams = nextParams;
+    workerStatus = 'worker-queued';
     return;
   }
 
@@ -381,6 +394,25 @@ function requestTerrain(nextParams: HillOfHillsTerrainParams): void {
     terrainBuffer = createHillOfHillsTerrainBuffer(createHillOfHillsTerrainWithCache(terrainCache, nextParams, previewSourceOptions));
     workerStatus = latestWorkerError === 'none' ? 'sync-fallback' : workerStatus;
   }
+}
+
+function dispatchTerrainWorkerRequest(nextParams: HillOfHillsTerrainParams): void {
+  if (!workerTerrain) {
+    return;
+  }
+  latestTerrainRequestId += 1;
+  pendingTerrainRequestId = latestTerrainRequestId;
+  workerStatus = 'worker-pending';
+  workerTerrain.postMessage(createHillTerrainWorkerRequest(latestTerrainRequestId, nextParams, previewSourceOptions));
+}
+
+function flushQueuedTerrainRequest(): void {
+  if (!workerTerrain || pendingTerrainRequestId !== 0 || !queuedTerrainParams) {
+    return;
+  }
+  const nextParams = queuedTerrainParams;
+  queuedTerrainParams = undefined;
+  dispatchTerrainWorkerRequest(nextParams);
 }
 
 resize();
