@@ -4,6 +4,7 @@ import {
   HILL_PHASE_FILMSTRIP_FRAME_COUNTS,
   createHillPhaseFilmstripSchedule,
   fitHillPhaseFilmstripLayout,
+  fitHillPhaseFilmstripViewport,
   normalizeHillPhaseFilmstripFrameCount,
 } from "../src/terrain/hill-of-hills-phase-filmstrip.js";
 import { defaultHillOfHillsParams } from "../src/terrain/hill-of-hills.js";
@@ -52,3 +53,21 @@ for (const count of allowedCounts) {
 const denseLayout = fitHillPhaseFilmstripLayout(50);
 assert.equal(denseLayout.columns, 10);
 assert.equal(denseLayout.rows, 5);
+
+const wideCellFit = fitHillPhaseFilmstripViewport(1600, 1200, 320, 180);
+assert.deepEqual(wideCellFit, {
+  x: 40,
+  y: 0,
+  width: 240,
+  height: 180,
+  scale: 0.15,
+});
+
+const tallCellFit = fitHillPhaseFilmstripViewport(1200, 600, 300, 220);
+assert.deepEqual(tallCellFit, {
+  x: 0,
+  y: 35,
+  width: 300,
+  height: 150,
+  scale: 0.25,
+});

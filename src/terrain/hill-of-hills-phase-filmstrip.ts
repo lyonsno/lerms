@@ -30,6 +30,14 @@ export interface HillPhaseFilmstripLayout {
   height: number;
 }
 
+export interface HillPhaseFilmstripViewportFit {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale: number;
+}
+
 interface SalientPhasePoint {
   clock: number;
   reason: HillPhaseFilmstripReason;
@@ -124,6 +132,29 @@ export function fitHillPhaseFilmstripLayout(
     gutter,
     width,
     height
+  };
+}
+
+export function fitHillPhaseFilmstripViewport(
+  sourceWidth: number,
+  sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number
+): HillPhaseFilmstripViewportFit {
+  const safeSourceWidth = Math.max(1, Math.round(finiteOr(sourceWidth, 1)));
+  const safeSourceHeight = Math.max(1, Math.round(finiteOr(sourceHeight, 1)));
+  const safeTargetWidth = Math.max(1, Math.round(finiteOr(targetWidth, 1)));
+  const safeTargetHeight = Math.max(1, Math.round(finiteOr(targetHeight, 1)));
+  const scale = Math.min(safeTargetWidth / safeSourceWidth, safeTargetHeight / safeSourceHeight);
+  const width = Math.max(1, Math.round(safeSourceWidth * scale));
+  const height = Math.max(1, Math.round(safeSourceHeight * scale));
+
+  return {
+    x: Math.floor((safeTargetWidth - width) * 0.5),
+    y: Math.floor((safeTargetHeight - height) * 0.5),
+    width,
+    height,
+    scale
   };
 }
 

@@ -71,6 +71,7 @@ import {
   HILL_PHASE_FILMSTRIP_FRAME_COUNTS,
   createHillPhaseFilmstripSchedule,
   fitHillPhaseFilmstripLayout,
+  fitHillPhaseFilmstripViewport,
   normalizeHillPhaseFilmstripFrameCount,
   type HillPhaseFilmstripFrame,
   type HillPhaseFilmstripFrameCount
@@ -120,6 +121,7 @@ const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
   'rim-crust',
   'growth-lip'
 ];
+const PHASE_FILMSTRIP_CAPTION_HEIGHT = 48;
 const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
   'none',
   'tuft-line',
@@ -2408,12 +2410,15 @@ function createPhaseFilmstripExportControls(): HTMLElement {
 function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { filename: string; frameCount: number } {
   const schedule = createHillPhaseFilmstripSchedule(params, frameCount);
   const layout = fitHillPhaseFilmstripLayout(frameCount);
+  const viewport = phaseFilmstripRenderViewport();
   const stripCanvas = document.createElement('canvas');
   const stripCtx = stripCanvas.getContext('2d');
   const frameCanvas = document.createElement('canvas');
   const frameCtx = frameCanvas.getContext('2d');
+  const renderCanvas = document.createElement('canvas');
+  const renderCtx = renderCanvas.getContext('2d');
 
-  if (!stripCtx || !frameCtx) {
+  if (!stripCtx || !frameCtx || !renderCtx) {
     throw new Error('phase strip canvas unavailable');
   }
 
@@ -2421,6 +2426,8 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
   stripCanvas.height = layout.height;
   frameCanvas.width = layout.cellWidth;
   frameCanvas.height = layout.cellHeight;
+  renderCanvas.width = viewport.width;
+  renderCanvas.height = viewport.height;
 
   stripCtx.fillStyle = '#06100d';
   stripCtx.fillRect(0, 0, layout.width, layout.height);
@@ -2429,7 +2436,6 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
   const filmstripCache = createHillOfHillsLayerTileCache();
 
   try {
-    ctx = frameCtx;
     for (const frame of schedule) {
       const frameParams = phaseFilmstripParamsFor(frame);
       const frameBuffer = createHillOfHillsTerrainBuffer(
@@ -2444,14 +2450,22 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
       const x = column * (layout.cellWidth + layout.gutter);
       const y = row * (layout.cellHeight + layout.gutter);
 
+      ctx = renderCtx;
+      renderCtx.setTransform(1, 0, 0, 1, 0, 0);
+      renderCtx.clearRect(0, 0, viewport.width, viewport.height);
+      renderCtx.fillStyle = '#06100d';
+      renderCtx.fillRect(0, 0, viewport.width, viewport.height);
+      drawTerrain(frameBuffer, viewport.width, viewport.height);
+      if (previewSettings.layers.routeMarkers) {
+        drawRouteMarkers(frameBuffer, viewport.width, viewport.height);
+      }
+
+      ctx = frameCtx;
       frameCtx.setTransform(1, 0, 0, 1, 0, 0);
       frameCtx.clearRect(0, 0, layout.cellWidth, layout.cellHeight);
       frameCtx.fillStyle = '#06100d';
       frameCtx.fillRect(0, 0, layout.cellWidth, layout.cellHeight);
-      drawTerrain(frameBuffer, layout.cellWidth, layout.cellHeight);
-      if (previewSettings.layers.routeMarkers) {
-        drawRouteMarkers(frameBuffer, layout.cellWidth, layout.cellHeight);
-      }
+      drawPhaseFilmstripFrameImage(frameCtx, renderCanvas, layout.cellWidth, layout.cellHeight - PHASE_FILMSTRIP_CAPTION_HEIGHT);
       drawPhaseFilmstripCaption(frameCtx, frameBuffer, frame, layout.cellWidth, layout.cellHeight);
       stripCtx.drawImage(frameCanvas, x, y);
     }
@@ -2466,6 +2480,23 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
   anchor.click();
 
   return { filename, frameCount };
+}
+
+function phaseFilmstripRenderViewport(): { width: number; height: number } {
+  return {
+    width: Math.max(1, Math.round(window.innerWidth)),
+    height: Math.max(1, Math.round(window.innerHeight))
+  };
+}
+
+function drawPhaseFilmstripFrameImage(
+  targetCtx: CanvasRenderingContext2D,
+  sourceCanvas: HTMLCanvasElement,
+  width: number,
+  height: number
+): void {
+  const fit = fitHillPhaseFilmstripViewport(sourceCanvas.width, sourceCanvas.height, width, height);
+  targetCtx.drawImage(sourceCanvas, fit.x, fit.y, fit.width, fit.height);
 }
 
 function phaseFilmstripParamsFor(frame: HillPhaseFilmstripFrame): HillOfHillsTerrainParams {
@@ -2487,7 +2518,11 @@ function drawPhaseFilmstripCaption(
     .map(([kind, count]) => `${kind.replaceAll('_', ' ')} ${count}`)
     .slice(0, 2)
     .join(' / ') || 'none';
-  const captionHeight = 34;
+  const phaseHash = compactChecksum(currentBuffer.witness.phaseChecksum);
+  const influenceHash = compactChecksum(currentBuffer.witness.phaseInfluenceChecksum);
+  const topologyHash = compactChecksum(currentBuffer.witness.topologyChecksum);
+  const eventSummary = activeTopologyEventSummary(currentBuffer);
+  const captionHeight = PHASE_FILMSTRIP_CAPTION_HEIGHT;
 
   targetCtx.save();
   targetCtx.fillStyle = 'rgba(3, 9, 8, 0.74)';
@@ -2501,8 +2536,27 @@ function drawPhaseFilmstripCaption(
     height - captionHeight + 5
   );
   targetCtx.fillStyle = 'rgba(244, 227, 176, 0.9)';
-  targetCtx.fillText(`active ${activeKinds}`, 8, height - captionHeight + 18);
+  targetCtx.fillText(`active ${activeKinds} ph ${phaseHash} infl ${influenceHash} topo ${topologyHash}`, 8, height - captionHeight + 18);
+  targetCtx.fillStyle = 'rgba(183, 224, 205, 0.88)';
+  targetCtx.fillText(eventSummary, 8, height - captionHeight + 31);
   targetCtx.restore();
+}
+
+function compactChecksum(value: string | undefined, length = 7): string {
+  if (!value || value === 'none') {
+    return 'none';
+  }
+  return value.slice(0, length);
+}
+
+function activeTopologyEventSummary(currentBuffer: HillOfHillsTerrainBuffer): string {
+  const events = currentBuffer.witness.topologyEventDebug.slice(0, 3);
+  if (events.length === 0) {
+    return 'events none';
+  }
+  return events
+    .map((event) => `${event.kind}:${compactChecksum(event.id, 4)}:${event.envelope.amount.toFixed(2)}`)
+    .join(' ');
 }
 
 function createPreviewDebugRange(
