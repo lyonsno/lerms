@@ -12,12 +12,54 @@ import {
 
 export const HILL_OF_HILLS_WITNESS_SCHEMA = 'lerms.hill-of-hills-witness.v0' as const;
 export const HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA = 'lerms.hill-of-hills-terrain-buffer.v0' as const;
+export const HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS = [
+  'hill_swell',
+  'hill_slump',
+  'valley_deepen',
+  'valley_fill',
+  'ridge_lift',
+  'ridge_shear',
+  'saddle_pinch',
+  'saddle_pass',
+  'basin_bloom',
+  'strata_reveal'
+] as const;
 
 export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 'invalid';
-export type HillOfHillsTopologyPhaseKind = 'basin_deepen' | 'hill_swell' | 'saddle_pinch';
+export type HillOfHillsTopologyPhaseKind = (typeof HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS)[number];
 export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming' | 'trail_forming' | 'topology_morphing' | 'mixed_forming';
 export type HillOfHillsPhaseKind = 'ditch_forming' | 'trail_forming' | HillOfHillsTopologyPhaseKind;
 export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
+export type HillOfHillsTopologyEventReasonKind =
+  | 'crown_growth_pressure'
+  | 'steep_crown_slump'
+  | 'flow_cut_valley'
+  | 'sediment_fill_valley'
+  | 'ridge_lift_pressure'
+  | 'ridge_shear_exposure'
+  | 'saddle_compression'
+  | 'route_pass_opening'
+  | 'basin_growth_bloom'
+  | 'eroded_strata_exposure';
+export type HillOfHillsTopologyEventFalloffKind = 'smooth_radial' | 'elongated_band' | 'shear_band' | 'pass_band';
+export type HillOfHillsTopologyEventMaterialHintKind =
+  | 'growth'
+  | 'dust'
+  | 'damp'
+  | 'stone'
+  | 'route'
+  | 'meadow'
+  | 'exposed_strata';
+export type HillOfHillsTopologyEventAssetHintKind =
+  | 'brush_cluster'
+  | 'fallen_scrub'
+  | 'wet_rim'
+  | 'dry_silt'
+  | 'rock_rib'
+  | 'shear_scree'
+  | 'pass_mark'
+  | 'meadow_bloom'
+  | 'strata_chip';
 export type HillOfHillsTrailSeedMethod = 'none' | 'random_band' | 'topology_score';
 export type HillOfHillsHeightfieldMode = 'direct_query' | 'grid_heightfield';
 export type HillOfHillsRecomputeMode = 'full_grid_with_dirty_tiles';
@@ -102,6 +144,46 @@ export interface HillOfHillsProxyMaterial {
   blends: Partial<Record<HillOfHillsProxyMaterialKind, number>>;
 }
 
+export interface HillOfHillsTopologyEventEligibility {
+  score: number;
+  hill: number;
+  valley: number;
+  ridge: number;
+  saddle: number;
+  basin: number;
+  route: number;
+  flow: number;
+  growth: number;
+  strata: number;
+  slope: number;
+}
+
+export interface HillOfHillsTopologyEventEnvelope {
+  clock: number;
+  phaseIn: number;
+  hold: number;
+  phaseOut: number;
+  amount: number;
+  durationMs: number;
+  cadenceMs: number;
+  intensity: number;
+  supportRadius: number;
+  falloff: HillOfHillsTopologyEventFalloffKind;
+}
+
+export interface HillOfHillsTopologyEventDebug {
+  id: string;
+  kind: HillOfHillsTopologyPhaseKind;
+  reason: HillOfHillsTopologyEventReasonKind;
+  semanticReason: string;
+  center: Vec3;
+  direction: Vec3;
+  eligibility: HillOfHillsTopologyEventEligibility;
+  envelope: HillOfHillsTopologyEventEnvelope;
+  materialHint: HillOfHillsTopologyEventMaterialHintKind;
+  assetHint: HillOfHillsTopologyEventAssetHintKind;
+}
+
 export interface HillOfHillsPhaseEpisode {
   id: string;
   kind: HillOfHillsPhaseKind;
@@ -120,6 +202,7 @@ export interface HillOfHillsPhaseEpisode {
   seedFlowAccumulation: number;
   seedDitchPotential: number;
   seedSlope: number;
+  topologyEvent?: HillOfHillsTopologyEventDebug;
 }
 
 export interface HillOfHillsPhaseState {
@@ -139,6 +222,9 @@ export interface HillOfHillsPhaseState {
   trailCandidateChecksum: string;
   trailCandidateScoreRange: Range;
   selectedTrailScoreRange: Range;
+  topologyEventCandidateChecksum: string;
+  topologyEventCandidateScoreRange: Range;
+  selectedTopologyEventScoreRange: Range;
 }
 
 export interface HillOfHillsPhaseInfluence {
@@ -381,6 +467,11 @@ export interface HillOfHillsWitness {
   trailCandidateChecksum: string;
   trailCandidateScoreRange: Range;
   selectedTrailScoreRange: Range;
+  topologyEventVocabulary: readonly HillOfHillsTopologyPhaseKind[];
+  topologyEventCandidateChecksum: string;
+  topologyEventCandidateScoreRange: Range;
+  selectedTopologyEventScoreRange: Range;
+  topologyEventDebug: readonly HillOfHillsTopologyEventDebug[];
   topologyRanges: {
     flowAccumulation: Range;
     ridgeStrength: Range;
@@ -463,6 +554,12 @@ interface TopologyMotionCandidate extends TrailSeedCandidate {
   topologyKind: HillOfHillsTopologyPhaseKind;
   ridgeStrength: number;
   growthPotential: number;
+  eligibility: HillOfHillsTopologyEventEligibility;
+  reason: HillOfHillsTopologyEventReasonKind;
+  semanticReason: string;
+  materialHint: HillOfHillsTopologyEventMaterialHintKind;
+  assetHint: HillOfHillsTopologyEventAssetHintKind;
+  falloff: HillOfHillsTopologyEventFalloffKind;
 }
 
 interface TrailCandidateSummary {
@@ -915,7 +1012,7 @@ export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainB
       kind:
         phaseAmount > 0
           ? topologyAmount > Math.max(trailAmount, sideDitchAmount)
-            ? 'basin_deepen'
+            ? 'valley_deepen'
             : trailAmount > sideDitchAmount
               ? 'trail_forming'
               : 'ditch_forming'
@@ -1068,6 +1165,8 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
   let trailSeedMethod: HillOfHillsTrailSeedMethod = 'none';
   let trailCandidateSummary = emptyTrailCandidateSummary();
   let selectedTrailScoreRange = zeroRange();
+  let topologyCandidateSummary = emptyTopologyCandidateSummary();
+  let selectedTopologyEventScoreRange = zeroRange();
 
   if (ditchIntensity > 0 && params.ditchPhaseLimit > 0) {
     const rng = mulberry32(params.ditchPhaseSeed + ditchTiming.epoch * 131071 + params.seed * 17);
@@ -1150,8 +1249,9 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
 
   if (topologyIntensity > 0 && params.topologyPhaseLimit > 0) {
     const rng = mulberry32(params.topologyPhaseSeed + topologyTiming.epoch * 104729 + params.seed * 31);
-    const topologyCandidateSummary = scoreTopologyMotionCandidates(params);
+    topologyCandidateSummary = scoreTopologyMotionCandidates(params);
     const selectedCandidates = selectTopologyMotionCandidates(params, topologyCandidateSummary.candidates, params.topologyPhaseLimit, rng);
+    selectedTopologyEventScoreRange = scoreRangeForCandidates(selectedCandidates);
 
     for (let i = 0; i < selectedCandidates.length; i += 1) {
       const candidate = selectedCandidates[i];
@@ -1164,8 +1264,10 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
       const radius = params.topologyPhaseRadius * (0.78 + rng() * 0.52);
       const localProgress = clamp(topologyTiming.progress * (0.82 + rng() * 0.22), 0, 1);
       const localIntensity = topologyIntensity * (0.68 + rng() * 0.28);
+      const id = `topology-${topologyTiming.epoch}-${i}-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
+      const envelope = topologyEventEnvelope(topologyTiming, params, radius, localProgress, localIntensity, candidate.falloff);
       episodes.push({
-        id: `topology-${topologyTiming.epoch}-${i}-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`,
+        id,
         kind: candidate.topologyKind,
         center: [candidate.x, 0, candidate.z],
         radius,
@@ -1181,7 +1283,19 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         seedValleyStrength: candidate.valleyStrength,
         seedFlowAccumulation: candidate.flowAccumulation,
         seedDitchPotential: candidate.ditchPotential,
-        seedSlope: candidate.slope
+        seedSlope: candidate.slope,
+        topologyEvent: {
+          id,
+          kind: candidate.topologyKind,
+          reason: candidate.reason,
+          semanticReason: candidate.semanticReason,
+          center: [candidate.x, 0, candidate.z],
+          direction,
+          eligibility: candidate.eligibility,
+          envelope,
+          materialHint: candidate.materialHint,
+          assetHint: candidate.assetHint
+        }
       });
     }
   }
@@ -1233,7 +1347,10 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
       trailSeedMethod,
       trailCandidateChecksum: trailCandidateSummary.checksum,
       trailCandidateScoreRange: trailCandidateSummary.scoreRange,
-      selectedTrailScoreRange
+      selectedTrailScoreRange,
+      topologyEventCandidateChecksum: topologyCandidateSummary.checksum,
+      topologyEventCandidateScoreRange: topologyCandidateSummary.scoreRange,
+      selectedTopologyEventScoreRange
     };
   }
 
@@ -1253,7 +1370,10 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
     trailSeedMethod,
     trailCandidateChecksum: trailCandidateSummary.checksum,
     trailCandidateScoreRange: trailCandidateSummary.scoreRange,
-    selectedTrailScoreRange
+    selectedTrailScoreRange,
+    topologyEventCandidateChecksum: topologyCandidateSummary.checksum,
+    topologyEventCandidateScoreRange: topologyCandidateSummary.scoreRange,
+    selectedTopologyEventScoreRange
   };
 }
 
@@ -1518,19 +1638,50 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
       const topology = topologyAt(params, x, z, heightParts, dx, dz, slope, region, phaseInfluence);
       const traversable = 1 - smoothstep(0.72, 2.05, slope);
       const activeInterior = 1 - smoothstep(params.channelRadius * 0.72, params.channelRadius * 1.02, Math.abs(x));
-      const basinScore = clamp(
+      const basin = clamp(topology.valleyStrength * 0.66 + topology.flowAccumulation * 0.22 + traversable * 0.12, 0, 1);
+      const saddle = clamp(
+        Math.min(topology.ridgeStrength + 0.12, topology.valleyStrength + 0.12) * 0.48 +
+          (1 - Math.abs(topology.ridgeStrength - topology.valleyStrength)) * 0.26 +
+          topology.routePressure * 0.2,
+        0,
+        1
+      );
+      const strata = clamp(slope * 0.34 + topology.ridgeStrength * 0.3 + (1 - topology.growthPotential) * 0.18 + activeInterior * 0.08, 0, 1);
+      const hill = clamp(topology.growthPotential * 0.44 + topology.ridgeStrength * 0.36 + activeInterior * 0.16, 0, 1);
+      const eligibilityBase: Omit<HillOfHillsTopologyEventEligibility, 'score'> = {
+        hill,
+        valley: topology.valleyStrength,
+        ridge: topology.ridgeStrength,
+        saddle,
+        basin,
+        route: topology.routePressure,
+        flow: topology.flowAccumulation,
+        growth: topology.growthPotential,
+        strata,
+        slope: clamp(slope / 2.2, 0, 1)
+      };
+      const eventOptions: {
+        kind: HillOfHillsTopologyPhaseKind;
+        score: number;
+        reason: HillOfHillsTopologyEventReasonKind;
+        semanticReason: string;
+        materialHint: HillOfHillsTopologyEventMaterialHintKind;
+        assetHint: HillOfHillsTopologyEventAssetHintKind;
+        falloff: HillOfHillsTopologyEventFalloffKind;
+      }[] = [];
+      const valleyDeepenScore = clamp(
         (topology.valleyStrength * 0.36 + topology.flowAccumulation * 0.24 + topology.ditchPotential * 0.16 + traversable * 0.1) *
           params.topologyPhaseBasinBias,
         0,
         1
       );
-      const hillScore = clamp(
+      const hillSwellScore = clamp(
         (topology.ridgeStrength * 0.34 + topology.growthPotential * 0.28 + smoothstep(0.16, 0.9, slope) * 0.12 + activeInterior * 0.08) *
           params.topologyPhaseHillBias,
         0,
         1
       );
-      const saddleScore = clamp(
+      const saddlePinchScore = clamp(
         (
         Math.min(topology.ridgeStrength + 0.12, topology.valleyStrength + 0.12) * 0.3 +
           topology.routePressure * 0.2 +
@@ -1540,17 +1691,121 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
         0,
         1
       );
-      let topologyKind: HillOfHillsTopologyPhaseKind = 'basin_deepen';
-      let score = basinScore;
-      if (hillScore > score) {
-        topologyKind = 'hill_swell';
-        score = hillScore;
+      eventOptions.push(
+        {
+          kind: 'valley_deepen',
+          score: valleyDeepenScore,
+          reason: 'flow_cut_valley',
+          semanticReason: 'flow and valley evidence favor a local cut',
+          materialHint: 'damp',
+          assetHint: 'wet_rim',
+          falloff: 'elongated_band'
+        },
+        {
+          kind: 'valley_fill',
+          score: clamp((topology.valleyStrength * 0.32 + traversable * 0.22 + (1 - topology.flowAccumulation) * 0.14 + topology.growthPotential * 0.1) * params.topologyPhaseBasinBias, 0, 1),
+          reason: 'sediment_fill_valley',
+          semanticReason: 'shallow valley with weaker flow favors sediment fill',
+          materialHint: 'meadow',
+          assetHint: 'dry_silt',
+          falloff: 'smooth_radial'
+        },
+        {
+          kind: 'hill_swell',
+          score: clamp(hillSwellScore + topology.growthPotential * 0.06 - smoothstep(0.58, 1.45, slope) * 0.06, 0, 1),
+          reason: 'crown_growth_pressure',
+          semanticReason: 'ridge and growth pressure favor hill swelling',
+          materialHint: 'growth',
+          assetHint: 'brush_cluster',
+          falloff: 'smooth_radial'
+        },
+        {
+          kind: 'hill_slump',
+          score: clamp(
+            (topology.ridgeStrength * 0.2 +
+              smoothstep(0.42, 1.5, slope) * 0.42 +
+              topology.valleyStrength * 0.14 +
+              (1 - topology.growthPotential) * 0.1) *
+              params.topologyPhaseHillBias,
+            0,
+            1
+          ),
+          reason: 'steep_crown_slump',
+          semanticReason: 'steep raised ground favors a downhill slump',
+          materialHint: 'dust',
+          assetHint: 'fallen_scrub',
+          falloff: 'elongated_band'
+        },
+        {
+          kind: 'ridge_lift',
+          score: clamp(
+            (topology.ridgeStrength * 0.42 + hill * 0.2 + activeInterior * 0.14 + (1 - smoothstep(0.34, 1.1, slope)) * 0.16) *
+              params.topologyPhaseHillBias,
+            0,
+            1
+          ),
+          reason: 'ridge_lift_pressure',
+          semanticReason: 'ridge strength favors local lifting',
+          materialHint: 'stone',
+          assetHint: 'rock_rib',
+          falloff: 'elongated_band'
+        },
+        {
+          kind: 'ridge_shear',
+          score: clamp((topology.ridgeStrength * 0.2 + strata * 0.18 + smoothstep(0.5, 1.65, slope) * 0.28) * params.topologyPhaseHillBias, 0, 1),
+          reason: 'ridge_shear_exposure',
+          semanticReason: 'steep ridge exposure favors a shear scar',
+          materialHint: 'stone',
+          assetHint: 'shear_scree',
+          falloff: 'shear_band'
+        },
+        {
+          kind: 'saddle_pinch',
+          score: clamp(saddlePinchScore + (1 - topology.routePressure) * 0.12 + smoothstep(0.4, 1.25, slope) * 0.08, 0, 1),
+          reason: 'saddle_compression',
+          semanticReason: 'ridge-valley balance favors saddle pinching',
+          materialHint: 'stone',
+          assetHint: 'rock_rib',
+          falloff: 'pass_band'
+        },
+        {
+          kind: 'saddle_pass',
+          score: clamp((saddle * 0.3 + topology.routePressure * 0.34 + traversable * 0.12) * params.topologyPhaseSaddleBias, 0, 1),
+          reason: 'route_pass_opening',
+          semanticReason: 'route pressure through a saddle favors pass opening',
+          materialHint: 'route',
+          assetHint: 'pass_mark',
+          falloff: 'pass_band'
+        },
+        {
+          kind: 'basin_bloom',
+          score: clamp(
+            (basin * 0.22 + topology.growthPotential * 0.48 + traversable * 0.1 + (1 - smoothstep(0.38, 0.95, slope)) * 0.14) *
+              params.topologyPhaseBasinBias,
+            0,
+            1
+          ),
+          reason: 'basin_growth_bloom',
+          semanticReason: 'basin shelter and growth potential favor a bloom',
+          materialHint: 'growth',
+          assetHint: 'meadow_bloom',
+          falloff: 'smooth_radial'
+        },
+        {
+          kind: 'strata_reveal',
+          score: clamp((strata * 0.44 + topology.ridgeStrength * 0.1 + (1 - topology.growthPotential) * 0.28) * params.topologyPhaseSaddleBias, 0, 1),
+          reason: 'eroded_strata_exposure',
+          semanticReason: 'slope and low growth reveal exposed strata',
+          materialHint: 'exposed_strata',
+          assetHint: 'strata_chip',
+          falloff: 'shear_band'
+        }
+      );
+      let selected = eventOptions[0];
+      for (const option of eventOptions) {
+        if (option.score > selected.score) selected = option;
       }
-      if (saddleScore > score) {
-        topologyKind = 'saddle_pinch';
-        score = saddleScore;
-      }
-      score = clamp(score * (0.76 + activeInterior * 0.24), 0, 1);
+      const score = clamp(selected.score * (0.76 + activeInterior * 0.24), 0, 1);
       const direction = normalize([
         topology.flowDirection[0] * 0.42 - dx * 0.18,
         0,
@@ -1569,9 +1824,18 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
         ditchPotential: topology.ditchPotential,
         slope,
         region,
-        topologyKind,
+        topologyKind: selected.kind,
         ridgeStrength: topology.ridgeStrength,
-        growthPotential: topology.growthPotential
+        growthPotential: topology.growthPotential,
+        eligibility: {
+          ...eligibilityBase,
+          score
+        },
+        reason: selected.reason,
+        semanticReason: selected.semanticReason,
+        materialHint: selected.materialHint,
+        assetHint: selected.assetHint,
+        falloff: selected.falloff
       });
     }
   }
@@ -1636,8 +1900,12 @@ function topologyMotionCandidateSignature(candidate: TopologyMotionCandidate): s
   return [
     trailCandidateSignature(candidate),
     candidate.topologyKind,
+    candidate.reason,
     candidate.ridgeStrength.toFixed(3),
-    candidate.growthPotential.toFixed(3)
+    candidate.growthPotential.toFixed(3),
+    candidate.eligibility.score.toFixed(3),
+    candidate.eligibility.saddle.toFixed(3),
+    candidate.eligibility.strata.toFixed(3)
   ].join(':');
 }
 
@@ -1658,7 +1926,10 @@ function stablePhaseStateForTopologyScoring(): HillOfHillsPhaseState {
     trailSeedMethod: 'none',
     trailCandidateChecksum: 'none',
     trailCandidateScoreRange: zeroRange(),
-    selectedTrailScoreRange: zeroRange()
+    selectedTrailScoreRange: zeroRange(),
+    topologyEventCandidateChecksum: 'none',
+    topologyEventCandidateScoreRange: zeroRange(),
+    selectedTopologyEventScoreRange: zeroRange()
   };
 }
 
@@ -1678,6 +1949,37 @@ function emptyTrailCandidateSummary(): TrailCandidateSummary {
     candidates: [],
     checksum: 'none',
     scoreRange: zeroRange()
+  };
+}
+
+function emptyTopologyCandidateSummary(): TopologyMotionCandidateSummary {
+  return {
+    candidates: [],
+    checksum: 'none',
+    scoreRange: zeroRange()
+  };
+}
+
+function topologyEventEnvelope(
+  timing: { clock: number },
+  params: HillOfHillsTerrainParams,
+  radius: number,
+  progress: number,
+  intensity: number,
+  falloff: HillOfHillsTopologyEventFalloffKind
+): HillOfHillsTopologyEventEnvelope {
+  const clock = clamp(timing.clock, 0, 1);
+  return {
+    clock,
+    phaseIn: smoothstep(0.04, 0.46, clock),
+    hold: smoothstep(0.18, 0.54, clock) * (1 - smoothstep(0.68, 0.86, clock)),
+    phaseOut: smoothstep(0.76, 1, clock),
+    amount: clamp(progress * intensity, 0, 1),
+    durationMs: params.topologyPhaseDurationMs,
+    cadenceMs: params.topologyPhaseDurationMs,
+    intensity,
+    supportRadius: radius,
+    falloff
   };
 }
 
@@ -1779,11 +2081,30 @@ function topologyInfluenceAtEpisode(episode: HillOfHillsPhaseEpisode, x: number,
   }
 
   const scale = (0.22 + episode.seedSlope * 0.08 + episode.radius * 0.035) * episode.progress * episode.heightScale;
-  if (episode.kind === 'basin_deepen') {
+  if (episode.kind === 'valley_deepen') {
     return { amount, heightDelta: -amount * scale * (0.85 + episode.seedValleyStrength * 0.32) };
   }
-  if (episode.kind === 'hill_swell') {
+  if (episode.kind === 'valley_fill') {
+    return { amount, heightDelta: amount * scale * (0.38 + (1 - episode.seedFlowAccumulation) * 0.28) };
+  }
+  if (episode.kind === 'hill_swell' || episode.kind === 'ridge_lift') {
     return { amount, heightDelta: amount * scale * (0.78 + episode.seedScore * 0.28) };
+  }
+  if (episode.kind === 'hill_slump') {
+    const downhill = clamp((along / Math.max(0.001, episode.radius)) * 0.34 + core * 0.42, -0.4, 0.78);
+    return { amount, heightDelta: -amount * scale * (0.35 + downhill + episode.seedSlope * 0.12) };
+  }
+  if (episode.kind === 'ridge_shear' || episode.kind === 'strata_reveal') {
+    const shear = clamp(Math.sign(lateral || 1) * 0.2 + core * 0.26 - Math.abs(lateral) / Math.max(0.001, episode.radius) * 0.18, -0.4, 0.46);
+    return { amount, heightDelta: amount * scale * shear };
+  }
+  if (episode.kind === 'basin_bloom') {
+    return { amount, heightDelta: amount * scale * (0.18 + episode.seedValleyStrength * 0.12) };
+  }
+  if (episode.kind === 'saddle_pass') {
+    const passBand = 1 - smoothstep(episode.radius * 0.08, episode.radius * 0.62, Math.abs(lateral));
+    const passTrim = 1 - smoothstep(episode.radius * 0.18, episode.radius * 0.94, Math.abs(along));
+    return { amount, heightDelta: amount * scale * (passBand * 0.34 - passTrim * 0.46) };
   }
 
   const longBand = 1 - smoothstep(episode.radius * 0.12, episode.radius * 0.92, Math.abs(along));
@@ -1834,7 +2155,10 @@ function phaseEpisodeSignature(episode: HillOfHillsPhaseEpisode): string {
     episode.seedValleyStrength.toFixed(3),
     episode.seedFlowAccumulation.toFixed(3),
     episode.seedDitchPotential.toFixed(3),
-    episode.seedSlope.toFixed(3)
+    episode.seedSlope.toFixed(3),
+    episode.topologyEvent?.reason ?? 'none',
+    episode.topologyEvent?.materialHint ?? 'none',
+    episode.topologyEvent?.assetHint ?? 'none'
   ].join(':');
 }
 
@@ -2076,12 +2400,21 @@ function surfaceDetailFor(
   if (phaseInfluence.trailAmount > 0.24) {
     kind = 'trail-wear';
     density = clamp(0.34 + phaseInfluence.trailAmount * 0.58 + topology.routePressure * 0.16 + jitter * 0.08, 0, 1);
-  } else if (phaseInfluence.kind === 'hill_swell' && topology.growthPotential > 0.42) {
+  } else if ((phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'basin_bloom') && topology.growthPotential > 0.42) {
     kind = 'growth-bud';
     density = clamp(0.28 + phaseInfluence.topologyAmount * 0.48 + topology.growthPotential * 0.28 + jitter * 0.08, 0, 1);
-  } else if (phaseInfluence.kind === 'basin_deepen' && topology.ditchPotential > 0.48) {
+  } else if (phaseInfluence.kind === 'valley_deepen' && topology.ditchPotential > 0.48) {
     kind = 'damp-edge';
     density = clamp(0.22 + phaseInfluence.topologyAmount * 0.44 + topology.ditchPotential * 0.26 + jitter * 0.08, 0, 1);
+  } else if (phaseInfluence.kind === 'valley_fill') {
+    kind = 'meadow-tuft';
+    density = clamp(0.18 + phaseInfluence.topologyAmount * 0.38 + topology.growthPotential * 0.2 + jitter * 0.1, 0, 1);
+  } else if (phaseInfluence.kind === 'hill_slump' || phaseInfluence.kind === 'ridge_lift' || phaseInfluence.kind === 'ridge_shear' || phaseInfluence.kind === 'strata_reveal') {
+    kind = 'slope-striation';
+    density = clamp(0.22 + phaseInfluence.topologyAmount * 0.42 + slope * 0.24 + topology.ridgeStrength * 0.16 + jitter * 0.08, 0, 1);
+  } else if (phaseInfluence.kind === 'saddle_pass' || phaseInfluence.kind === 'saddle_pinch') {
+    kind = 'trail-wear';
+    density = clamp(0.2 + phaseInfluence.topologyAmount * 0.34 + topology.routePressure * 0.2 + jitter * 0.08, 0, 1);
   } else if (region === 'approach' && topology.routePressure > 0.68) {
     kind = 'trail-wear';
     density = clamp(0.16 + topology.routePressure * 0.28 + topology.valleyStrength * 0.08 + jitter * 0.1, 0, 1);
@@ -2146,14 +2479,22 @@ function materialEdgeFor(
     kind = 'route-wear';
     anchor = 'trail-accent';
     strength = clamp(Math.max(strength, 0.24 + topology.routePressure * 0.42 + phaseInfluence.trailAmount * 0.42), 0, 1);
-  } else if (phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'saddle_pinch') {
-    kind = phaseInfluence.kind === 'hill_swell' ? 'growth-cluster' : 'slope-break';
-    anchor = phaseInfluence.kind === 'hill_swell' ? 'growth-cluster' : 'stone-scatter';
+  } else if (phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'basin_bloom') {
+    kind = 'growth-cluster';
+    anchor = 'growth-cluster';
     strength = clamp(Math.max(strength, 0.2 + phaseInfluence.topologyAmount * 0.46 + topology.growthPotential * 0.18 + slope * 0.12), 0, 1);
-  } else if (phaseInfluence.kind === 'basin_deepen') {
+  } else if (phaseInfluence.kind === 'saddle_pinch' || phaseInfluence.kind === 'saddle_pass' || phaseInfluence.kind === 'ridge_lift' || phaseInfluence.kind === 'ridge_shear' || phaseInfluence.kind === 'strata_reveal') {
+    kind = phaseInfluence.kind === 'saddle_pass' ? 'route-wear' : 'slope-break';
+    anchor = phaseInfluence.kind === 'saddle_pass' ? 'trail-accent' : 'stone-scatter';
+    strength = clamp(Math.max(strength, 0.22 + phaseInfluence.topologyAmount * 0.44 + slope * 0.18 + topology.ridgeStrength * 0.12), 0, 1);
+  } else if (phaseInfluence.kind === 'valley_deepen') {
     kind = 'damp-rim';
     anchor = 'wet-rim';
     strength = clamp(Math.max(strength, 0.2 + phaseInfluence.topologyAmount * 0.4 + topology.ditchPotential * 0.24), 0, 1);
+  } else if (phaseInfluence.kind === 'valley_fill' || phaseInfluence.kind === 'hill_slump') {
+    kind = 'meadow-dust';
+    anchor = phaseInfluence.kind === 'valley_fill' ? 'tuft-line' : 'scuff-line';
+    strength = clamp(Math.max(strength, 0.18 + phaseInfluence.topologyAmount * 0.36 + topology.valleyStrength * 0.12), 0, 1);
   } else if (topology.ditchPotential > 0.58 || phaseInfluence.sideDitchAmount > 0.18 || proxyMaterial.wetness > 0.56) {
     kind = 'damp-rim';
     anchor = 'wet-rim';
@@ -2284,14 +2625,19 @@ function topologyAt(
   const uphill = (z + params.length * 0.5) / params.length;
   const centerRoute = 1 - smoothstep(halfFloor * 0.42, halfFloor * 1.08, lateral);
   const crownPull = 1 - clamp(Math.abs(z - params.crownZ) / Math.max(0.001, params.length * 0.48), 0, 1);
-  const basinMotion = phaseInfluence.kind === 'basin_deepen' ? phaseInfluence.topologyAmount : 0;
-  const hillMotion = phaseInfluence.kind === 'hill_swell' ? phaseInfluence.topologyAmount : 0;
-  const saddleMotion = phaseInfluence.kind === 'saddle_pinch' ? phaseInfluence.topologyAmount : 0;
+  const valleyCutMotion = phaseInfluence.kind === 'valley_deepen' ? phaseInfluence.topologyAmount : 0;
+  const valleyFillMotion = phaseInfluence.kind === 'valley_fill' ? phaseInfluence.topologyAmount : 0;
+  const hillMotion = phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'ridge_lift' ? phaseInfluence.topologyAmount : 0;
+  const slumpMotion = phaseInfluence.kind === 'hill_slump' ? phaseInfluence.topologyAmount : 0;
+  const shearMotion = phaseInfluence.kind === 'ridge_shear' || phaseInfluence.kind === 'strata_reveal' ? phaseInfluence.topologyAmount : 0;
+  const saddleMotion = phaseInfluence.kind === 'saddle_pinch' || phaseInfluence.kind === 'saddle_pass' ? phaseInfluence.topologyAmount : 0;
+  const bloomMotion = phaseInfluence.kind === 'basin_bloom' ? phaseInfluence.topologyAmount : 0;
   const valleyStrength = clamp(
     heightParts.valleys / Math.max(0.001, params.valleyHeight * 1.9) +
       phaseInfluence.sideDitchAmount * 0.2 +
       phaseInfluence.trailAmount * 0.08 +
-      basinMotion * 0.34 +
+      valleyCutMotion * 0.34 -
+      valleyFillMotion * 0.12 +
       saddleMotion * 0.12,
     0,
     1
@@ -2299,12 +2645,20 @@ function topologyAt(
   const ridgeStrength = clamp(
     Math.max(heightParts.hills, heightParts.wall * 0.42) / Math.max(0.001, params.hillHeight * 1.8 + params.wallHeight * 0.35) +
       hillMotion * 0.28 +
+      shearMotion * 0.1 -
+      slumpMotion * 0.08 +
       saddleMotion * 0.12,
     0,
     1
   );
   const flowAccumulation = clamp(
-    valleyStrength * 0.58 + uphill * 0.18 + phaseInfluence.sideDitchAmount * 0.42 + phaseInfluence.trailAmount * 0.08 + basinMotion * 0.22 + saddleMotion * 0.1,
+    valleyStrength * 0.58 +
+      uphill * 0.18 +
+      phaseInfluence.sideDitchAmount * 0.42 +
+      phaseInfluence.trailAmount * 0.08 +
+      valleyCutMotion * 0.22 -
+      valleyFillMotion * 0.08 +
+      saddleMotion * 0.1,
     0,
     1
   );
@@ -2316,12 +2670,28 @@ function topologyAt(
       phaseInfluence.sideDitchAmount * 0.08 +
       saddleMotion * 0.22 +
       hillMotion * 0.06 -
+      shearMotion * 0.04 -
       slope * 0.12,
     0,
     1
   );
-  const ditchPotential = clamp(valleyStrength * 0.56 + flowAccumulation * 0.18 + phaseInfluence.sideDitchAmount * 0.64 + basinMotion * 0.2, 0, 1);
-  const growthPotential = clamp(ridgeStrength * 0.46 + slope * 0.2 + crownPull * 0.12 + hillMotion * 0.18 + saddleMotion * 0.08 - ditchPotential * 0.2, 0, 1);
+  const ditchPotential = clamp(
+    valleyStrength * 0.56 + flowAccumulation * 0.18 + phaseInfluence.sideDitchAmount * 0.64 + valleyCutMotion * 0.2 - valleyFillMotion * 0.08,
+    0,
+    1
+  );
+  const growthPotential = clamp(
+    ridgeStrength * 0.46 +
+      slope * 0.2 +
+      crownPull * 0.12 +
+      hillMotion * 0.18 +
+      bloomMotion * 0.28 +
+      saddleMotion * 0.08 -
+      ditchPotential * 0.2 -
+      shearMotion * 0.06,
+    0,
+    1
+  );
   const flowDirection = normalize([dx, 0.18 + flowAccumulation * 0.22, dz + 0.28]);
 
   return {
@@ -2897,6 +3267,13 @@ function createWitness(
     trailCandidateChecksum: phaseState.trailCandidateChecksum,
     trailCandidateScoreRange: phaseState.trailCandidateScoreRange,
     selectedTrailScoreRange: phaseState.selectedTrailScoreRange,
+    topologyEventVocabulary: HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
+    topologyEventCandidateChecksum: phaseState.topologyEventCandidateChecksum,
+    topologyEventCandidateScoreRange: phaseState.topologyEventCandidateScoreRange,
+    selectedTopologyEventScoreRange: phaseState.selectedTopologyEventScoreRange,
+    topologyEventDebug: phaseState.activeEpisodes
+      .map((episode) => episode.topologyEvent)
+      .filter((event): event is HillOfHillsTopologyEventDebug => Boolean(event)),
     topologyRanges,
     proxyMaterialCounts,
     surfaceDetailChecksum: checksumParts(samples.map((sample) => surfaceDetailSignature(sample))),

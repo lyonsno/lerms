@@ -5,6 +5,7 @@ import {
   createHillOfHillsTerrain,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
   sampleHillOfHillsTerrain,
   type HillOfHillsTerrainParams
 } from '../src/terrain/hill-of-hills.js';
@@ -623,13 +624,48 @@ const topologyPhaseParams: TopologyMotionParams = {
 };
 const topologyPhaseA = createHillOfHillsTerrain(topologyPhaseParams);
 const topologyPhaseB = createHillOfHillsTerrain(topologyPhaseParams);
+const topologyEventKinds = HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS;
+const topologyEventKindSet = new Set<string>(topologyEventKinds);
+assert(
+  topologyEventKindSet.size === 10 &&
+    topologyEventKinds.includes('hill_swell') &&
+    topologyEventKinds.includes('hill_slump') &&
+    topologyEventKinds.includes('valley_deepen') &&
+    topologyEventKinds.includes('valley_fill') &&
+    topologyEventKinds.includes('ridge_lift') &&
+    topologyEventKinds.includes('ridge_shear') &&
+    topologyEventKinds.includes('saddle_pinch') &&
+    topologyEventKinds.includes('saddle_pass') &&
+    topologyEventKinds.includes('basin_bloom') &&
+    topologyEventKinds.includes('strata_reveal'),
+  'topology motion publishes the full typed terrain-event vocabulary'
+);
 assert((topologyPhaseA.phaseState.mode as string) === 'topology_morphing', 'topology motion activates topology-morphing phase state');
 assert(topologyPhaseA.phaseState.activeEpisodes.length > 0, 'topology motion creates active local episodes');
 assert(
-  topologyPhaseA.phaseState.activeEpisodes.every((episode) =>
-    ['basin_deepen', 'hill_swell', 'saddle_pinch'].includes(episode.kind as string)
-  ),
+  topologyPhaseA.phaseState.activeEpisodes.every((episode) => topologyEventKindSet.has(episode.kind as string)),
   'topology motion episodes stay in topology-specific kinds'
+);
+assert(
+  topologyPhaseA.phaseState.activeEpisodes.every(
+    (episode) =>
+      episode.topologyEvent &&
+      topologyEventKindSet.has(episode.topologyEvent.kind) &&
+      episode.topologyEvent.semanticReason.length > 8 &&
+      episode.topologyEvent.eligibility.score > 0 &&
+      Number.isFinite(episode.topologyEvent.eligibility.hill) &&
+      Number.isFinite(episode.topologyEvent.eligibility.valley) &&
+      Number.isFinite(episode.topologyEvent.eligibility.ridge) &&
+      Number.isFinite(episode.topologyEvent.eligibility.saddle) &&
+      Number.isFinite(episode.topologyEvent.eligibility.basin) &&
+      Number.isFinite(episode.topologyEvent.eligibility.strata) &&
+      episode.topologyEvent.envelope.amount > 0 &&
+      episode.topologyEvent.envelope.durationMs === topologyPhaseA.params.topologyPhaseDurationMs &&
+      episode.topologyEvent.envelope.supportRadius === episode.radius &&
+      episode.topologyEvent.materialHint.length > 0 &&
+      episode.topologyEvent.assetHint.length > 0
+  ),
+  'topology episodes carry eligibility evidence, semantic reasons, envelopes, and material/asset hints'
 );
 assert((topologyPhaseA.witness.phaseMode as string) === 'topology_morphing', 'topology motion witness records topology-morphing mode');
 assert(topologyPhaseA.witness.phaseChecksum === topologyPhaseB.witness.phaseChecksum, 'topology motion checksum is deterministic');
@@ -641,17 +677,43 @@ assert(topologyPhaseA.witness.topologyPhaseProgress > 0.35, 'topology motion wit
 assert(topologyPhaseA.witness.topologyPhaseClock > 0, 'topology motion witness exposes topology-specific clock');
 assert(topologyPhaseA.witness.topologyInfluenceRange.max > 0.28, 'topology motion creates visible local topology influence');
 assert(
-  ((topologyPhaseA.witness.activePhaseKinds as Record<string, number>).basin_deepen ?? 0) +
-    ((topologyPhaseA.witness.activePhaseKinds as Record<string, number>).hill_swell ?? 0) +
-    ((topologyPhaseA.witness.activePhaseKinds as Record<string, number>).saddle_pinch ?? 0) >
-    0,
+  topologyPhaseA.witness.topologyEventVocabulary.length === HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS.length,
+  'topology witness advertises the event vocabulary for shader/debug consumers'
+);
+assert(
+  topologyPhaseA.witness.topologyEventDebug.length === topologyPhaseA.phaseState.activeEpisodes.length,
+  'topology witness exposes one debug record per active topology event'
+);
+assert(
+  topologyPhaseA.witness.topologyEventDebug.every(
+    (event) =>
+      topologyEventKindSet.has(event.kind) &&
+      event.semanticReason.length > 8 &&
+      event.eligibility.score > 0 &&
+      event.envelope.amount > 0 &&
+      event.materialHint.length > 0 &&
+      event.assetHint.length > 0
+  ),
+  'topology witness debug records preserve event kind, reason, eligibility, envelope, and hint channels'
+);
+assert(
+  topologyPhaseA.witness.topologyEventCandidateChecksum === topologyPhaseB.witness.topologyEventCandidateChecksum,
+  'topology event candidate checksum is deterministic'
+);
+assert(
+  topologyPhaseA.witness.selectedTopologyEventScoreRange.max > topologyPhaseA.witness.selectedTopologyEventScoreRange.min,
+  'selected topology event score range records typed event strength'
+);
+assert(
+  Object.entries(topologyPhaseA.witness.activePhaseKinds as Record<string, number>).some(
+    ([kind, count]) => topologyEventKindSet.has(kind) && count > 0
+  ),
   'witness counts active topology motion episode kinds'
 );
 assert(
-  ((topologyPhaseA.witness.phaseInfluenceKinds as Record<string, number>).basin_deepen ?? 0) +
-    ((topologyPhaseA.witness.phaseInfluenceKinds as Record<string, number>).hill_swell ?? 0) +
-    ((topologyPhaseA.witness.phaseInfluenceKinds as Record<string, number>).saddle_pinch ?? 0) >
-    0,
+  Object.entries(topologyPhaseA.witness.phaseInfluenceKinds as Record<string, number>).some(
+    ([kind, count]) => topologyEventKindSet.has(kind) && count > 0
+  ),
   'witness counts topology motion influenced samples'
 );
 assert(topologyPhaseA.witness.dirtyTileCount > 0, 'topology motion marks localized dirty tiles');
@@ -663,7 +725,7 @@ const stableTopologyCounterpart = createHillOfHillsTerrain({
 } as TopologyMotionParams);
 const stableTopologyById = new Map(stableTopologyCounterpart.samples.map((terrainSample) => [terrainSample.id, terrainSample]));
 const topologyInfluencedSamples = topologyPhaseA.samples.filter((terrainSample) =>
-  ['basin_deepen', 'hill_swell', 'saddle_pinch'].includes(terrainSample.phaseInfluence.kind as string)
+  topologyEventKindSet.has(terrainSample.phaseInfluence.kind as string)
 );
 assert(topologyInfluencedSamples.length > 0, 'topology motion marks topology-influenced samples');
 assert(
@@ -741,8 +803,8 @@ assert(
   'topology kind bias still creates topology motion episodes'
 );
 assert(
-  topologyBasinBiased.phaseState.activeEpisodes.every((episode) => episode.kind === 'basin_deepen'),
-  'topology kind bias can steer topology motion toward basin deepening'
+  topologyBasinBiased.phaseState.activeEpisodes.every((episode) => episode.kind === 'valley_deepen'),
+  'topology kind bias can steer topology motion toward valley deepening'
 );
 
 const cacheSource = {
