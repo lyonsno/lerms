@@ -37,7 +37,9 @@ export function mountGloveWellBrowserSmoke(root: HTMLElement): void {
   root.innerHTML = '';
   root.className = 'glove-well-smoke-root';
 
-  const endpoint = new URLSearchParams(window.location.search).get('kaminosEndpoint') ?? '/kaminos-hand-control-sidecar-event';
+  const searchParams = new URLSearchParams(window.location.search);
+  const endpoint = searchParams.get('kaminosEndpoint') ?? '/kaminos-hand-control-sidecar-event';
+  const handFrameUrl = searchParams.get('handFrameUrl') ?? 'http://127.0.0.1:8096/?hand_blocks=1&finger_fluid=0';
   const canvas = document.createElement('canvas');
   canvas.id = 'glove-well-smoke-canvas';
   canvas.setAttribute('aria-label', 'Glove Well live smoke canvas');
@@ -45,7 +47,7 @@ export function mountGloveWellBrowserSmoke(root: HTMLElement): void {
   const handFrame = document.createElement('iframe');
   handFrame.className = 'kaminos-hand-frame';
   handFrame.title = 'Kaminos Live Hand';
-  handFrame.src = 'http://127.0.0.1:8096/hand-surface-compositor-demo.html?fixture=0';
+  handFrame.src = handFrameUrl;
   handFrame.allow = 'camera; fullscreen';
 
   const status = document.createElement('pre');

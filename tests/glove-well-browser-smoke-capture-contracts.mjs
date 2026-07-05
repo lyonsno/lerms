@@ -115,6 +115,8 @@ assert.match(browserSmoke, /__lermsGloveWellHostPacket/, 'browser smoke exposes 
 assert.match(browserSmoke, /capture:/, 'operator-visible status includes capture state');
 assert.match(browserSmoke, /drawHandSkeleton/, 'browser smoke renders the live hand skeleton overlay');
 assert.match(browserSmoke, /skeleton:/, 'operator-visible status includes skeleton tracking state');
+assert.match(browserSmoke, /handFrameUrl/, 'browser smoke lets the operator route the embedded live hand frame');
+assert.match(browserSmoke, /http:\/\/127\.0\.0\.1:8096\/\?hand_blocks=1/, 'browser smoke defaults to the Perceptasia live hand-control surface, not a stale compositor filename');
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
 assert.equal(packageJson.scripts['test:glove-well-host-packet'], 'node --experimental-strip-types tests/glove-well-host-packet-contracts.ts');
