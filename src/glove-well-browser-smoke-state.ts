@@ -148,6 +148,50 @@ export interface GloveWellHostPacketCapture {
   error?: string | null;
 }
 
+export interface GloveWellKaminosWorkbenchBinding {
+  schema: 'lerms.glove-well-kaminos-workbench-binding.v0';
+  kaminos: {
+    branchRef: 'cc/minion-lerms-crucible-descriptors-0706@19ad190';
+    cartridgeId: 'lerms-terrarium';
+    chamberId: 'lerms-underhill';
+    crucibleId: 'glove-emitter';
+    offerId: 'glove-emitter-native-host-smoke-offer';
+    offerAuthority: 'gap_report_route';
+    offerFreshness: 'waiting';
+    outputClass: 'gap_report';
+    operatorRouteQuery: string;
+    sourceRef: 'worlds/lerms-terrarium/world.json#crucibles.glove-emitter.smokeOffers.glove-emitter-native-host-smoke-offer';
+  };
+  firstUse: {
+    firstMove: 'choose_crucible';
+    armature: 'native-host';
+    handle: 'source-route';
+    firing: 'glove-well-native-host-source-packet';
+    receipt: 'glove-receipt';
+  };
+  sourceBridge: {
+    producerDiaulos: 'greedy-glove-fucker';
+    packetSchema: 'lerms.glove-well-host-packet.v0';
+    packetRoute: 'lerms/glove-well/host-packet';
+    hostSurfaceSchema: 'lerms.glove-well-host-surface.v0';
+    sourceTruthAuthority: 'lerms.gloveWellBrowserSmokeState';
+    livePacketEndpoint: string | null;
+    requestedSourceUrl: string | null;
+  };
+  receipt: {
+    expectedSchema: 'kaminos.forge-host.smoke-receipt.v0';
+    requiredOfferId: 'glove-emitter-native-host-smoke-offer';
+    currentOutputClass: 'gap_report';
+    graduationMode: 'extract_shared_runtime';
+    visualAcceptance: 'not_claimed_by_source_packet';
+  };
+  downgrades: Array<
+    | 'kaminos_offer_authority_gap_report_route'
+    | 'native_kaminos_host_not_verified'
+    | 'forge_host_receipt_not_source_truth'
+  >;
+}
+
 export interface GloveWellHostPacketOptions {
   sourceUrl?: string | null;
   generatedAtMs?: number | null;
@@ -163,6 +207,7 @@ export interface GloveWellHostPacket {
     hostLabel: 'Glove Well';
     requestedAdapter: 'glove-well';
   };
+  workbenchBinding: GloveWellKaminosWorkbenchBinding;
   source: {
     producerDiaulos: 'greedy-glove-fucker';
     authority: BrowserSmokeAuthority;
@@ -371,6 +416,11 @@ export function buildGloveWellHostPacket(state: BrowserSmokeState, options: Glov
     yRange: [0, 1] as const,
     depthLoadBearing: false as const
   };
+  const sourceUrl = options.sourceUrl ?? null;
+  const workbenchBinding = buildGloveWellKaminosWorkbenchBinding({
+    endpoint: state.source.endpoint,
+    sourceUrl
+  });
 
   return {
     schema: 'lerms.glove-well-host-packet.v0',
@@ -381,12 +431,13 @@ export function buildGloveWellHostPacket(state: BrowserSmokeState, options: Glov
       hostLabel: 'Glove Well',
       requestedAdapter: 'glove-well'
     },
+    workbenchBinding,
     source: {
       producerDiaulos: 'greedy-glove-fucker',
       authority: state.authority,
       sourceTruthAuthority: 'lerms.gloveWellBrowserSmokeState',
       endpoint: state.source.endpoint,
-      sourceUrl: options.sourceUrl ?? null,
+      sourceUrl,
       sequence: state.source.sequence,
       frameId: state.source.frameId,
       backend: state.source.backend,
@@ -614,6 +665,59 @@ function buildHeldGoin(position: BrowserSmokePoint, ordinal: number): BrowserSmo
     position,
     velocity: { x: 0, y: 0 },
     desireRadius: 0
+  };
+}
+
+function buildGloveWellKaminosWorkbenchBinding({
+  endpoint,
+  sourceUrl
+}: {
+  endpoint: string | null;
+  sourceUrl: string | null;
+}): GloveWellKaminosWorkbenchBinding {
+  return {
+    schema: 'lerms.glove-well-kaminos-workbench-binding.v0',
+    kaminos: {
+      branchRef: 'cc/minion-lerms-crucible-descriptors-0706@19ad190',
+      cartridgeId: 'lerms-terrarium',
+      chamberId: 'lerms-underhill',
+      crucibleId: 'glove-emitter',
+      offerId: 'glove-emitter-native-host-smoke-offer',
+      offerAuthority: 'gap_report_route',
+      offerFreshness: 'waiting',
+      outputClass: 'gap_report',
+      operatorRouteQuery:
+        'kaminos_forge_host=live&world_chamber=lerms-underhill&world_cartridge=lerms-terrarium&world_crucible=glove-emitter&forge_host_smoke_offer=glove-emitter-native-host-smoke-offer',
+      sourceRef: 'worlds/lerms-terrarium/world.json#crucibles.glove-emitter.smokeOffers.glove-emitter-native-host-smoke-offer'
+    },
+    firstUse: {
+      firstMove: 'choose_crucible',
+      armature: 'native-host',
+      handle: 'source-route',
+      firing: 'glove-well-native-host-source-packet',
+      receipt: 'glove-receipt'
+    },
+    sourceBridge: {
+      producerDiaulos: 'greedy-glove-fucker',
+      packetSchema: 'lerms.glove-well-host-packet.v0',
+      packetRoute: 'lerms/glove-well/host-packet',
+      hostSurfaceSchema: 'lerms.glove-well-host-surface.v0',
+      sourceTruthAuthority: 'lerms.gloveWellBrowserSmokeState',
+      livePacketEndpoint: endpoint,
+      requestedSourceUrl: sourceUrl
+    },
+    receipt: {
+      expectedSchema: 'kaminos.forge-host.smoke-receipt.v0',
+      requiredOfferId: 'glove-emitter-native-host-smoke-offer',
+      currentOutputClass: 'gap_report',
+      graduationMode: 'extract_shared_runtime',
+      visualAcceptance: 'not_claimed_by_source_packet'
+    },
+    downgrades: [
+      'kaminos_offer_authority_gap_report_route',
+      'native_kaminos_host_not_verified',
+      'forge_host_receipt_not_source_truth'
+    ]
   };
 }
 
@@ -858,7 +962,16 @@ function buildGloveWellHostSurface({
       expectedPacketRoute: 'lerms/glove-well/host-packet',
       requiredDowngrades: downgrades,
       requiredPrimitiveRoles: ['wealth_source', 'rolling_goin', 'hand_skeleton_bone', 'aim_arc_sample', 'lerm_desire_link'],
-      requiredSourceRows: ['source.authority', 'source.effectiveRoute', 'freshness.status', 'downgrades', 'custody.greedyOwns', 'custody.kaminosOwns']
+      requiredSourceRows: [
+        'source.authority',
+        'source.effectiveRoute',
+        'freshness.status',
+        'workbenchBinding.kaminos.offerId',
+        'workbenchBinding.receipt.expectedSchema',
+        'downgrades',
+        'custody.greedyOwns',
+        'custody.kaminosOwns'
+      ]
     }
   };
 }

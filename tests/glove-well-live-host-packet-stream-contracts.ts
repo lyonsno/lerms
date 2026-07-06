@@ -96,6 +96,12 @@ assert.equal(stream.lastSequence(), 31);
 assert.equal(packet.schema, 'lerms.glove-well-host-packet.v0');
 assert.equal(packet.source.endpoint, EVENT_ENDPOINT);
 assert.equal(packet.source.sourceUrl, GLOVE_WELL_LIVE_HOST_PACKET_ROUTE);
+assert.equal(packet.workbenchBinding.kaminos.cartridgeId, 'lerms-terrarium');
+assert.equal(packet.workbenchBinding.kaminos.crucibleId, 'glove-emitter');
+assert.equal(packet.workbenchBinding.kaminos.offerId, 'glove-emitter-native-host-smoke-offer');
+assert.equal(packet.workbenchBinding.kaminos.offerAuthority, 'gap_report_route');
+assert.equal(packet.workbenchBinding.receipt.expectedSchema, 'kaminos.forge-host.smoke-receipt.v0');
+assert.ok(packet.workbenchBinding.downgrades.includes('native_kaminos_host_not_verified'));
 assert.equal(packet.source.authority, 'live_simulation');
 assert.equal(packet.source.sequence, 31);
 assert.equal(packet.freshness.status, 'fresh');
@@ -147,6 +153,7 @@ const tooOldPacket = stream.ingestCache(snapshot(34, 'aim', 400), {
 });
 assert.equal(tooOldPacket.source.authority, 'stale_hold');
 assert.equal(tooOldPacket.freshness.status, 'stale');
+assert.equal(tooOldPacket.workbenchBinding.kaminos.offerId, 'glove-emitter-native-host-smoke-offer');
 assert.ok(tooOldPacket.downgrades.includes('kaminos_event_cache_stale'));
 
 const fallbackPacket = stream.ingestCache(

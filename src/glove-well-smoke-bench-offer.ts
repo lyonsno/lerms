@@ -105,6 +105,7 @@ interface GloveWellSmokeBenchHostPayload {
   primitiveCount: number;
   requiredPrimitiveRoles: string[];
   capture: GloveWellHostPacket['capture'];
+  workbenchBinding: GloveWellHostPacket['workbenchBinding'];
 }
 
 interface GloveWellSmokeBenchStateStream {
@@ -143,6 +144,7 @@ interface GloveWellSmokeBenchAdapterState {
     primitiveRoleCounts: Record<string, number>;
   };
   downgrades: string[];
+  workbenchBinding: GloveWellHostPacket['workbenchBinding'];
   rejectedDebugSurfaces: GloveWellHostPacket['rejectedDebugSurfaces'];
 }
 
@@ -333,6 +335,7 @@ function buildAdapterState(hostPacket: GloveWellHostPacket, downgrades: string[]
       primitiveRoleCounts: primitiveRoleCounts(hostPacket)
     },
     downgrades,
+    workbenchBinding: hostPacket.workbenchBinding,
     rejectedDebugSurfaces: hostPacket.rejectedDebugSurfaces
   };
 }
@@ -348,7 +351,8 @@ function buildHostPayload(hostPacket: GloveWellHostPacket, liveUrl: string | nul
     coordinateFrame: hostPacket.coordinateFrame,
     primitiveCount: hostPacket.surface.primitives.length,
     requiredPrimitiveRoles: [...hostPacket.surface.witnessExpectations.requiredPrimitiveRoles],
-    capture: hostPacket.capture
+    capture: hostPacket.capture,
+    workbenchBinding: hostPacket.workbenchBinding
   };
 }
 
