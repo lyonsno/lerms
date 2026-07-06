@@ -300,6 +300,30 @@ npm run witness:glove-well-host-packet -- --report /tmp/lerms-glove-well-host-pa
 
 The browser smoke also exposes `window.__lermsGloveWellHostPacket()` so a future native-host witness can inspect the current operator-visible state without scraping status text. Current Kaminos host-surface tools do not yet have `--adapter glove-well`; that adapter is the next Gutterglass-side composition point.
 
+### `lerms.glove-well-kaminos-firing-receipt.v0`
+
+The Kaminos firing receipt is Greedy's source-owned join point for the corrected Smoke Workbench route. It binds the Glove Well host packet, the Smoke Bench offer, and an optional `kaminos.forge-host.smoke-receipt.v0` capture into one route witness. It exists so Greedy can fire the Glove Well source packet through the Kaminos/Forge Host pipeline without laundering a debug surface into acceptance.
+
+The route is `lerms/glove-well/kaminos-firing-receipt-file`. It carries:
+
+- the primary smoke path as `kaminos_forge_host_smoke_workbench`, including the operator route and the `world-cartridges -> smokeWorkbench.operatorRoute -> Forge Host route-card` entry;
+- the source packet schema, route, authority, freshness, source-truth authority, primitive count, and required primitive roles;
+- the Smoke Bench offer schema, route, offer id, primary target kind, and Minion acceptance surface;
+- the `lerms.glove-well-kaminos-workbench-binding.v0` names for `lerms-terrarium`, `lerms-underhill`, `glove-emitter`, and `glove-emitter-native-host-smoke-offer`;
+- the expected Kaminos receipt schema and required offer id;
+- a summarized Kaminos receipt when one exists, or an explicit `missing` receipt state when it does not;
+- source truth downgrades that keep `kaminosAcceptance`, `liveGloveWellAuthority`, and `debugSurfacesAccepted` false;
+- rejected acceptance surfaces for Perceptasia live hand frames, local LERMS browser smoke, preview cards, screenshots, link-outs, and popouts;
+- remaining fake work: native Kaminos host acceptance, full vertical success, shared hand-state extraction, live WiLoR sidecar proof when absent, and final goin mesh.
+
+Generate the route witness with:
+
+```sh
+npm run witness:glove-well-kaminos-firing-receipt -- --report /tmp/lerms-glove-well-kaminos-firing-receipt-0706.json --operator-route 'http://127.0.0.1:18156/?kaminos_forge_host=live&world_chamber=lerms-underhill&world_cartridge=lerms-terrarium&world_crucible=glove-emitter&forge_host_smoke_offer=glove-emitter-native-host-smoke-offer'
+```
+
+If Kaminos has already written a matching Forge Host smoke receipt, pass it with `--kaminos-receipt <path>`. A receipt with the wrong schema or wrong offer id fails and still writes a failure report naming the build phase and last trustworthy evidence. A captured receipt remains route evidence, not source-truth acceptance, until Kaminos and Palm's gates claim stronger authority.
+
 ### `lerms.first-vertical-frame.v0`
 
 The frame envelope that joins terrain samples, lerm states, goin states, juice hits, and carrier-drop events under one source-truth packet.
