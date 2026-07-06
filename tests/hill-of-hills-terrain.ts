@@ -883,6 +883,30 @@ assert(
   topologyBeforeBoundaryPreblend.witness.topologyEventDebug.every((event) => !/^topology-\d+-/.test(event.id)),
   'topology event debug ids are stable support identities rather than epoch-scoped replacement ids'
 );
+assert(
+  new Set(topologyBeforeBoundaryPreblend.witness.topologyEventDebug.map((event) => event.id)).size ===
+    topologyBeforeBoundaryPreblend.witness.topologyEventDebug.length,
+  'topology motion merges overlapping phase windows into one debug record per stable support identity'
+);
+
+const topologySingleSupportBoundary = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 0.78,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseLimit: 1,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: topologyBoundaryEventClasses
+} as TopologyMotionParams);
+assert(
+  topologySingleSupportBoundary.witness.topologyEventDebug.length <= 2 &&
+    new Set(topologySingleSupportBoundary.witness.topologyEventDebug.map((event) => event.id)).size ===
+      topologySingleSupportBoundary.witness.topologyEventDebug.length,
+  'topology count one allows only current/adjacent support crossfade without duplicate support identities'
+);
 
 const topologyBasinBiased = createHillOfHillsTerrain({
   ...topologyPhaseParams,

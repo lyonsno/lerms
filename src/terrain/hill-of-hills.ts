@@ -1414,6 +1414,7 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
   if (params.topologyPhaseIntensity > 0 && params.topologyPhaseLimit > 0) {
     topologyCandidateSummary = scoreTopologyMotionCandidates(params);
     const selectedForScoreRange: TopologyMotionCandidate[] = [];
+    const topologyEpisodeById = new Map<string, HillOfHillsPhaseEpisode>();
 
     for (const window of topologyWindows) {
       if (window.amount <= 0.001) continue;
@@ -1427,17 +1428,20 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         if (!eventConfig.enabled || eventConfig.appetite <= 0 || eventConfig.force <= 0) continue;
         const gestureState = topologyGestureState(eventConfig.gesture, wrapUnit(window.clock + eventConfig.phaseOffset));
         if (gestureState.amount <= 0.001) continue;
-        const angle = (rng() - 0.5) * 0.5;
+        const id = `topology-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
+        const supportRng = mulberry32(detailSeedFor(params.topologyPhaseSeed, candidate.x, candidate.z, candidate.topologyKind));
+        const angle = (supportRng() - 0.5) * 0.5;
         const direction = normalize([
           candidate.direction[0] * Math.cos(angle) + candidate.direction[2] * Math.sin(angle),
           0,
           candidate.direction[2] * Math.cos(angle) - candidate.direction[0] * Math.sin(angle)
         ]);
-        const radius = params.topologyPhaseRadius * eventConfig.spread * (0.78 + rng() * 0.52);
-        const localProgress = clamp(gestureState.amount * (0.82 + rng() * 0.22), 0, 1);
-        const localIntensity = clamp(params.topologyPhaseIntensity * window.amount * eventConfig.force * (0.68 + rng() * 0.28), 0, 1);
+        const radius = params.topologyPhaseRadius * eventConfig.spread * (0.78 + supportRng() * 0.52);
+        const trailWidth = Math.max(0.16, radius * (0.22 + supportRng() * 0.1));
+        const sideDitchOffset = radius * (0.4 + supportRng() * 0.14);
+        const localProgress = clamp(gestureState.amount * (0.82 + supportRng() * 0.22), 0, 1);
+        const localIntensity = clamp(params.topologyPhaseIntensity * window.amount * eventConfig.force * (0.68 + supportRng() * 0.28), 0, 1);
         if (localIntensity <= 0.001) continue;
-        const id = `topology-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
         const envelope = topologyEventEnvelope(
           gestureState,
           params,
@@ -1447,7 +1451,7 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
           candidate.falloff,
           eventConfig
         );
-        episodes.push({
+        const episode: HillOfHillsPhaseEpisode = {
           id,
           kind: candidate.topologyKind,
           center: [candidate.x, 0, candidate.z],
@@ -1455,8 +1459,8 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
           progress: localProgress,
           intensity: localIntensity,
           direction,
-          trailWidth: Math.max(0.16, radius * (0.22 + rng() * 0.1)),
-          sideDitchOffset: radius * (0.4 + rng() * 0.14),
+          trailWidth,
+          sideDitchOffset,
           heightScale: params.topologyPhaseHeightScale,
           seedMethod: 'topology_score',
           seedScore: candidate.score,
@@ -1477,10 +1481,13 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
             materialHint: candidate.materialHint,
             assetHint: candidate.assetHint
           }
-        });
+        };
+        const existing = topologyEpisodeById.get(id);
+        topologyEpisodeById.set(id, existing ? mergeTopologyPhaseEpisodes(existing, episode) : episode);
       }
     }
 
+    episodes.push(...topologyEpisodeById.values());
     selectedTopologyEventScoreRange = scoreRangeForCandidates(selectedForScoreRange);
   }
 
@@ -2293,6 +2300,44 @@ function topologyEventEnvelope(
     force: eventConfig.force,
     phaseOffset: eventConfig.phaseOffset,
     spread: eventConfig.spread
+  };
+}
+
+function mergeTopologyPhaseEpisodes(existing: HillOfHillsPhaseEpisode, incoming: HillOfHillsPhaseEpisode): HillOfHillsPhaseEpisode {
+  if (!existing.topologyEvent || !incoming.topologyEvent) {
+    return incoming.intensity >= existing.intensity ? incoming : existing;
+  }
+
+  const existingEnvelope = existing.topologyEvent.envelope;
+  const incomingEnvelope = incoming.topologyEvent.envelope;
+  const dominant = incomingEnvelope.amount >= existingEnvelope.amount ? incoming : existing;
+  const dominantEvent = dominant.topologyEvent!;
+  const progress = Math.max(existing.progress, incoming.progress);
+  const intensity = clamp(1 - (1 - existing.intensity) * (1 - incoming.intensity), 0, 1);
+  const envelopeAmount = clamp(1 - (1 - existingEnvelope.amount) * (1 - incomingEnvelope.amount), 0, 1);
+
+  return {
+    ...dominant,
+    id: existing.id,
+    center: existing.center,
+    radius: existing.radius,
+    direction: existing.direction,
+    trailWidth: existing.trailWidth,
+    sideDitchOffset: existing.sideDitchOffset,
+    progress,
+    intensity,
+    topologyEvent: {
+      ...dominantEvent,
+      id: existing.id,
+      center: existing.center,
+      direction: existing.direction,
+      envelope: {
+        ...dominantEvent.envelope,
+        amount: envelopeAmount,
+        intensity,
+        supportRadius: existing.radius
+      }
+    }
   };
 }
 
