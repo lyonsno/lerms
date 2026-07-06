@@ -845,6 +845,45 @@ assert(
   'topology event debug exposes nonzero semantic envelope just after wrap'
 );
 
+const topologyBoundaryEventClasses = Object.fromEntries(
+  topologyEventKinds.map((kind) => [
+    kind,
+    {
+      ...defaultHillOfHillsParams.topologyEventClasses[kind],
+      enabled: kind === 'hill_swell',
+      appetite: kind === 'hill_swell' ? 1.4 : 0,
+      force: kind === 'hill_swell' ? 1.2 : 0,
+      gesture: 'tide',
+      phaseOffset: 0,
+      spread: 1
+    }
+  ])
+) as TopologyMotionParams['topologyEventClasses'];
+const topologyBeforeBoundaryPreblend = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 0.78,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseLimit: 4,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: topologyBoundaryEventClasses
+} as TopologyMotionParams);
+assert(
+  topologyBeforeBoundaryPreblend.witness.topologyEventDebug.length > 0,
+  'topology boundary preblend fixture creates visible topology events'
+);
+assert(
+  topologyBeforeBoundaryPreblend.witness.topologyEventDebug.some((event) => event.envelope.clock < 0.5),
+  'topology motion preblends the next event cohort before the epoch boundary'
+);
+assert(
+  topologyBeforeBoundaryPreblend.witness.topologyEventDebug.every((event) => !/^topology-\d+-/.test(event.id)),
+  'topology event debug ids are stable support identities rather than epoch-scoped replacement ids'
+);
+
 const topologyBasinBiased = createHillOfHillsTerrain({
   ...topologyPhaseParams,
   topologyPhaseValleyBias: 1.8,

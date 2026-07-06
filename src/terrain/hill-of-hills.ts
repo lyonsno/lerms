@@ -1437,7 +1437,7 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         const localProgress = clamp(gestureState.amount * (0.82 + rng() * 0.22), 0, 1);
         const localIntensity = clamp(params.topologyPhaseIntensity * window.amount * eventConfig.force * (0.68 + rng() * 0.28), 0, 1);
         if (localIntensity <= 0.001) continue;
-        const id = `topology-${window.epoch}-${i}-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
+        const id = `topology-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
         const envelope = topologyEventEnvelope(
           gestureState,
           params,
@@ -1608,6 +1608,20 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
         epoch: timing.epoch - 1,
         clock: previousClock,
         progress: previousProgress,
+        amount
+      });
+    }
+  }
+  if (overlapWidth > 0 && clock > 1 - overlapWidth) {
+    const nextClock = clock - (1 - overlapWidth);
+    const fade = smoothstep(1 - overlapWidth, 1, clock);
+    const nextProgress = topologyPhaseProgressAtClock(nextClock);
+    const amount = clamp(nextProgress * fade, 0, 1);
+    if (amount > 0.001) {
+      windows.push({
+        epoch: timing.epoch + 1,
+        clock: nextClock,
+        progress: nextProgress,
         amount
       });
     }
