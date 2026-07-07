@@ -72,9 +72,12 @@ export interface BrowserSmokeAim {
 export interface BrowserSmokeGoin {
   id: string;
   state: 'held' | 'rolling' | 'settled';
+  custodyState?: 'held_by_operator' | 'launched_rolling_lure' | 'settled_lure';
   position: BrowserSmokePoint;
   velocity: BrowserSmokePoint;
   desireRadius: number;
+  launchEventId?: string | null;
+  sourceFrameId?: string | null;
 }
 
 export interface BrowserSmokeHandSkeletonSegment {
@@ -241,6 +244,50 @@ export interface GloveWellHostPacket {
     releaseCount: number;
     aim: BrowserSmokeAim;
     hand: BrowserSmokeState['hand'];
+  };
+  command: {
+    schema: 'lerms.glove-well-command-trace.v0';
+    phase: BrowserSmokePhase;
+    inputAuthority: BrowserSmokeAuthority;
+    inputFreshness: GloveWellHostPacket['freshness']['status'];
+    inputFrameId: string | null;
+    inputSequence: number | null;
+    heldGoinId: string | null;
+    aimedGoinId: string | null;
+    launchedGoinId: string | null;
+    releaseEventId: string | null;
+    releaseCount: number;
+    liveGloveWellAuthority: false;
+    downgrades: string[];
+  };
+  sourceTruth: {
+    handInputAuthority: BrowserSmokeAuthority;
+    handInputFreshness: GloveWellHostPacket['freshness']['status'];
+    goinSimulationAuthority: 'live_simulation';
+    liveGloveWellAuthority: false;
+    kaminosAcceptance: false;
+    downgrades: string[];
+  };
+  goinCustody: {
+    schema: 'lerms.glove-well-goin-custody-chain.v0';
+    activeGoinId: string | null;
+    heldGoinIds: string[];
+    launchedGoinIds: string[];
+    rollingGoinIds: string[];
+    settledGoinIds: string[];
+    launchEvents: Array<{
+      eventId: string;
+      goinId: string;
+      sourceFrameId: string | null;
+      releaseCount: number;
+      position: BrowserSmokePoint;
+      velocity: BrowserSmokePoint;
+    }>;
+    invariants: {
+      launchedGoinsPersist: boolean;
+      secondPinchAllocatesNewHeldGoin: boolean;
+      handInputCannotPromoteLiveAuthority: true;
+    };
   };
   handSkeleton: BrowserSmokeHandSkeleton;
   goins: BrowserSmokeGoin[];
@@ -421,6 +468,9 @@ export function buildGloveWellHostPacket(state: BrowserSmokeState, options: Glov
     endpoint: state.source.endpoint,
     sourceUrl
   });
+  const freshnessStatus = hostPacketFreshnessStatus(state);
+  const command = buildGloveWellCommandTrace({ state, goins, freshnessStatus, downgrades });
+  const goinCustody = buildGoinCustodyChain({ state, goins });
 
   return {
     schema: 'lerms.glove-well-host-packet.v0',
@@ -447,7 +497,7 @@ export function buildGloveWellHostPacket(state: BrowserSmokeState, options: Glov
       generatedAtMs: finite(options.generatedAtMs) ?? null
     },
     freshness: {
-      status: hostPacketFreshnessStatus(state),
+      status: freshnessStatus,
       ageMs: state.source.ageMs,
       cameraAgeMs: state.source.cameraAgeMs,
       budgetMs: 180
@@ -460,6 +510,16 @@ export function buildGloveWellHostPacket(state: BrowserSmokeState, options: Glov
       aim: cloneAim(state.aim),
       hand: cloneHand(state.hand)
     },
+    command,
+    sourceTruth: {
+      handInputAuthority: state.authority,
+      handInputFreshness: freshnessStatus,
+      goinSimulationAuthority: 'live_simulation',
+      liveGloveWellAuthority: false,
+      kaminosAcceptance: false,
+      downgrades
+    },
+    goinCustody,
     handSkeleton: cloneHandSkeleton(state.handSkeleton),
     goins,
     lermDesireHints,
@@ -620,12 +680,15 @@ export function buildGloveWellBrowserSmokeState({
       goin = {
         id: `launched-goin-${String(releaseCount).padStart(3, '0')}`,
         state: 'rolling',
+        custodyState: 'launched_rolling_lure',
         position: aim.origin,
         velocity: {
           x: round3(aim.direction.x * 0.022),
           y: round3(aim.direction.y * 0.022)
         },
-        desireRadius: 0.18
+        desireRadius: 0.18,
+        launchEventId: `glove-well-release-${String(releaseCount).padStart(3, '0')}`,
+        sourceFrameId: sourceBase.frameId
       };
       goins = [...advancedGoins.filter((candidate) => candidate.state !== 'held'), goin];
     }
@@ -662,9 +725,12 @@ function buildHeldGoin(position: BrowserSmokePoint, ordinal: number): BrowserSmo
   return {
     id: `primed-goin-${String(ordinal).padStart(3, '0')}`,
     state: 'held',
+    custodyState: 'held_by_operator',
     position,
     velocity: { x: 0, y: 0 },
-    desireRadius: 0
+    desireRadius: 0,
+    launchEventId: null,
+    sourceFrameId: null
   };
 }
 
@@ -728,6 +794,80 @@ function hostPacketFreshnessStatus(state: BrowserSmokeState): GloveWellHostPacke
   if (state.authority === 'invalid') return 'invalid';
   if (state.statusCode === 'waiting' || state.statusCode === 'empty') return 'waiting';
   return 'stale';
+}
+
+function buildGloveWellCommandTrace({
+  state,
+  goins,
+  freshnessStatus,
+  downgrades
+}: {
+  state: BrowserSmokeState;
+  goins: BrowserSmokeGoin[];
+  freshnessStatus: GloveWellHostPacket['freshness']['status'];
+  downgrades: string[];
+}): GloveWellHostPacket['command'] {
+  const heldGoin = goins.find((goin) => goin.state === 'held') ?? null;
+  const launchedGoin = lastLaunchedGoin(goins);
+
+  return {
+    schema: 'lerms.glove-well-command-trace.v0',
+    phase: state.phase,
+    inputAuthority: state.authority,
+    inputFreshness: freshnessStatus,
+    inputFrameId: state.source.frameId,
+    inputSequence: state.source.sequence,
+    heldGoinId: heldGoin?.id ?? null,
+    aimedGoinId: state.phase === 'aiming' ? heldGoin?.id ?? null : null,
+    launchedGoinId: launchedGoin?.id ?? null,
+    releaseEventId: launchedGoin?.launchEventId ?? null,
+    releaseCount: state.releaseCount,
+    liveGloveWellAuthority: false,
+    downgrades
+  };
+}
+
+function buildGoinCustodyChain({
+  state,
+  goins
+}: {
+  state: BrowserSmokeState;
+  goins: BrowserSmokeGoin[];
+}): GloveWellHostPacket['goinCustody'] {
+  const held = goins.filter((goin) => goin.state === 'held');
+  const launched = goins.filter((goin) => isLaunchedGoin(goin));
+  const rolling = goins.filter((goin) => goin.state === 'rolling');
+  const settled = goins.filter((goin) => goin.state === 'settled');
+  const active = pickActiveGoin(goins, state.goin);
+  const heldIds = held.map((goin) => goin.id);
+  const launchedIds = launched.map((goin) => goin.id);
+
+  return {
+    schema: 'lerms.glove-well-goin-custody-chain.v0',
+    activeGoinId: active.id ?? null,
+    heldGoinIds: heldIds,
+    launchedGoinIds: launchedIds,
+    rollingGoinIds: rolling.map((goin) => goin.id),
+    settledGoinIds: settled.map((goin) => goin.id),
+    launchEvents: launched
+      .filter((goin) => goin.launchEventId)
+      .map((goin, index) => ({
+        eventId: goin.launchEventId as string,
+        goinId: goin.id,
+        sourceFrameId: goin.sourceFrameId ?? null,
+        releaseCount: index + 1,
+        position: { ...goin.position },
+        velocity: { ...goin.velocity }
+      })),
+    invariants: {
+      launchedGoinsPersist: state.releaseCount === 0 || launchedIds.length > 0,
+      secondPinchAllocatesNewHeldGoin:
+        state.releaseCount === 0 ||
+        heldIds.length === 0 ||
+        launchedIds.every((launchedId) => !heldIds.includes(launchedId)),
+      handInputCannotPromoteLiveAuthority: true
+    }
+  };
 }
 
 function normalizeHostPacketCapture(capture: GloveWellHostPacketCapture | null): GloveWellHostPacket['capture'] {
@@ -966,6 +1106,11 @@ function buildGloveWellHostSurface({
         'source.authority',
         'source.effectiveRoute',
         'freshness.status',
+        'command.phase',
+        'command.releaseEventId',
+        'sourceTruth.liveGloveWellAuthority',
+        'goinCustody.launchEvents',
+        'goinCustody.invariants',
         'workbenchBinding.kaminos.offerId',
         'workbenchBinding.receipt.expectedSchema',
         'downgrades',
@@ -1171,6 +1316,7 @@ function advanceGoin(goin: BrowserSmokeGoin, nowMs: number): BrowserSmokeGoin {
   return {
     ...goin,
     state: speed < 0.002 ? 'settled' : 'rolling',
+    custodyState: speed < 0.002 ? 'settled_lure' : goin.custodyState ?? 'launched_rolling_lure',
     position: nextPosition,
     velocity: nextVelocity,
     desireRadius: round3(Math.max(0.08, goin.desireRadius * 0.995))
@@ -1197,6 +1343,15 @@ function pickActiveGoin(goins: BrowserSmokeGoin[], fallback: BrowserSmokeGoin): 
 
 function pickRollingGoin(goins: BrowserSmokeGoin[], fallback: BrowserSmokeGoin): BrowserSmokeGoin {
   return goins.find((goin) => goin.state === 'rolling') ?? goins.at(-1) ?? fallback;
+}
+
+function lastLaunchedGoin(goins: BrowserSmokeGoin[]): BrowserSmokeGoin | null {
+  const launched = goins.filter((goin) => isLaunchedGoin(goin));
+  return launched.at(-1) ?? null;
+}
+
+function isLaunchedGoin(goin: BrowserSmokeGoin): boolean {
+  return Boolean(goin.launchEventId) || goin.id.startsWith('launched-goin-');
 }
 
 function buildArcSamples(origin: BrowserSmokePoint, direction: BrowserSmokePoint): Array<BrowserSmokePoint & { t: number }> {

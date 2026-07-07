@@ -155,6 +155,26 @@ assert.deepEqual(hostPacket.handSkeleton.landmarks[20], { x: 0.33, y: 0.595 });
 assert.equal(hostPacket.goins.length >= 2, true, 'host packet carries the held goin plus persistent rolling goin');
 assert.equal(hostPacket.goins.some((goin) => goin.state === 'held'), true);
 assert.equal(hostPacket.goins.some((goin) => goin.state === 'rolling'), true);
+assert.equal(hostPacket.command.schema, 'lerms.glove-well-command-trace.v0');
+assert.equal(hostPacket.command.phase, 'priming');
+assert.equal(hostPacket.command.heldGoinId, 'primed-goin-002');
+assert.equal(hostPacket.command.launchedGoinId, 'launched-goin-001');
+assert.equal(hostPacket.command.releaseEventId, 'glove-well-release-001');
+assert.equal(hostPacket.command.inputAuthority, 'live_simulation');
+assert.equal(hostPacket.command.liveGloveWellAuthority, false);
+assert.equal(hostPacket.sourceTruth.handInputAuthority, 'live_simulation');
+assert.equal(hostPacket.sourceTruth.handInputFreshness, 'fresh');
+assert.equal(hostPacket.sourceTruth.goinSimulationAuthority, 'live_simulation');
+assert.equal(hostPacket.sourceTruth.liveGloveWellAuthority, false);
+assert.equal(hostPacket.sourceTruth.kaminosAcceptance, false);
+assert.equal(hostPacket.goinCustody.schema, 'lerms.glove-well-goin-custody-chain.v0');
+assert.deepEqual(hostPacket.goinCustody.heldGoinIds, ['primed-goin-002']);
+assert.deepEqual(hostPacket.goinCustody.launchedGoinIds, ['launched-goin-001']);
+assert.equal(hostPacket.goinCustody.launchEvents.at(-1)?.eventId, 'glove-well-release-001');
+assert.equal(hostPacket.goinCustody.launchEvents.at(-1)?.goinId, 'launched-goin-001');
+assert.equal(hostPacket.goinCustody.invariants.launchedGoinsPersist, true);
+assert.equal(hostPacket.goinCustody.invariants.secondPinchAllocatesNewHeldGoin, true);
+assert.equal(hostPacket.goinCustody.invariants.handInputCannotPromoteLiveAuthority, true);
 assert.equal(hostPacket.lermDesireHints.some((hint) => hint.reason === 'rolling_goin_lure' && hint.targetGoinId === rollingAfterRepinch!.id), true);
 assert.equal(hostPacket.capture.state, 'complete');
 assert.equal(hostPacket.capture.filmstripPath, '/tmp/lerms-glove-well-browser-smoke-capture-live/filmstrip.html');
@@ -210,6 +230,14 @@ const fallbackState = buildGloveWellBrowserSmokeState({
 assert.equal(fallbackState.authority, 'fallback');
 assert.equal(fallbackState.statusCode, 'fallback');
 assert.ok(fallbackState.downgrades.includes('kaminos_event_cache_non_live_route'));
+const fallbackPacket = buildGloveWellHostPacket(fallbackState, {
+  sourceUrl: '/__lerms/glove-well-host-packet/current',
+  generatedAtMs: 90_721
+});
+assert.equal(fallbackPacket.sourceTruth.handInputAuthority, 'fallback');
+assert.equal(fallbackPacket.sourceTruth.handInputFreshness, 'fallback');
+assert.equal(fallbackPacket.sourceTruth.liveGloveWellAuthority, false);
+assert.equal(fallbackPacket.goinCustody.invariants.handInputCannotPromoteLiveAuthority, true);
 
 const syntheticState = buildGloveWellBrowserSmokeState({
   previous: state,

@@ -48,6 +48,23 @@ assert.equal(packet.source.sourceTruthAuthority, 'lerms.gloveWellBrowserSmokeSta
 assert.equal(packet.coordinateFrame.space, 'operator_visible_webcam_mirrored_screen_normalized');
 assert.equal(packet.gloveWell.phase, 'priming');
 assert.equal(packet.gloveWell.releaseCount, 1);
+assert.equal(packet.command.schema, 'lerms.glove-well-command-trace.v0');
+assert.equal(packet.command.phase, 'priming');
+assert.equal(packet.command.heldGoinId, 'primed-goin-002');
+assert.equal(packet.command.launchedGoinId, 'launched-goin-001');
+assert.equal(packet.command.releaseEventId, 'glove-well-release-001');
+assert.equal(packet.command.liveGloveWellAuthority, false);
+assert.equal(packet.sourceTruth.handInputAuthority, packet.source.authority);
+assert.equal(packet.sourceTruth.handInputFreshness, packet.freshness.status);
+assert.equal(packet.sourceTruth.liveGloveWellAuthority, false);
+assert.equal(packet.sourceTruth.kaminosAcceptance, false);
+assert.equal(packet.goinCustody.schema, 'lerms.glove-well-goin-custody-chain.v0');
+assert.deepEqual(packet.goinCustody.heldGoinIds, ['primed-goin-002']);
+assert.deepEqual(packet.goinCustody.rollingGoinIds, ['launched-goin-001']);
+assert.equal(packet.goinCustody.launchEvents.at(-1)?.eventId, 'glove-well-release-001');
+assert.equal(packet.goinCustody.invariants.launchedGoinsPersist, true);
+assert.equal(packet.goinCustody.invariants.secondPinchAllocatesNewHeldGoin, true);
+assert.equal(packet.goinCustody.invariants.handInputCannotPromoteLiveAuthority, true);
 assert.equal(packet.handSkeleton.landmarkCount, 21);
 assert.equal(packet.goins.some((goin) => goin.state === 'held'), true);
 assert.equal(packet.goins.some((goin) => goin.state === 'rolling'), true);
@@ -74,6 +91,9 @@ assert.ok(packet.surface.witnessExpectations.requiredPrimitiveRoles.includes('ro
 assert.ok(packet.surface.witnessExpectations.requiredPrimitiveRoles.includes('hand_skeleton_bone'));
 assert.ok(packet.surface.witnessExpectations.requiredSourceRows.includes('workbenchBinding.kaminos.offerId'));
 assert.ok(packet.surface.witnessExpectations.requiredSourceRows.includes('workbenchBinding.receipt.expectedSchema'));
+assert.ok(packet.surface.witnessExpectations.requiredSourceRows.includes('command.releaseEventId'));
+assert.ok(packet.surface.witnessExpectations.requiredSourceRows.includes('sourceTruth.liveGloveWellAuthority'));
+assert.ok(packet.surface.witnessExpectations.requiredSourceRows.includes('goinCustody.launchEvents'));
 assert.ok(packet.downgrades.includes('local_browser_smoke_not_native_kaminos_host'));
 assert.ok(packet.downgrades.includes('visual_capture_not_source_truth'));
 assert.ok(packet.custody.greedyOwns.includes('sourceOwnedHostPacket'));
@@ -96,6 +116,9 @@ assert.equal(written.capture.reportPath, '/tmp/lerms-glove-well-capture.json');
 assert.equal(written.capture.filmstripPath, '/tmp/lerms-glove-well-filmstrip.html');
 assert.equal(written.surface.schema, 'lerms.glove-well-host-surface.v0');
 assert.equal(written.surface.primitives.some((primitive: { role: string }) => primitive.role === 'capture_status'), true);
+assert.equal(written.command.schema, 'lerms.glove-well-command-trace.v0');
+assert.equal(written.goinCustody.schema, 'lerms.glove-well-goin-custody-chain.v0');
+assert.equal(written.sourceTruth.liveGloveWellAuthority, false);
 
 const help = spawnSync(process.execPath, ['--experimental-strip-types', 'src/glove-well-host-packet.ts', '--help'], {
   cwd: process.cwd(),
