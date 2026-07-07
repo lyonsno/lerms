@@ -9,6 +9,7 @@ import {
   type HillOfHillsProxyMaterialKind,
   type HillOfHillsSurfaceDetailKind,
   type HillOfHillsSurfaceAnchorKind,
+  type HillOfHillsTerrain,
   type HillOfHillsTerrainBuffer,
   type HillOfHillsTerrainBufferMetricChannel,
   type HillOfHillsTerrainParams,
@@ -69,10 +70,13 @@ import {
 } from './terrain/hill-of-hills-param-settings.js';
 import {
   HILL_PHASE_FILMSTRIP_FRAME_COUNTS,
+  compareHillPhaseContinuityFrames,
   createHillPhaseFilmstripSchedule,
   fitHillPhaseFilmstripLayout,
   fitHillPhaseFilmstripViewport,
+  formatHillPhaseContinuityDelta,
   normalizeHillPhaseFilmstripFrameCount,
+  type HillPhaseContinuityDelta,
   type HillPhaseFilmstripFrame,
   type HillPhaseFilmstripFrameCount
 } from './terrain/hill-of-hills-phase-filmstrip.js';
@@ -121,7 +125,7 @@ const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
   'rim-crust',
   'growth-lip'
 ];
-const PHASE_FILMSTRIP_CAPTION_HEIGHT = 48;
+const PHASE_FILMSTRIP_CAPTION_HEIGHT = 64;
 const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
   'none',
   'tuft-line',
@@ -2438,17 +2442,22 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
 
   const savedCtx = ctx;
   const filmstripCache = createHillOfHillsLayerTileCache();
+  let previousFrame: HillPhaseFilmstripFrame | undefined;
+  let previousTerrain: HillOfHillsTerrain | undefined;
 
   try {
     for (const frame of schedule) {
       const frameParams = phaseFilmstripParamsFor(frame);
-      const frameBuffer = createHillOfHillsTerrainBuffer(
-        createHillOfHillsTerrainWithCache(filmstripCache, frameParams, {
+      const frameTerrain = createHillOfHillsTerrainWithCache(filmstripCache, frameParams, {
           ...previewSourceOptions,
           frameId: `hill-of-hills-phase-filmstrip-${frame.index}`,
           timestampMs: performance.now() + frame.phaseTimeMs
-        })
-      );
+      });
+      const frameBuffer = createHillOfHillsTerrainBuffer(frameTerrain);
+      const continuityDelta =
+        previousFrame && previousTerrain
+          ? compareHillPhaseContinuityFrames(previousFrame, previousTerrain, frame, frameTerrain)
+          : undefined;
       const column = frame.index % layout.columns;
       const row = Math.floor(frame.index / layout.columns);
       const x = column * (layout.cellWidth + layout.gutter);
@@ -2470,8 +2479,10 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
       frameCtx.fillStyle = '#06100d';
       frameCtx.fillRect(0, 0, layout.cellWidth, layout.cellHeight);
       drawPhaseFilmstripFrameImage(frameCtx, renderCanvas, layout.cellWidth, layout.cellHeight - PHASE_FILMSTRIP_CAPTION_HEIGHT);
-      drawPhaseFilmstripCaption(frameCtx, frameBuffer, frame, layout.cellWidth, layout.cellHeight);
+      drawPhaseFilmstripCaption(frameCtx, frameBuffer, frame, continuityDelta, layout.cellWidth, layout.cellHeight);
       stripCtx.drawImage(frameCanvas, x, y);
+      previousFrame = frame;
+      previousTerrain = frameTerrain;
     }
   } finally {
     ctx = savedCtx;
@@ -2514,6 +2525,7 @@ function drawPhaseFilmstripCaption(
   targetCtx: CanvasRenderingContext2D,
   currentBuffer: HillOfHillsTerrainBuffer,
   frame: HillPhaseFilmstripFrame,
+  continuityDelta: HillPhaseContinuityDelta | undefined,
   width: number,
   height: number
 ): void {
@@ -2543,6 +2555,8 @@ function drawPhaseFilmstripCaption(
   targetCtx.fillText(`active ${activeKinds} ph ${phaseHash} infl ${influenceHash} topo ${topologyHash}`, 8, height - captionHeight + 18);
   targetCtx.fillStyle = 'rgba(183, 224, 205, 0.88)';
   targetCtx.fillText(eventSummary, 8, height - captionHeight + 31);
+  targetCtx.fillStyle = continuityDelta && continuityDelta.suspicions.length > 0 ? 'rgba(255, 199, 135, 0.94)' : 'rgba(183, 224, 205, 0.74)';
+  targetCtx.fillText(continuityDelta ? formatHillPhaseContinuityDelta(continuityDelta) : 'delta origin', 8, height - captionHeight + 44);
   targetCtx.restore();
 }
 

@@ -2,12 +2,17 @@ import assert from "node:assert/strict";
 
 import {
   HILL_PHASE_FILMSTRIP_FRAME_COUNTS,
+  compareHillPhaseContinuityFrames,
   createHillPhaseFilmstripSchedule,
   fitHillPhaseFilmstripLayout,
   fitHillPhaseFilmstripViewport,
+  formatHillPhaseContinuityDelta,
   normalizeHillPhaseFilmstripFrameCount,
 } from "../src/terrain/hill-of-hills-phase-filmstrip.js";
-import { defaultHillOfHillsParams } from "../src/terrain/hill-of-hills.js";
+import {
+  createHillOfHillsTerrain,
+  defaultHillOfHillsParams,
+} from "../src/terrain/hill-of-hills.js";
 
 const allowedCounts = [...HILL_PHASE_FILMSTRIP_FRAME_COUNTS];
 
@@ -71,3 +76,70 @@ assert.deepEqual(tallCellFit, {
   height: 150,
   scale: 0.25,
 });
+
+const continuityParams = {
+  ...defaultHillOfHillsParams,
+  gridResolutionX: 24,
+  gridResolutionZ: 28,
+  ditchPhaseIntensity: 0,
+  ditchPhaseLimit: 0,
+  trailPhaseIntensity: 0,
+  trailPhaseLimit: 0,
+  topologyPhaseIntensity: 1,
+  topologyPhaseLimit: 4,
+  topologyPhaseDurationMs: 2_000,
+  topologyPhaseTimeMs: 1_960,
+};
+const continuitySchedule = createHillPhaseFilmstripSchedule(continuityParams, 5);
+const beforeFrame = continuitySchedule[0];
+const afterFrame = continuitySchedule[1];
+const beforeTerrain = createHillOfHillsTerrain({
+  ...continuityParams,
+  topologyPhaseTimeMs: beforeFrame.phaseTimeMs,
+});
+const afterTerrain = createHillOfHillsTerrain({
+  ...continuityParams,
+  topologyPhaseTimeMs: afterFrame.phaseTimeMs,
+});
+const continuityDelta = compareHillPhaseContinuityFrames(beforeFrame, beforeTerrain, afterFrame, afterTerrain);
+
+assert.equal(continuityDelta.from.index, beforeFrame.index);
+assert.equal(continuityDelta.to.index, afterFrame.index);
+assert.equal(continuityDelta.matchedSampleCount, beforeTerrain.samples.length);
+assert.ok(Number.isFinite(continuityDelta.height.maxAbs));
+assert.ok(Number.isFinite(continuityDelta.height.rms));
+assert.ok(Number.isFinite(continuityDelta.supportHeight.maxAbs));
+assert.ok(Number.isFinite(continuityDelta.topologyAmount.maxAbs));
+assert.ok(continuityDelta.lifecycle.enteringCount > 0, "continuity witness should see support entering across epoch boundary");
+assert.ok(continuityDelta.lifecycle.tailingCount > 0, "continuity witness should preserve old support tails across epoch boundary");
+assert.equal(continuityDelta.lifecycle.hotEntrantCount, 0, "new supports must not enter already hot");
+assert.match(formatHillPhaseContinuityDelta(continuityDelta), /dh .* mat .* enter .* tail /);
+
+const firstEnteringEvent = afterTerrain.witness.topologyEventDebug.find((event) => event.supportLifecycle === "entering");
+assert.ok(firstEnteringEvent, "fixture must include an entering topology event for false-closure coverage");
+const hotEntrantTerrain = {
+  ...afterTerrain,
+  witness: {
+    ...afterTerrain.witness,
+    topologyEventDebug: afterTerrain.witness.topologyEventDebug.map((event) =>
+      event.id === firstEnteringEvent.id
+        ? {
+            ...event,
+            supportAmount: 1,
+            envelope: {
+              ...event.envelope,
+              amount: 1,
+              phaseIn: 1,
+            },
+          }
+        : event,
+    ),
+  },
+};
+const hotEntrantDelta = compareHillPhaseContinuityFrames(beforeFrame, beforeTerrain, afterFrame, hotEntrantTerrain);
+
+assert.equal(hotEntrantDelta.lifecycle.hotEntrantCount, 1);
+assert.ok(
+  hotEntrantDelta.suspicions.some((suspicion) => suspicion.kind === "hot-entering-support"),
+  "continuity witness should refuse to make hot support entry look smooth",
+);
