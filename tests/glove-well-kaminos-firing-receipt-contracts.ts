@@ -109,6 +109,60 @@ assert.equal(report.debugSurfacePosture.rejectedAcceptanceSurfaces.every((surfac
 assert.equal(report.whatRemainsFake.nativeKaminosHostAcceptance, true);
 assert.equal(report.whatRemainsFake.fullVerticalSuccess, true);
 
+const nativeHostReceipt = {
+  ...kaminosReceipt,
+  sourceOffer: {
+    ...kaminosReceipt.sourceOffer,
+    targetSurface: 'kaminos/glove-well-host',
+    targetUrl: 'index.html?kaminos_glove_well_host=1&glove_well_host_url=http%3A%2F%2F127.0.0.1%3A5176%2F__lerms%2Fglove-well-host-packet%2Flive&glove_well_host_live=1'
+  },
+  smokeChamber: undefined,
+  inlineHost: {
+    kind: 'iframe',
+    reason: 'browser_target',
+    recursive: false,
+    effectiveUrl: 'http://127.0.0.1:18157/index.html?kaminos_glove_well_host=1&glove_well_host_url=http%3A%2F%2F127.0.0.1%3A5176%2F__lerms%2Fglove-well-host-packet%2Flive&glove_well_host_live=1'
+  },
+  embeddedHost: {
+    schema: 'kaminos.embedded-host-state.v0',
+    captured: true,
+    state: {
+      schema: 'kaminos.glove-well-host.state.v0',
+      route: 'kaminos/glove-well-host',
+      hostId: 'glove-well',
+      hostRoute: 'kaminos/glove-well-host',
+      packetSchema: 'lerms.glove-well-host-packet.v0',
+      packetRoute: 'lerms/glove-well/host-packet',
+      effectiveUrl: 'http://127.0.0.1:5176/__lerms/glove-well-host-packet/live',
+      sourceAuthority: 'stale_hold',
+      freshness: { status: 'waiting' },
+      status: 'loaded',
+      surface: { primitiveCount: 11 }
+    }
+  }
+};
+const nativeHostReport = buildGloveWellKaminosFiringReceipt({
+  outputPath: '/tmp/lerms-glove-well-kaminos-firing-receipt-native-host-test.json',
+  generatedAt: '2026-07-06T17:11:30.000Z',
+  frameId: 'glove-well-kaminos-firing-receipt-native-host-test',
+  sourcePacket: hostPacket,
+  smokeBenchOffer: offer,
+  kaminosReceipt: nativeHostReceipt,
+  kaminosReceiptPath: '/tmp/kaminos-glove-emitter-native-host-smoke-receipt.json',
+  operatorRoute
+});
+assert.equal(nativeHostReport.kaminosReceipt.inlineHost.kind, 'iframe');
+assert.equal(nativeHostReport.kaminosReceipt.inlineHost.recursive, false);
+assert.equal(nativeHostReport.kaminosReceipt.nativeHost?.verified, true);
+assert.equal(nativeHostReport.kaminosReceipt.nativeHost?.hostId, 'glove-well');
+assert.equal(nativeHostReport.kaminosReceipt.nativeHost?.packetSchema, 'lerms.glove-well-host-packet.v0');
+assert.equal(nativeHostReport.kaminosReceipt.nativeHost?.packetRoute, 'lerms/glove-well/host-packet');
+assert.equal(nativeHostReport.sourceTruth.nativeKaminosHostVerified, true);
+assert.equal(nativeHostReport.sourceTruth.kaminosAcceptance, false);
+assert.ok(!nativeHostReport.sourceTruth.downgrades.includes('native_kaminos_host_not_verified'));
+assert.ok(nativeHostReport.sourceTruth.downgrades.includes('native_kaminos_host_verified_visual_receipt'));
+assert.equal(nativeHostReport.whatRemainsFake.nativeKaminosHostAcceptance, true);
+
 const missingReceiptReport = buildFixtureGloveWellKaminosFiringReceipt({
   outputPath: '/tmp/lerms-glove-well-kaminos-firing-receipt-missing-test.json',
   generatedAt: '2026-07-06T17:12:00.000Z',

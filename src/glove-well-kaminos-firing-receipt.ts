@@ -30,6 +30,7 @@ export interface KaminosForgeHostSmokeReceipt {
   schema: string;
   receiptId?: string;
   capturedAt?: string;
+  createdAt?: string;
   sourceOffer?: {
     id?: string;
     sourceRef?: string;
@@ -47,6 +48,37 @@ export interface KaminosForgeHostSmokeReceipt {
       reason?: string;
       recursive?: boolean;
       effectiveUrl?: string;
+    };
+  };
+  chamber?: {
+    schema?: string;
+    routeIdentity?: string;
+    targetSurface?: string;
+    targetUrl?: string;
+  };
+  inlineHost?: {
+    kind?: string;
+    reason?: string;
+    recursive?: boolean;
+    effectiveUrl?: string;
+    targetUrl?: string;
+  };
+  embeddedHost?: {
+    schema?: string;
+    captured?: boolean;
+    error?: string | null;
+    state?: {
+      schema?: string;
+      route?: string;
+      hostId?: string;
+      hostRoute?: string;
+      packetSchema?: string;
+      packetRoute?: string;
+      effectiveUrl?: string;
+      sourceAuthority?: string;
+      freshness?: { status?: string };
+      status?: string;
+      surface?: { primitiveCount?: number };
     };
   };
   currentRoute?: string;
@@ -143,6 +175,19 @@ export interface GloveWellKaminosFiringReceiptReport {
       recursive: boolean | null;
       effectiveUrl: string | null;
     };
+    nativeHost: {
+      verified: boolean;
+      hostId: string | null;
+      hostRoute: string | null;
+      packetSchema: string | null;
+      packetRoute: string | null;
+      effectiveUrl: string | null;
+      sourceAuthority: string | null;
+      freshness: string | null;
+      status: string | null;
+      primitiveCount: number | null;
+      error: string | null;
+    };
     capture: {
       kind: string | null;
       scope: string | null;
@@ -156,6 +201,7 @@ export interface GloveWellKaminosFiringReceiptReport {
     receiptAuthority: 'forge_host_visual_receipt_only' | 'missing';
     receiptFreshness: ReceiptStatus;
     kaminosAcceptance: false;
+    nativeKaminosHostVerified: boolean;
     liveGloveWellAuthority: false;
     debugSurfacesAccepted: false;
     depthLoadBearing: false;
@@ -243,15 +289,21 @@ export function buildGloveWellKaminosFiringReceipt(
   const operatorRoute = options.operatorRoute ?? options.smokeBenchOffer.smokeBench.primaryTarget.url ?? DEFAULT_OPERATOR_ROUTE;
   const receiptSummary = summarizeReceipt(options.kaminosReceipt ?? null, options.kaminosReceiptPath ?? null, binding);
   const receiptCaptured = receiptSummary.status === 'captured';
+  const nativeKaminosHostVerified = receiptSummary.nativeHost.verified;
+  const bindingDowngrades = nativeKaminosHostVerified
+    ? binding.downgrades.filter((downgrade) => downgrade !== 'native_kaminos_host_not_verified')
+    : binding.downgrades;
   const downgrades = uniqueStrings([
     ...options.sourcePacket.downgrades,
     ...options.smokeBenchOffer.smokeBench.downgrades,
-    ...binding.downgrades,
+    ...bindingDowngrades,
     ...(options.kaminosReceipt?.downgrades ?? []),
     'kaminos_offer_authority_gap_report_route',
     'perceptasia_debug_surface_not_primary_smoke_path',
     'local_lerms_browser_smoke_not_primary_smoke_path',
-    'native_kaminos_host_not_verified',
+    ...(nativeKaminosHostVerified
+      ? ['native_kaminos_host_verified_visual_receipt']
+      : ['native_kaminos_host_not_verified']),
     'forge_host_receipt_not_source_truth',
     ...(receiptCaptured ? ['kaminos_forge_host_receipt_visual_only'] : ['kaminos_forge_host_receipt_missing'])
   ]);
@@ -306,6 +358,7 @@ export function buildGloveWellKaminosFiringReceipt(
       receiptAuthority: receiptCaptured ? 'forge_host_visual_receipt_only' : 'missing',
       receiptFreshness: receiptSummary.status,
       kaminosAcceptance: false,
+      nativeKaminosHostVerified,
       liveGloveWellAuthority: false,
       debugSurfacesAccepted: false,
       depthLoadBearing: false,
@@ -441,6 +494,19 @@ function summarizeReceipt(
         recursive: null,
         effectiveUrl: null
       },
+      nativeHost: {
+        verified: false,
+        hostId: null,
+        hostRoute: null,
+        packetSchema: null,
+        packetRoute: null,
+        effectiveUrl: null,
+        sourceAuthority: null,
+        freshness: null,
+        status: null,
+        primitiveCount: null,
+        error: null
+      },
       capture: {
         kind: null,
         scope: null,
@@ -456,11 +522,20 @@ function summarizeReceipt(
   if (offerId !== binding.receipt.requiredOfferId) {
     throw new Error(`Kaminos firing receipt receipt offer id ${offerId ?? '<missing>'} did not match ${binding.receipt.requiredOfferId}`);
   }
+  const inlineHost = receipt.inlineHost ?? receipt.smokeChamber?.inlineHost ?? null;
+  const embeddedState = receipt.embeddedHost?.state ?? null;
+  const nativeHostVerified = receipt.embeddedHost?.captured === true
+    && embeddedState?.schema === 'kaminos.glove-well-host.state.v0'
+    && embeddedState?.hostId === 'glove-well'
+    && embeddedState?.hostRoute === 'kaminos/glove-well-host'
+    && embeddedState?.packetSchema === GLOVE_WELL_HOST_PACKET_SCHEMA
+    && embeddedState?.packetRoute === GLOVE_WELL_HOST_PACKET_ROUTE
+    && embeddedState?.status !== 'error';
   return {
     status: 'captured',
     receiptPath,
     receiptId: receipt.receiptId ?? null,
-    capturedAt: receipt.capturedAt ?? null,
+    capturedAt: receipt.capturedAt ?? receipt.createdAt ?? null,
     offerId,
     sourceRef: receipt.sourceOffer?.sourceRef ?? null,
     sourceAuthority: receipt.sourceOffer?.authority ?? null,
@@ -470,10 +545,23 @@ function summarizeReceipt(
     targetUrl: receipt.sourceOffer?.targetUrl ?? null,
     currentRoute: receipt.currentRoute ?? null,
     inlineHost: {
-      kind: receipt.smokeChamber?.inlineHost?.kind ?? null,
-      reason: receipt.smokeChamber?.inlineHost?.reason ?? null,
-      recursive: receipt.smokeChamber?.inlineHost?.recursive ?? null,
-      effectiveUrl: receipt.smokeChamber?.inlineHost?.effectiveUrl ?? null
+      kind: inlineHost?.kind ?? null,
+      reason: inlineHost?.reason ?? null,
+      recursive: inlineHost?.recursive ?? null,
+      effectiveUrl: inlineHost?.effectiveUrl ?? null
+    },
+    nativeHost: {
+      verified: nativeHostVerified,
+      hostId: embeddedState?.hostId ?? null,
+      hostRoute: embeddedState?.hostRoute ?? null,
+      packetSchema: embeddedState?.packetSchema ?? null,
+      packetRoute: embeddedState?.packetRoute ?? null,
+      effectiveUrl: embeddedState?.effectiveUrl ?? null,
+      sourceAuthority: embeddedState?.sourceAuthority ?? null,
+      freshness: embeddedState?.freshness?.status ?? null,
+      status: embeddedState?.status ?? null,
+      primitiveCount: typeof embeddedState?.surface?.primitiveCount === 'number' ? embeddedState.surface.primitiveCount : null,
+      error: receipt.embeddedHost?.error ?? null
     },
     capture: {
       kind: receipt.capture?.kind ?? null,
