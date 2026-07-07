@@ -100,6 +100,12 @@ assert.equal(report.kaminosReceipt.inlineHost.reason, 'recursive_forge_host_rout
 assert.equal(report.sourceTruth.kaminosAcceptance, false);
 assert.equal(report.sourceTruth.liveGloveWellAuthority, false);
 assert.equal(report.sourceTruth.debugSurfacesAccepted, false);
+assert.ok(
+  !('hostPayloadAuthority' in report.sourceTruth),
+  'sourceTruth must not expose hostPayloadAuthority because raw packet authority can be mistaken for Kaminos acceptance',
+);
+assert.equal(report.sourceTruth.hostPacketDeclaredAuthority, hostPacket.source.authority);
+assert.equal(report.sourceTruth.hostPayloadAcceptance, false);
 assert.ok(report.sourceTruth.downgrades.includes('kaminos_offer_authority_gap_report_route'));
 assert.ok(report.sourceTruth.downgrades.includes('perceptasia_debug_surface_not_primary_smoke_path'));
 assert.equal(report.debugSurfacePosture.primary.path, 'kaminos_forge_host_smoke_workbench');
@@ -159,6 +165,10 @@ assert.equal(nativeHostReport.kaminosReceipt.nativeHost?.packetSchema, 'lerms.gl
 assert.equal(nativeHostReport.kaminosReceipt.nativeHost?.packetRoute, 'lerms/glove-well/host-packet');
 assert.equal(nativeHostReport.sourceTruth.nativeKaminosHostVerified, true);
 assert.equal(nativeHostReport.sourceTruth.kaminosAcceptance, false);
+assert.equal(nativeHostReport.sourceTruth.hostPacketDeclaredAuthority, hostPacket.source.authority);
+assert.equal(nativeHostReport.sourceTruth.hostPayloadSourceAuthority, 'stale_hold');
+assert.equal(nativeHostReport.sourceTruth.hostPayloadFreshness, 'waiting');
+assert.equal(nativeHostReport.sourceTruth.hostPayloadAcceptance, false);
 assert.ok(!nativeHostReport.sourceTruth.downgrades.includes('native_kaminos_host_not_verified'));
 assert.ok(nativeHostReport.sourceTruth.downgrades.includes('native_kaminos_host_verified_visual_receipt'));
 assert.equal(nativeHostReport.whatRemainsFake.nativeKaminosHostAcceptance, true);

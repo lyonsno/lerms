@@ -29,8 +29,10 @@ export interface GloveWellSmokeBenchOfferReport {
   generatedAt: string;
   sourceRef: string;
   sourceTruth: {
-    hostPayloadAuthority: SmokeBenchAuthority | string;
+    hostPacketDeclaredAuthority: SmokeBenchAuthority | string;
     hostPayloadSourceTruthAuthority: string;
+    hostPayloadFreshness: GloveWellHostPacket['freshness']['status'];
+    hostPayloadAcceptance: false;
     handInputAuthority: 'transitional_live_bridge' | 'fixture_bridge' | 'unknown';
     displayAuthority: 'local_browser_smoke_not_native_kaminos_host' | 'native_kaminos_host_unverified';
     freshness: GloveWellHostPacket['freshness']['status'];
@@ -237,8 +239,10 @@ export function buildGloveWellSmokeBenchOffer(
     generatedAt,
     sourceRef,
     sourceTruth: {
-      hostPayloadAuthority: hostPacket.source.authority,
+      hostPacketDeclaredAuthority: hostPacket.source.authority,
       hostPayloadSourceTruthAuthority: hostPacket.source.sourceTruthAuthority,
+      hostPayloadFreshness: hostPacket.freshness.status,
+      hostPayloadAcceptance: false,
       handInputAuthority: handAuthority(hostPacket),
       displayAuthority: 'local_browser_smoke_not_native_kaminos_host',
       freshness: hostPacket.freshness.status,

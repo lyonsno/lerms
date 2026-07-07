@@ -197,7 +197,10 @@ export interface GloveWellKaminosFiringReceiptReport {
   };
   sourceTruth: {
     effectiveAuthority: 'route_witness' | 'synthetic_fixture';
-    hostPayloadAuthority: GloveWellHostPacket['source']['authority'];
+    hostPacketDeclaredAuthority: GloveWellHostPacket['source']['authority'];
+    hostPayloadSourceAuthority: string | null;
+    hostPayloadFreshness: string | null;
+    hostPayloadAcceptance: false;
     receiptAuthority: 'forge_host_visual_receipt_only' | 'missing';
     receiptFreshness: ReceiptStatus;
     kaminosAcceptance: false;
@@ -354,7 +357,10 @@ export function buildGloveWellKaminosFiringReceipt(
     kaminosReceipt: receiptSummary,
     sourceTruth: {
       effectiveAuthority: receiptCaptured ? 'route_witness' : 'synthetic_fixture',
-      hostPayloadAuthority: options.sourcePacket.source.authority,
+      hostPacketDeclaredAuthority: options.sourcePacket.source.authority,
+      hostPayloadSourceAuthority: receiptSummary.nativeHost.sourceAuthority ?? options.sourcePacket.source.authority,
+      hostPayloadFreshness: receiptSummary.nativeHost.freshness ?? options.sourcePacket.freshness.status,
+      hostPayloadAcceptance: false,
       receiptAuthority: receiptCaptured ? 'forge_host_visual_receipt_only' : 'missing',
       receiptFreshness: receiptSummary.status,
       kaminosAcceptance: false,

@@ -57,7 +57,13 @@ assert.equal(offer.smokeBench.stateStream.compatTargetSchema, 'hand-state.frame.
 assert.equal(offer.smokeBench.stateStream.transitional, true);
 assert.equal(offer.smokeBench.stateStream.depthLoadBearing, false);
 assert.equal(offer.smokeBench.stateStream.effectiveRoute, 'native_wilor_mini_mlx_detector_sidecar_live');
-assert.equal(offer.sourceTruth.hostPayloadAuthority, 'live_simulation');
+assert.ok(
+  !('hostPayloadAuthority' in offer.sourceTruth),
+  'sourceTruth must not expose raw live_simulation as hostPayloadAuthority because consumers can misread it as acceptance',
+);
+assert.equal(offer.sourceTruth.hostPacketDeclaredAuthority, 'live_simulation');
+assert.equal(offer.sourceTruth.hostPayloadFreshness, 'fresh');
+assert.equal(offer.sourceTruth.hostPayloadAcceptance, false);
 assert.equal(offer.sourceTruth.handInputAuthority, 'transitional_live_bridge');
 assert.equal(offer.sourceTruth.displayAuthority, 'local_browser_smoke_not_native_kaminos_host');
 assert.ok(offer.smokeBench.downgrades.includes('hand_state_runtime_not_extracted'));
