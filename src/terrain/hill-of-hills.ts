@@ -198,9 +198,15 @@ export interface HillOfHillsTopologyEventEnvelope {
   spread: number;
 }
 
+export type HillOfHillsTopologySupportLifecycle = 'entering' | 'active' | 'tailing';
+
 export interface HillOfHillsTopologyEventDebug {
   id: string;
   kind: HillOfHillsTopologyPhaseKind;
+  supportEpoch: number;
+  supportLifecycle: HillOfHillsTopologySupportLifecycle;
+  supportClock: number;
+  supportAmount: number;
   reason: HillOfHillsTopologyEventReasonKind;
   semanticReason: string;
   center: Vec3;
@@ -1427,7 +1433,8 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         const eventConfig = topologyEventClassConfig(params, candidate.topologyKind);
         if (!eventConfig.enabled || eventConfig.appetite <= 0 || eventConfig.force <= 0) continue;
         const gestureState = topologyGestureState(eventConfig.gesture, wrapUnit(window.clock + eventConfig.phaseOffset));
-        if (gestureState.amount <= 0.001) continue;
+        const supportedGestureState = topologySupportGestureState(gestureState, window);
+        if (supportedGestureState.amount <= 0.001) continue;
         const id = `topology-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
         const supportRng = mulberry32(detailSeedFor(params.topologyPhaseSeed, candidate.x, candidate.z, candidate.topologyKind));
         const angle = (supportRng() - 0.5) * 0.5;
@@ -1439,11 +1446,11 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         const radius = params.topologyPhaseRadius * eventConfig.spread * (0.78 + supportRng() * 0.52);
         const trailWidth = Math.max(0.16, radius * (0.22 + supportRng() * 0.1));
         const sideDitchOffset = radius * (0.4 + supportRng() * 0.14);
-        const localProgress = clamp(gestureState.amount * (0.82 + supportRng() * 0.22), 0, 1);
-        const localIntensity = clamp(params.topologyPhaseIntensity * window.amount * eventConfig.force * (0.68 + supportRng() * 0.28), 0, 1);
+        const localProgress = clamp(supportedGestureState.amount * (0.82 + supportRng() * 0.22), 0, 1);
+        const localIntensity = clamp(params.topologyPhaseIntensity * supportedGestureState.amount * eventConfig.force * (0.68 + supportRng() * 0.28), 0, 1);
         if (localIntensity <= 0.001) continue;
         const envelope = topologyEventEnvelope(
-          gestureState,
+          supportedGestureState,
           params,
           radius,
           localProgress,
@@ -1472,6 +1479,10 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
           topologyEvent: {
             id,
             kind: candidate.topologyKind,
+            supportEpoch: window.epoch,
+            supportLifecycle: window.lifecycle,
+            supportClock: window.clock,
+            supportAmount: window.amount,
             reason: candidate.reason,
             semanticReason: candidate.semanticReason,
             center: [candidate.x, 0, candidate.z],
@@ -1581,6 +1592,7 @@ interface TopologyPhaseWindow {
   clock: number;
   progress: number;
   amount: number;
+  lifecycle: HillOfHillsTopologySupportLifecycle;
 }
 
 interface TopologyGestureState {
@@ -1600,7 +1612,8 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
       epoch: timing.epoch,
       clock,
       progress: currentProgress,
-      amount: currentProgress
+      amount: currentProgress,
+      lifecycle: currentProgress < 0.999 ? 'entering' : 'active'
     });
   }
 
@@ -1615,7 +1628,8 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
         epoch: timing.epoch - 1,
         clock: previousClock,
         progress: previousProgress,
-        amount
+        amount,
+        lifecycle: 'tailing'
       });
     }
   }
@@ -1629,7 +1643,8 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
         epoch: timing.epoch + 1,
         clock: nextClock,
         progress: nextProgress,
-        amount
+        amount,
+        lifecycle: 'entering'
       });
     }
   }
@@ -1671,6 +1686,18 @@ function topologyGestureState(gesture: HillOfHillsTopologyGesturePreset, clock: 
     case 'rupture':
       return gestureEnvelope(c, 0.01, 0.08, 0.18, 0.7);
   }
+}
+
+function topologySupportGestureState(gestureState: TopologyGestureState, window: TopologyPhaseWindow): TopologyGestureState {
+  const supportAmount = clamp(window.amount, 0, 1);
+  const phaseOut = window.lifecycle === 'tailing' ? clamp(Math.max(gestureState.phaseOut, 1 - supportAmount), 0, 1) : gestureState.phaseOut;
+  return {
+    clock: gestureState.clock,
+    phaseIn: clamp(gestureState.phaseIn * supportAmount, 0, 1),
+    hold: clamp(gestureState.hold * supportAmount, 0, 1),
+    phaseOut,
+    amount: clamp(gestureState.amount * supportAmount, 0, 1)
+  };
 }
 
 function gestureEnvelope(clock: number, attackEnd: number, holdStart: number, holdEnd: number, releaseEnd: number): TopologyGestureState {
@@ -2520,6 +2547,10 @@ function phaseEpisodeSignature(episode: HillOfHillsPhaseEpisode): string {
     episode.topologyEvent?.envelope.force.toFixed(3) ?? 'none',
     episode.topologyEvent?.envelope.phaseOffset.toFixed(3) ?? 'none',
     episode.topologyEvent?.envelope.spread.toFixed(3) ?? 'none',
+    episode.topologyEvent?.supportEpoch.toString() ?? 'none',
+    episode.topologyEvent?.supportLifecycle ?? 'none',
+    episode.topologyEvent?.supportClock.toFixed(3) ?? 'none',
+    episode.topologyEvent?.supportAmount.toFixed(3) ?? 'none',
     episode.topologyEvent?.materialHint ?? 'none',
     episode.topologyEvent?.assetHint ?? 'none'
   ].join(':');

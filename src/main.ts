@@ -159,8 +159,8 @@ const MATERIAL_FRAY_NEIGHBOR_OFFSETS: readonly (readonly [number, number])[] = [
 ];
 const defaultPreviewParams: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
-  ditchPhaseIntensity: 0.18,
-  ditchPhaseLimit: 1,
+  ditchPhaseIntensity: 0,
+  ditchPhaseLimit: 0,
   ditchPhaseRadius: 1.2,
   ditchPhaseTimeMs: 760,
   ditchPhaseDurationMs: 2400,
@@ -185,10 +185,19 @@ const defaultPreviewParams: HillOfHillsTerrainParams = {
   gridResolutionX: 116,
   gridResolutionZ: 148
 };
-let params: HillOfHillsTerrainParams = {
+
+function withoutPreviewDitchFormation(nextParams: HillOfHillsTerrainParams): HillOfHillsTerrainParams {
+  return {
+    ...nextParams,
+    ditchPhaseIntensity: 0,
+    ditchPhaseLimit: 0
+  };
+}
+
+let params: HillOfHillsTerrainParams = withoutPreviewDitchFormation({
   ...defaultPreviewParams,
   ...loadHillOfHillsParamSettings(safeParamSettingsStorage(), defaultPreviewParams)
-};
+});
 const terrainCache = createHillOfHillsLayerTileCache();
 const previewSourceOptions = {
   route: 'hill-of-hills-terrain-preview-cache',
@@ -295,11 +304,6 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'textureScale', label: 'Texture scale', min: 0.4, max: 3, step: 0.05 },
   { key: 'textureDamping', label: 'Texture damping', min: 0, max: 1, step: 0.05 },
   { key: 'detailDamping', label: 'Detail damping', min: 0, max: 1, step: 0.05 },
-  { key: 'ditchPhaseIntensity', label: 'Ditch forming', min: 0, max: 1, step: 0.05 },
-  { key: 'ditchPhaseLimit', label: 'Ditch count', min: 0, max: 8, step: 1 },
-  { key: 'ditchPhaseRadius', label: 'Ditch radius', min: 0.5, max: 2.4, step: 0.05 },
-  { key: 'ditchPhaseTimeMs', label: 'Ditch phase', min: 0, max: 2400, step: 40 },
-  { key: 'ditchPhaseDurationMs', label: 'Ditch cadence', min: 800, max: 5200, step: 80 },
   { key: 'trailPhaseIntensity', label: 'Trail forming', min: 0, max: 1, step: 0.05 },
   { key: 'trailPhaseLimit', label: 'Trail count', min: 0, max: 6, step: 1 },
   { key: 'trailPhaseRadius', label: 'Trail radius', min: 0.5, max: 2.8, step: 0.05 },
@@ -2555,7 +2559,10 @@ function activeTopologyEventSummary(currentBuffer: HillOfHillsTerrainBuffer): st
     return 'events none';
   }
   return events
-    .map((event) => `${event.kind}:${compactChecksum(event.id, 4)}:${event.envelope.amount.toFixed(2)}`)
+    .map((event) => {
+      const lifecycle = event.supportLifecycle.slice(0, 1);
+      return `${lifecycle}${event.supportEpoch}:${event.kind}:${compactChecksum(event.id, 4)} a${event.envelope.amount.toFixed(2)} s${event.supportAmount.toFixed(2)} i${event.envelope.intensity.toFixed(2)}`;
+    })
     .join(' ');
 }
 

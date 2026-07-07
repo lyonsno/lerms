@@ -908,6 +908,44 @@ assert(
   'topology count one allows only current/adjacent support crossfade without duplicate support identities'
 );
 
+const topologyBoundaryTailReference = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 0.64,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseLimit: 2,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: topologyBoundaryEventClasses
+} as TopologyMotionParams);
+const topologyBoundaryTailAfterWrap = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 1.06,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseLimit: 2,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: topologyBoundaryEventClasses
+} as TopologyMotionParams);
+const topologyBoundaryTailIds = new Set(topologyBoundaryTailReference.witness.topologyEventDebug.map((event) => event.id));
+const topologyBoundaryEnteringEvents = topologyBoundaryTailAfterWrap.witness.topologyEventDebug.filter(
+  (event) => !topologyBoundaryTailIds.has(event.id)
+);
+assert(
+  topologyBoundaryTailAfterWrap.witness.topologyEventDebug.some((event) => topologyBoundaryTailIds.has(event.id)),
+  'topology motion keeps old support identities alive in the tailing set just after wrap'
+);
+assert(topologyBoundaryEnteringEvents.length > 0, 'topology motion admits a new support identity just after wrap');
+assert(
+  topologyBoundaryEnteringEvents.every((event) => event.envelope.phaseIn < 0.25),
+  'new topology supports enter through the support attack envelope instead of arriving with a hot gesture phase'
+);
+
 const topologyBasinBiased = createHillOfHillsTerrain({
   ...topologyPhaseParams,
   topologyPhaseValleyBias: 1.8,
