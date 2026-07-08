@@ -84,6 +84,8 @@ The hill-of-hills is substrate, not backdrop. It should provide:
 
 The terrain tuning target should be set by the vertical loop. Over-polishing the hill before lerms, goins, and juice inhabit it risks tuning against the wrong game.
 
+The current live terrain architecture is captured in [hill-of-hills-architecture.md](hill-of-hills-architecture.md). That document is the composition guide for the worker/buffer contract, topology event scheduler, proxy material stack, phase filmstrip witness, and next pressure-field slice.
+
 ### Lerms
 
 Lerms are not player units. They are opportunistic terrain vermin with economic consequences.

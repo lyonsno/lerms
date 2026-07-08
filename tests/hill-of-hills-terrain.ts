@@ -845,7 +845,7 @@ assert(
   'topology event debug exposes nonzero semantic envelope just after wrap'
 );
 
-const topologyBoundaryEventClasses = Object.fromEntries(
+const topologyBoundaryEventClasses: HillOfHillsTerrainParams['topologyEventClasses'] = Object.fromEntries(
   topologyEventKinds.map((kind) => [
     kind,
     {
@@ -858,7 +858,7 @@ const topologyBoundaryEventClasses = Object.fromEntries(
       spread: 1
     }
   ])
-) as TopologyMotionParams['topologyEventClasses'];
+) as HillOfHillsTerrainParams['topologyEventClasses'];
 const topologyBoundaryTailEventClasses = Object.fromEntries(
   topologyEventKinds.map((kind) => [
     kind,
@@ -867,7 +867,7 @@ const topologyBoundaryTailEventClasses = Object.fromEntries(
       phaseOffset: kind === 'hill_swell' ? 0.18 : 0
     }
   ])
-) as TopologyMotionParams['topologyEventClasses'];
+) as HillOfHillsTerrainParams['topologyEventClasses'];
 const topologyBeforeBoundaryPreblend = createHillOfHillsTerrain({
   ...topologyPhaseParams,
   topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 0.78,

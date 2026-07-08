@@ -33,6 +33,8 @@ This repo exists so design, gameplay, renderer, asset, and integration work can 
 
 The playable architecture lives in [docs/campaign-map.md](docs/campaign-map.md). The short version: the first real vertical is not a prettier particle effect. It is the steal/drop/reroute spine where lerms climb toward glove wealth, steal goins, get interrupted by finger juice, drop goins, and redirect the swarm.
 
+The live terrain substrate is documented in [docs/hill-of-hills-architecture.md](docs/hill-of-hills-architecture.md). It names the Hill of Hills worker/buffer contract, topology event scheduler, phase-continuity invariant, filmstrip witness, and pressure-field next slice.
+
 The first subsystem sockets live in [docs/first-vertical-interfaces.md](docs/first-vertical-interfaces.md) and [`src/contracts/first-vertical.ts`](src/contracts/first-vertical.ts). They name the shared frame contract for terrain samples, lerm states, goin states, juice hits, and carrier-drop events.
 
 The current red-lerm visual thesis lives in [docs/red-lerm-art-direction.md](docs/red-lerm-art-direction.md). Red lerms are being developed as eyeless, nose-led, squash-bodied thieves before any final procedural, generated, sculpted, or rigged body route is chosen.
