@@ -3,8 +3,12 @@ import {
   createHillOfHillsLayerTileCache,
   createHillOfHillsFrame,
   createHillOfHillsTerrain,
+  createHillOfHillsTerrainBuffer,
+  decodeHillOfHillsTerrainBufferSample,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
+  HILL_OF_HILLS_PRESSURE_FIELD_KINDS,
+  HILL_OF_HILLS_PRESSURE_FIELD_METRIC_CHANNELS,
   HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS,
   HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
   sampleHillOfHillsTerrain,
@@ -62,6 +66,16 @@ assertUnit(centerTopology.ditchPotential, 'center ditch potential');
 assertUnit(centerTopology.growthPotential, 'center growth potential');
 assert(Array.isArray(centerTopology.flowDirection) && centerTopology.flowDirection.length === 3, 'flow direction is Vec3');
 assert(centerTopology.routePressure > 0.45, 'center approach lane advertises route pressure');
+
+const centerPressure = (center as any).pressure;
+assert(centerPressure, 'terrain sample exposes named pressure fields for topology-motion steering');
+for (const pressureKind of HILL_OF_HILLS_PRESSURE_FIELD_KINDS) {
+  assertUnit(centerPressure[pressureKind], `center pressure field ${pressureKind}`);
+}
+closeEnough(centerPressure.route, centerTopology.routePressure, 0.0001, 'route pressure field aliases topology route pressure');
+closeEnough(centerPressure.ridge, centerTopology.ridgeStrength, 0.0001, 'ridge pressure field aliases topology ridge strength');
+closeEnough(centerPressure.valley, centerTopology.valleyStrength, 0.0001, 'valley pressure field aliases topology valley strength');
+assert(centerPressure.bloom > 0 || centerPressure.vegetation > 0, 'pressure fields include growth-facing steering signal');
 
 const centerMaterial = (center as any).proxyMaterial;
 assert(centerMaterial, 'terrain sample exposes proxy material for visible topology shaders');
@@ -185,6 +199,41 @@ assert(
     0,
   'ordinary basin terrain emits tuft/scuff anchors for procedural asset placement'
 );
+assert(
+  Array.isArray((ordinaryBasinTerrain.witness as any).pressureFieldVocabulary),
+  'witness exposes pressure field vocabulary'
+);
+assert(
+  HILL_OF_HILLS_PRESSURE_FIELD_KINDS.every((pressureKind) =>
+    (ordinaryBasinTerrain.witness as any).pressureFieldVocabulary.includes(pressureKind)
+  ),
+  'witness pressure field vocabulary includes every named pressure field'
+);
+assert(typeof (ordinaryBasinTerrain.witness as any).pressureFieldChecksum === 'string', 'witness exposes pressure field checksum');
+assert((ordinaryBasinTerrain.witness as any).pressureFieldChecksum !== 'none', 'pressure field checksum is populated');
+for (const pressureKind of HILL_OF_HILLS_PRESSURE_FIELD_KINDS) {
+  const range = (ordinaryBasinTerrain.witness as any).pressureFieldRanges[pressureKind];
+  assert(range, `witness exposes pressure field range ${pressureKind}`);
+  assertUnit(range.min, `pressure range min ${pressureKind}`);
+  assertUnit(range.max, `pressure range max ${pressureKind}`);
+  assert(range.max >= range.min, `pressure range is ordered ${pressureKind}`);
+  const comfort = (ordinaryBasinTerrain.witness as any).pressureFieldComfort[pressureKind];
+  assert(comfort, `witness exposes pressure comfort band ${pressureKind}`);
+  assert(comfort.below + comfort.inside + comfort.above === ordinaryBasinTerrain.samples.length, `pressure comfort counts cover samples ${pressureKind}`);
+  assertUnit(comfort.target.min, `pressure comfort target min ${pressureKind}`);
+  assertUnit(comfort.target.max, `pressure comfort target max ${pressureKind}`);
+}
+const ordinaryBasinBuffer = createHillOfHillsTerrainBuffer(ordinaryBasinTerrain);
+for (const channel of Object.values(HILL_OF_HILLS_PRESSURE_FIELD_METRIC_CHANNELS)) {
+  assert(ordinaryBasinBuffer.channelLayout.metrics.includes(channel), `terrain buffer includes pressure metric channel ${channel}`);
+}
+const decodedBasinCenter = decodeHillOfHillsTerrainBufferSample(
+  ordinaryBasinBuffer,
+  Math.floor(ordinaryBasinBuffer.sampleCount / 2)
+);
+for (const pressureKind of HILL_OF_HILLS_PRESSURE_FIELD_KINDS) {
+  assertUnit((decodedBasinCenter as any).pressure[pressureKind], `decoded pressure field ${pressureKind}`);
+}
 
 const noValleyStableRails = createHillOfHillsTerrain({
   seed: 83025,

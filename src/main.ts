@@ -3,9 +3,12 @@ import {
   createHillOfHillsTerrainBuffer,
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams,
+  HILL_OF_HILLS_PRESSURE_FIELD_KINDS,
+  HILL_OF_HILLS_PRESSURE_FIELD_METRIC_CHANNELS,
   HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
   HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS,
   type HillOfHillsMaterialEdgeKind,
+  type HillOfHillsPressureFieldKind,
   type HillOfHillsProxyMaterialKind,
   type HillOfHillsSurfaceDetailKind,
   type HillOfHillsSurfaceAnchorKind,
@@ -53,6 +56,7 @@ import {
 import {
   HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE,
   HILL_PREVIEW_GROWTH_SKIN_OPACITY_RANGE,
+  HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE,
   HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE,
   HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE,
   HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE,
@@ -60,6 +64,7 @@ import {
   loadHillPreviewSettings,
   saveHillPreviewSettings,
   type HillPreviewLayerKey,
+  type HillPreviewPressureFieldSelection,
   type HillPreviewSettings,
   type HillPreviewSettingsStorage
 } from './terrain/hill-of-hills-preview-settings.js';
@@ -493,6 +498,7 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
   if (previewSettings.layers.surfaceDetails) {
     drawSurfaceDetails(currentBuffer, width, height);
   }
+  drawPressureFieldOverlay(currentBuffer, width, height);
   if (previewSettings.layers.topologyOverlays) {
     drawTopologyOverlays(currentBuffer, width, height);
   }
@@ -1371,6 +1377,79 @@ function drawSurfaceDetailMark(
   }
 }
 
+function drawPressureFieldOverlay(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
+  const field = previewSettings.overlays.pressureField;
+  const strength = previewSettings.overlays.pressureOverlayStrength;
+  if (field === 'none' || strength <= 0) {
+    return;
+  }
+
+  const channel = HILL_OF_HILLS_PRESSURE_FIELD_METRIC_CHANNELS[field];
+  const gridResolutionX = currentBuffer.gridResolution.x;
+  const gridResolutionZ = currentBuffer.gridResolution.z;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  for (let zi = gridResolutionZ - 2; zi >= 0; zi -= 1) {
+    for (let xi = 0; xi < gridResolutionX - 1; xi += 1) {
+      const a = zi * gridResolutionX + xi;
+      const b = zi * gridResolutionX + xi + 1;
+      const c = (zi + 1) * gridResolutionX + xi + 1;
+      const d = (zi + 1) * gridResolutionX + xi;
+      const value =
+        (metricAt(currentBuffer, a, channel) +
+          metricAt(currentBuffer, b, channel) +
+          metricAt(currentBuffer, c, channel) +
+          metricAt(currentBuffer, d, channel)) *
+        0.25;
+      if (value < 0.03) {
+        continue;
+      }
+      const pa = projectSample(currentBuffer, a, width, height, 0.085);
+      const pb = projectSample(currentBuffer, b, width, height, 0.085);
+      const pc = projectSample(currentBuffer, c, width, height, 0.085);
+      const pd = projectSample(currentBuffer, d, width, height, 0.085);
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.lineTo(pc.x, pc.y);
+      ctx.lineTo(pd.x, pd.y);
+      ctx.closePath();
+      ctx.fillStyle = pressureFieldFillStyle(field, value, strength);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function pressureFieldFillStyle(field: HillOfHillsPressureFieldKind, value: number, strength: number): string {
+  const [red, green, blue] = pressureFieldColor(field);
+  const alpha = clamp((0.05 + value * 0.28) * strength, 0, 0.38);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha.toFixed(3)})`;
+}
+
+function pressureFieldColor(field: HillOfHillsPressureFieldKind): readonly [number, number, number] {
+  switch (field) {
+    case 'slope':
+    case 'curvature':
+    case 'exposure':
+    case 'strata':
+      return [232, 207, 132];
+    case 'ridge':
+      return [109, 213, 141];
+    case 'valley':
+    case 'basin':
+    case 'erosion':
+      return [79, 140, 196];
+    case 'saddle':
+    case 'route':
+      return [200, 179, 104];
+    case 'bloom':
+    case 'vegetation':
+      return [48, 184, 96];
+  }
+}
+
 function drawTopologyOverlays(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
   const gridResolutionX = currentBuffer.gridResolution.x;
   const gridResolutionZ = currentBuffer.gridResolution.z;
@@ -1822,10 +1901,21 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
     `layers: ${activePreviewLayerSummary()}`,
     `growth skin: density ${previewSettings.growthSkin.density.toFixed(2)} opacity ${previewSettings.growthSkin.opacity.toFixed(2)}`,
-    `overlays: lines ${previewSettings.overlays.topologyLineStrength.toFixed(2)} contours ${previewSettings.overlays.topographicContourStrength.toFixed(2)} spacing ${previewSettings.overlays.topographicContourSpacing.toFixed(2)}`,
+    `overlays: lines ${previewSettings.overlays.topologyLineStrength.toFixed(2)} contours ${previewSettings.overlays.topographicContourStrength.toFixed(2)} spacing ${previewSettings.overlays.topographicContourSpacing.toFixed(2)} pressure ${previewSettings.overlays.pressureField} ${previewSettings.overlays.pressureOverlayStrength.toFixed(2)}`,
+    `pressure: ${pressureFieldWitnessSummary(witness)}`,
     latestGrowthPlacementSummary,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
+}
+
+function pressureFieldWitnessSummary(witness: HillOfHillsTerrainBuffer['witness']): string {
+  const field = previewSettings.overlays.pressureField;
+  if (field === 'none') {
+    return `off vocab ${witness.pressureFieldVocabulary.length} ${compactChecksum(witness.pressureFieldChecksum)}`;
+  }
+  const range = witness.pressureFieldRanges[field];
+  const comfort = witness.pressureFieldComfort[field];
+  return `${field} ${range.min.toFixed(2)}..${range.max.toFixed(2)} comfort ${comfort.inside}/${witness.sampleCount} viol ${comfort.maxViolation.toFixed(2)} ${compactChecksum(witness.pressureFieldChecksum)}`;
 }
 
 function activePreviewLayerSummary(): string {
@@ -2345,8 +2435,48 @@ function createPreviewDebugControls(): { element: HTMLElement; refresh: () => vo
       persistPreviewSettings();
     }
   );
+  const pressureField = createPreviewDebugSelect<HillPreviewPressureFieldSelection>(
+    'Pressure field',
+    ['none', ...HILL_OF_HILLS_PRESSURE_FIELD_KINDS],
+    previewSettings.overlays.pressureField,
+    (value) => {
+      previewSettings = {
+        ...previewSettings,
+        overlays: {
+          ...previewSettings.overlays,
+          pressureField: value
+        }
+      };
+      persistPreviewSettings();
+    }
+  );
+  const pressureStrength = createPreviewDebugRange(
+    'Pressure strength',
+    previewSettings.overlays.pressureOverlayStrength,
+    HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE.min,
+    HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE.max,
+    0.05,
+    (value) => {
+      previewSettings = {
+        ...previewSettings,
+        overlays: {
+          ...previewSettings.overlays,
+          pressureOverlayStrength: value
+        }
+      };
+      persistPreviewSettings();
+    }
+  );
 
-  element.append(density.row, opacity.row, topologyLines.row, topographicContours.row, contourSpacing.row);
+  element.append(
+    density.row,
+    opacity.row,
+    topologyLines.row,
+    topographicContours.row,
+    contourSpacing.row,
+    pressureField.row,
+    pressureStrength.row
+  );
   element.append(createPhaseFilmstripExportControls());
 
   const reset = document.createElement('button');
@@ -2369,6 +2499,8 @@ function createPreviewDebugControls(): { element: HTMLElement; refresh: () => vo
     topologyLines.setValue(previewSettings.overlays.topologyLineStrength);
     topographicContours.setValue(previewSettings.overlays.topographicContourStrength);
     contourSpacing.setValue(previewSettings.overlays.topographicContourSpacing);
+    pressureField.setValue(previewSettings.overlays.pressureField);
+    pressureStrength.setValue(previewSettings.overlays.pressureOverlayStrength);
   }
 
   return { element, refresh };
@@ -2634,6 +2766,36 @@ function createPreviewDebugRange(
     setValue(nextValue: number): void {
       input.value = String(nextValue);
       value.value = nextValue.toFixed(2);
+    }
+  };
+}
+
+function createPreviewDebugSelect<T extends string>(
+  label: string,
+  options: readonly T[],
+  initialValue: T,
+  onInput: (value: T) => void
+): { row: HTMLElement; setValue: (value: T) => void } {
+  const row = document.createElement('label');
+  const name = document.createElement('span');
+  const input = document.createElement('select');
+
+  row.className = 'preview-debug-range';
+  name.textContent = label;
+  for (const option of options) {
+    const item = document.createElement('option');
+    item.value = option;
+    item.textContent = option;
+    input.append(item);
+  }
+  input.value = initialValue;
+  input.addEventListener('change', () => onInput(input.value as T));
+  row.append(name, input);
+
+  return {
+    row,
+    setValue(nextValue: T): void {
+      input.value = nextValue;
     }
   };
 }

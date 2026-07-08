@@ -4,8 +4,12 @@ import {
   type FirstVerticalFrame
 } from '../src/contracts/first-vertical.ts';
 import {
+  HILL_OF_HILLS_PRESSURE_FIELD_KINDS,
   HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
   defaultHillOfHillsParams,
+  type HillOfHillsPressureFieldComfortBand,
+  type HillOfHillsPressureFieldKind,
+  type HillOfHillsPressureFieldSample,
   type HillOfHillsTerrain,
   type HillOfHillsTerrainSample
 } from '../src/terrain/hill-of-hills.ts';
@@ -43,6 +47,21 @@ const terrainSource = {
   configId: 'composer-terrain-fixture-v0'
 };
 
+const terrainFixturePressure: HillOfHillsPressureFieldSample = {
+  slope: 0.05,
+  curvature: 0,
+  ridge: 0.5,
+  valley: 0.1,
+  saddle: 0,
+  basin: 0.1,
+  exposure: 0.95,
+  route: 0.72,
+  erosion: 0.15,
+  bloom: 0.36,
+  strata: 0.05,
+  vegetation: 0.36
+};
+
 const terrainSample: HillOfHillsTerrainSample = {
   schema: 'lerms.terrain-sample.v0',
   id: 'terrain-crown-fixture',
@@ -61,6 +80,7 @@ const terrainSample: HillOfHillsTerrainSample = {
     ditchPotential: 0.08,
     growthPotential: 0.36
   },
+  pressure: terrainFixturePressure,
   proxyMaterial: {
     kind: 'crown-warmth',
     color: [205, 165, 72],
@@ -323,12 +343,46 @@ const terrain: HillOfHillsTerrain = {
       ditchPotential: { min: 0.08, max: 0.08 },
       growthPotential: { min: 0.36, max: 0.36 }
     },
+    pressureFieldVocabulary: HILL_OF_HILLS_PRESSURE_FIELD_KINDS,
+    pressureFieldChecksum: 'composer-terrain-pressure-fixture-checksum',
+    pressureFieldRanges: buildFixturePressureRanges(),
+    pressureFieldComfort: buildFixturePressureComfort(),
     proxyMaterialCounts: { 'crown-warmth': 1 },
     surfaceDetailCounts: { none: 1 },
     materialEdgeCounts: { none: 1 },
     surfaceAnchorCounts: { none: 1 }
   }
 };
+
+function buildFixturePressureRanges(): Record<HillOfHillsPressureFieldKind, { min: number; max: number }> {
+  return Object.fromEntries(
+    HILL_OF_HILLS_PRESSURE_FIELD_KINDS.map((kind) => [
+      kind,
+      {
+        min: terrainFixturePressure[kind],
+        max: terrainFixturePressure[kind]
+      }
+    ])
+  ) as Record<HillOfHillsPressureFieldKind, { min: number; max: number }>;
+}
+
+function buildFixturePressureComfort(): Record<
+  HillOfHillsPressureFieldKind,
+  HillOfHillsPressureFieldComfortBand
+> {
+  return Object.fromEntries(
+    HILL_OF_HILLS_PRESSURE_FIELD_KINDS.map((kind) => [
+      kind,
+      {
+        target: { min: 0, max: 1 },
+        below: 0,
+        inside: 1,
+        above: 0,
+        maxViolation: 0
+      }
+    ])
+  ) as Record<HillOfHillsPressureFieldKind, HillOfHillsPressureFieldComfortBand>;
+}
 
 const redLermWitness = buildRedLermBodyMotionWitness();
 

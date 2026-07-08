@@ -1,3 +1,5 @@
+import { HILL_OF_HILLS_PRESSURE_FIELD_KINDS, type HillOfHillsPressureFieldKind } from './hill-of-hills.js';
+
 export const HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY = 'lerms.hill-of-hills.preview-settings.v0' as const;
 
 export type HillPreviewLayerKey =
@@ -16,10 +18,14 @@ export interface HillPreviewGrowthSkinSettings {
   opacity: number;
 }
 
+export type HillPreviewPressureFieldSelection = HillOfHillsPressureFieldKind | 'none';
+
 export interface HillPreviewOverlaySettings {
   topologyLineStrength: number;
   topographicContourStrength: number;
   topographicContourSpacing: number;
+  pressureField: HillPreviewPressureFieldSelection;
+  pressureOverlayStrength: number;
 }
 
 export interface HillPreviewSettings {
@@ -51,7 +57,9 @@ const DEFAULT_GROWTH_SKIN_SETTINGS: HillPreviewGrowthSkinSettings = {
 const DEFAULT_OVERLAY_SETTINGS: HillPreviewOverlaySettings = {
   topologyLineStrength: 0.35,
   topographicContourStrength: 0.55,
-  topographicContourSpacing: 0.6
+  topographicContourSpacing: 0.6,
+  pressureField: 'none',
+  pressureOverlayStrength: 0.45
 };
 
 export const HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE = {
@@ -77,6 +85,11 @@ export const HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE = {
 export const HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE = {
   min: 0.25,
   max: 1.2
+} as const;
+
+export const HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE = {
+  min: 0,
+  max: 1
 } as const;
 
 export function defaultHillPreviewSettings(): HillPreviewSettings {
@@ -164,6 +177,13 @@ export function sanitizeHillPreviewSettings(input: unknown): HillPreviewSettings
         defaults.overlays.topographicContourSpacing,
         HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE.min,
         HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_SPACING_RANGE.max
+      ),
+      pressureField: pressureFieldOrDefault(overlayInput.pressureField, defaults.overlays.pressureField),
+      pressureOverlayStrength: numberOrDefault(
+        overlayInput.pressureOverlayStrength,
+        defaults.overlays.pressureOverlayStrength,
+        HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE.min,
+        HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE.max
       )
     }
   };
@@ -178,6 +198,16 @@ function numberOrDefault(value: unknown, fallback: number, min: number, max: num
     return fallback;
   }
   return round(clamp(value, min, max));
+}
+
+function pressureFieldOrDefault(value: unknown, fallback: HillPreviewPressureFieldSelection): HillPreviewPressureFieldSelection {
+  if (value === 'none') {
+    return value;
+  }
+  if (typeof value === 'string' && (HILL_OF_HILLS_PRESSURE_FIELD_KINDS as readonly string[]).includes(value)) {
+    return value as HillPreviewPressureFieldSelection;
+  }
+  return fallback;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

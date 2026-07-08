@@ -135,7 +135,63 @@ export type HillOfHillsTerrainBufferMetricChannel =
   | 'surfaceDetailDensity'
   | 'surfaceDetailEdgeMix'
   | 'materialEdgeStrength'
-  | 'materialEdgeDissolve';
+  | 'materialEdgeDissolve'
+  | 'slopePressure'
+  | 'curvaturePressure'
+  | 'ridgePressure'
+  | 'valleyPressure'
+  | 'saddlePressure'
+  | 'basinPressure'
+  | 'exposurePressure'
+  | 'erosionPressure'
+  | 'bloomPressure'
+  | 'strataPressure'
+  | 'vegetationPressure';
+
+export const HILL_OF_HILLS_PRESSURE_FIELD_KINDS = [
+  'slope',
+  'curvature',
+  'ridge',
+  'valley',
+  'saddle',
+  'basin',
+  'exposure',
+  'route',
+  'erosion',
+  'bloom',
+  'strata',
+  'vegetation'
+] as const;
+
+export type HillOfHillsPressureFieldKind = (typeof HILL_OF_HILLS_PRESSURE_FIELD_KINDS)[number];
+
+export type HillOfHillsPressureFieldSample = Record<HillOfHillsPressureFieldKind, number>;
+
+export interface HillOfHillsPressureFieldComfortBand {
+  target: Range;
+  below: number;
+  inside: number;
+  above: number;
+  maxViolation: number;
+}
+
+export const HILL_OF_HILLS_PRESSURE_FIELD_METRIC_CHANNELS: Record<
+  HillOfHillsPressureFieldKind,
+  HillOfHillsTerrainBufferMetricChannel
+> = {
+  slope: 'slopePressure',
+  curvature: 'curvaturePressure',
+  ridge: 'ridgePressure',
+  valley: 'valleyPressure',
+  saddle: 'saddlePressure',
+  basin: 'basinPressure',
+  exposure: 'exposurePressure',
+  route: 'routePressure',
+  erosion: 'erosionPressure',
+  bloom: 'bloomPressure',
+  strata: 'strataPressure',
+  vegetation: 'vegetationPressure'
+};
 
 export interface HillOfHillsTopology {
   flowDirection: Vec3;
@@ -429,6 +485,7 @@ export interface HillOfHillsLayerTileCache {
 
 export interface HillOfHillsTerrainSample extends TerrainSample {
   topology: HillOfHillsTopology;
+  pressure: HillOfHillsPressureFieldSample;
   proxyMaterial: HillOfHillsProxyMaterial;
   phaseInfluence: HillOfHillsPhaseInfluence;
   support: HillOfHillsSupportSample;
@@ -518,6 +575,10 @@ export interface HillOfHillsWitness {
     ditchPotential: Range;
     growthPotential: Range;
   };
+  pressureFieldVocabulary: readonly HillOfHillsPressureFieldKind[];
+  pressureFieldChecksum: string;
+  pressureFieldRanges: Record<HillOfHillsPressureFieldKind, Range>;
+  pressureFieldComfort: Record<HillOfHillsPressureFieldKind, HillOfHillsPressureFieldComfortBand>;
   proxyMaterialCounts: Partial<Record<HillOfHillsProxyMaterialKind, number>>;
   surfaceDetailChecksum: string;
   surfaceDetailCounts: Partial<Record<HillOfHillsSurfaceDetailKind, number>>;
@@ -682,7 +743,18 @@ const TERRAIN_BUFFER_METRIC_CHANNELS: readonly HillOfHillsTerrainBufferMetricCha
   'surfaceDetailDensity',
   'surfaceDetailEdgeMix',
   'materialEdgeStrength',
-  'materialEdgeDissolve'
+  'materialEdgeDissolve',
+  'slopePressure',
+  'curvaturePressure',
+  'ridgePressure',
+  'valleyPressure',
+  'saddlePressure',
+  'basinPressure',
+  'exposurePressure',
+  'erosionPressure',
+  'bloomPressure',
+  'strataPressure',
+  'vegetationPressure'
 ];
 const TERRAIN_REGION_CODEBOOK: readonly TerrainRegion[] = ['crown', 'approach', 'slope', 'basin', 'gutter', 'rim', 'underhill_fixture'];
 const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
@@ -1029,6 +1101,17 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
     metrics[metricOffset + 17] = sample.surfaceDetail.edgeMix;
     metrics[metricOffset + 18] = sample.materialEdge.strength;
     metrics[metricOffset + 19] = sample.materialEdge.dissolve;
+    metrics[metricOffset + 20] = sample.pressure.slope;
+    metrics[metricOffset + 21] = sample.pressure.curvature;
+    metrics[metricOffset + 22] = sample.pressure.ridge;
+    metrics[metricOffset + 23] = sample.pressure.valley;
+    metrics[metricOffset + 24] = sample.pressure.saddle;
+    metrics[metricOffset + 25] = sample.pressure.basin;
+    metrics[metricOffset + 26] = sample.pressure.exposure;
+    metrics[metricOffset + 27] = sample.pressure.erosion;
+    metrics[metricOffset + 28] = sample.pressure.bloom;
+    metrics[metricOffset + 29] = sample.pressure.strata;
+    metrics[metricOffset + 30] = sample.pressure.vegetation;
     regionCodes[index] = codeForTerrainRegion(sample.region);
     materialCodes[index] = codeForProxyMaterial(sample.proxyMaterial.kind);
     surfaceDetailCodes[index] = codeForSurfaceDetail(sample.surfaceDetail.kind);
@@ -1106,6 +1189,7 @@ export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainB
   const topologyHeightDelta = metric(buffer, metricOffset, 'topologyHeightDelta');
   const heightDelta = metric(buffer, metricOffset, 'heightDelta');
   const surfaceVelocityY = metric(buffer, metricOffset, 'surfaceVelocityY');
+  const pressure = pressureFieldsFromBuffer(buffer, metricOffset);
 
   return {
     schema: TERRAIN_SAMPLE_SCHEMA,
@@ -1119,12 +1203,13 @@ export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainB
     topology: {
       flowDirection: [0, 0, 0],
       flowAccumulation: metric(buffer, metricOffset, 'flowAccumulation'),
-      ridgeStrength: 0,
-      valleyStrength: 0,
+      ridgeStrength: pressure.ridge,
+      valleyStrength: pressure.valley,
       routePressure: metric(buffer, metricOffset, 'routePressure'),
       ditchPotential: metric(buffer, metricOffset, 'ditchPotential'),
       growthPotential: metric(buffer, metricOffset, 'growthPotential')
     },
+    pressure,
     proxyMaterial: {
       kind: materialKind,
       color: [buffer.colors[vectorOffset], buffer.colors[vectorOffset + 1], buffer.colors[vectorOffset + 2]],
@@ -2725,6 +2810,7 @@ function sampleTerrainFromParts(
   const region = classifyRegion(params, x, z, heightParts, slope);
   const topology = topologyAt(params, x, z, heightParts, dx, dz, slope, region, phaseInfluence);
   const proxyMaterial = proxyMaterialFor(region, topology);
+  const pressure = pressureFieldsFor(heightParts, slope, region, topology, proxyMaterial, phaseInfluence);
   const support = supportSampleFor(params, phaseState, x, z, heightParts, phaseInfluence);
   const surfaceDetail = surfaceDetailFor(params, x, z, region, topology, proxyMaterial, phaseInfluence, slope);
   const materialEdge = materialEdgeFor(params, x, z, region, topology, proxyMaterial, phaseInfluence, surfaceDetail, slope);
@@ -2739,6 +2825,7 @@ function sampleTerrainFromParts(
     slope,
     region,
     topology,
+    pressure,
     proxyMaterial,
     phaseInfluence,
     support,
@@ -3122,6 +3209,94 @@ function proxyMaterialFor(region: TerrainRegion, topology: HillOfHillsTopology):
   };
 }
 
+function pressureFieldsFor(
+  heightParts: HeightParts,
+  slope: number,
+  region: TerrainRegion,
+  topology: HillOfHillsTopology,
+  proxyMaterial: HillOfHillsProxyMaterial,
+  phaseInfluence: HillOfHillsPhaseInfluence
+): HillOfHillsPressureFieldSample {
+  const topologyAmount = phaseInfluence.topologyAmount;
+  const relief = clamp(
+    Math.abs(heightParts.hills) * 0.28 +
+      heightParts.valleys * 0.32 +
+      Math.abs(heightParts.phaseTopology) * 0.22 +
+      Math.abs(heightParts.detail) * 0.08,
+    0,
+    1
+  );
+  const curvature = clamp(
+    topology.ridgeStrength * 0.34 + topology.valleyStrength * 0.34 + relief * 0.2 + topologyAmount * 0.16 + Math.abs(heightParts.detail) * 0.04,
+    0,
+    1
+  );
+  const strongestFold = Math.max(topology.ridgeStrength, topology.valleyStrength);
+  const saddle = clamp(
+    topology.routePressure * (1 - Math.abs(topology.ridgeStrength - topology.valleyStrength) * 0.68) * (1 - strongestFold * 0.2) +
+      (phaseInfluence.kind === 'saddle_pinch' || phaseInfluence.kind === 'saddle_pass' ? topologyAmount * 0.22 : 0),
+    0,
+    1
+  );
+  const basin = clamp(
+    topology.valleyStrength * 0.54 + topology.flowAccumulation * 0.18 + (region === 'basin' ? 0.22 : 0) + (proxyMaterial.kind === 'basin-meadow' ? 0.08 : 0),
+    0,
+    1
+  );
+  const exposure = clamp(
+    slope * 0.34 +
+      topology.ridgeStrength * 0.36 +
+      (1 - topology.growthPotential) * 0.14 +
+      (proxyMaterial.kind === 'rim-crust' ? 0.12 : 0) +
+      (phaseInfluence.kind === 'strata_reveal' ? topologyAmount * 0.16 : 0),
+    0,
+    1
+  );
+  const erosion = clamp(
+    topology.flowAccumulation * 0.34 + topology.valleyStrength * 0.28 + topology.ditchPotential * 0.22 + slope * 0.14 + phaseInfluence.sideDitchAmount * 0.16,
+    0,
+    1
+  );
+  const bloom = clamp(
+    topology.growthPotential * 0.5 +
+      proxyMaterial.growthTint * 0.26 +
+      (1 - clamp(slope, 0, 1)) * 0.08 +
+      (phaseInfluence.kind === 'basin_bloom' ? topologyAmount * 0.28 : 0) -
+      exposure * 0.05,
+    0,
+    1
+  );
+  const strata = clamp(
+    exposure * 0.42 +
+      topology.ridgeStrength * 0.22 +
+      slope * 0.16 +
+      (proxyMaterial.kind === 'rim-crust' || proxyMaterial.kind === 'basin-dust' ? 0.1 : 0) +
+      (phaseInfluence.kind === 'strata_reveal' ? topologyAmount * 0.22 : 0),
+    0,
+    1
+  );
+  const vegetation = clamp(
+    topology.growthPotential * 0.56 + proxyMaterial.growthTint * 0.24 + bloom * 0.16 + (proxyMaterial.kind === 'growth-lip' ? 0.08 : 0) - exposure * 0.06,
+    0,
+    1
+  );
+
+  return {
+    slope: clamp(slope, 0, 1),
+    curvature,
+    ridge: topology.ridgeStrength,
+    valley: topology.valleyStrength,
+    saddle,
+    basin,
+    exposure,
+    route: topology.routePressure,
+    erosion,
+    bloom,
+    strata,
+    vegetation
+  };
+}
+
 function proxyMaterialKindFor(region: TerrainRegion, topology: HillOfHillsTopology): HillOfHillsProxyMaterialKind {
   if (region === 'crown') return 'crown-warmth';
   if (topology.growthPotential > 0.54 && (region === 'slope' || region === 'rim')) return 'growth-lip';
@@ -3210,6 +3385,28 @@ function metric(buffer: HillOfHillsTerrainBuffer, metricOffset: number, channel:
     throw new Error(`terrain buffer is missing metric channel ${channel}`);
   }
   return buffer.metrics[metricOffset + index];
+}
+
+function optionalMetric(buffer: HillOfHillsTerrainBuffer, metricOffset: number, channel: HillOfHillsTerrainBufferMetricChannel, fallback: number): number {
+  const index = buffer.channelLayout.metrics.indexOf(channel);
+  return index >= 0 ? buffer.metrics[metricOffset + index] : fallback;
+}
+
+function pressureFieldsFromBuffer(buffer: HillOfHillsTerrainBuffer, metricOffset: number): HillOfHillsPressureFieldSample {
+  return {
+    slope: optionalMetric(buffer, metricOffset, 'slopePressure', metric(buffer, metricOffset, 'slope')),
+    curvature: optionalMetric(buffer, metricOffset, 'curvaturePressure', 0),
+    ridge: optionalMetric(buffer, metricOffset, 'ridgePressure', 0),
+    valley: optionalMetric(buffer, metricOffset, 'valleyPressure', 0),
+    saddle: optionalMetric(buffer, metricOffset, 'saddlePressure', 0),
+    basin: optionalMetric(buffer, metricOffset, 'basinPressure', 0),
+    exposure: optionalMetric(buffer, metricOffset, 'exposurePressure', 0),
+    route: metric(buffer, metricOffset, 'routePressure'),
+    erosion: optionalMetric(buffer, metricOffset, 'erosionPressure', 0),
+    bloom: optionalMetric(buffer, metricOffset, 'bloomPressure', 0),
+    strata: optionalMetric(buffer, metricOffset, 'strataPressure', 0),
+    vegetation: optionalMetric(buffer, metricOffset, 'vegetationPressure', 0)
+  };
 }
 
 function proxyMaterialBlendsFor(
@@ -3553,6 +3750,8 @@ function createWitness(
   const surfaceAnchorCounts: Partial<Record<HillOfHillsSurfaceAnchorKind, number>> = {};
   const phaseInfluenceKinds: Partial<Record<HillOfHillsPhaseInfluenceKind, number>> = {};
   const topologyRanges = createTopologyRanges();
+  const pressureFieldRanges = createPressureFieldRanges();
+  const pressureFieldComfort = createPressureFieldComfort();
   const phaseInfluenceRange = createRange();
   const trailInfluenceRange = createRange();
   const sideDitchInfluenceRange = createRange();
@@ -3592,6 +3791,11 @@ function createWitness(
     includeInRange(topologyRanges.routePressure, sample.topology.routePressure);
     includeInRange(topologyRanges.ditchPotential, sample.topology.ditchPotential);
     includeInRange(topologyRanges.growthPotential, sample.topology.growthPotential);
+    for (const pressureKind of HILL_OF_HILLS_PRESSURE_FIELD_KINDS) {
+      const value = sample.pressure[pressureKind];
+      includeInRange(pressureFieldRanges[pressureKind], value);
+      includePressureFieldComfort(pressureFieldComfort[pressureKind], value);
+    }
   }
 
   return {
@@ -3668,6 +3872,10 @@ function createWitness(
       .map((episode) => episode.topologyEvent)
       .filter((event): event is HillOfHillsTopologyEventDebug => Boolean(event)),
     topologyRanges,
+    pressureFieldVocabulary: HILL_OF_HILLS_PRESSURE_FIELD_KINDS,
+    pressureFieldChecksum: checksumParts(samples.map((sample) => pressureFieldSignature(sample))),
+    pressureFieldRanges,
+    pressureFieldComfort,
     proxyMaterialCounts,
     surfaceDetailChecksum: checksumParts(samples.map((sample) => surfaceDetailSignature(sample))),
     surfaceDetailCounts,
@@ -3763,6 +3971,60 @@ function topologySignature(sample: HillOfHillsTerrainSample): string {
     sample.topology.ditchPotential.toFixed(3),
     sample.topology.growthPotential.toFixed(3)
   ].join(':');
+}
+
+const PRESSURE_FIELD_COMFORT_TARGETS: Record<HillOfHillsPressureFieldKind, Range> = {
+  slope: { min: 0.05, max: 0.75 },
+  curvature: { min: 0.08, max: 0.86 },
+  ridge: { min: 0.05, max: 0.9 },
+  valley: { min: 0.05, max: 0.9 },
+  saddle: { min: 0.02, max: 0.7 },
+  basin: { min: 0.04, max: 0.86 },
+  exposure: { min: 0.04, max: 0.86 },
+  route: { min: 0.04, max: 0.82 },
+  erosion: { min: 0.04, max: 0.88 },
+  bloom: { min: 0.06, max: 0.92 },
+  strata: { min: 0.03, max: 0.82 },
+  vegetation: { min: 0.08, max: 0.95 }
+};
+
+function createPressureFieldRanges(): Record<HillOfHillsPressureFieldKind, Range> {
+  return mapPressureFieldKinds(() => createRange());
+}
+
+function createPressureFieldComfort(): Record<HillOfHillsPressureFieldKind, HillOfHillsPressureFieldComfortBand> {
+  return mapPressureFieldKinds((kind) => ({
+    target: { ...PRESSURE_FIELD_COMFORT_TARGETS[kind] },
+    below: 0,
+    inside: 0,
+    above: 0,
+    maxViolation: 0
+  }));
+}
+
+function includePressureFieldComfort(band: HillOfHillsPressureFieldComfortBand, value: number): void {
+  if (value < band.target.min) {
+    band.below += 1;
+    band.maxViolation = Math.max(band.maxViolation, Math.min(1, band.target.min - value));
+    return;
+  }
+  if (value > band.target.max) {
+    band.above += 1;
+    band.maxViolation = Math.max(band.maxViolation, Math.min(1, value - band.target.max));
+    return;
+  }
+  band.inside += 1;
+}
+
+function pressureFieldSignature(sample: HillOfHillsTerrainSample): string {
+  return [
+    sample.id,
+    ...HILL_OF_HILLS_PRESSURE_FIELD_KINDS.map((kind) => `${kind}:${sample.pressure[kind].toFixed(3)}`)
+  ].join(':');
+}
+
+function mapPressureFieldKinds<T>(create: (kind: HillOfHillsPressureFieldKind) => T): Record<HillOfHillsPressureFieldKind, T> {
+  return Object.fromEntries(HILL_OF_HILLS_PRESSURE_FIELD_KINDS.map((kind) => [kind, create(kind)])) as Record<HillOfHillsPressureFieldKind, T>;
 }
 
 function surfaceDetailSignature(sample: HillOfHillsTerrainSample): string {
