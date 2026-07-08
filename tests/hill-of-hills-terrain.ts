@@ -859,6 +859,15 @@ const topologyBoundaryEventClasses = Object.fromEntries(
     }
   ])
 ) as TopologyMotionParams['topologyEventClasses'];
+const topologyBoundaryTailEventClasses = Object.fromEntries(
+  topologyEventKinds.map((kind) => [
+    kind,
+    {
+      ...topologyBoundaryEventClasses[kind],
+      phaseOffset: kind === 'hill_swell' ? 0.18 : 0
+    }
+  ])
+) as TopologyMotionParams['topologyEventClasses'];
 const topologyBeforeBoundaryPreblend = createHillOfHillsTerrain({
   ...topologyPhaseParams,
   topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 0.78,
@@ -876,8 +885,18 @@ assert(
   'topology boundary preblend fixture creates visible topology events'
 );
 assert(
-  topologyBeforeBoundaryPreblend.witness.topologyEventDebug.some((event) => event.envelope.clock < 0.5),
-  'topology motion preblends the next event cohort before the epoch boundary'
+  topologyBeforeBoundaryPreblend.witness.topologyEventDebug.every(
+    (event) => event.supportEpoch <= topologyBeforeBoundaryPreblend.phaseState.terrainEpoch
+  ),
+  'topology motion must not admit future support identities before the epoch boundary'
+);
+assert(
+  topologyBeforeBoundaryPreblend.witness.topologyEventDebug.every(
+    (event) =>
+      event.supportLifecycle !== 'entering' ||
+      event.supportEpoch === topologyBeforeBoundaryPreblend.phaseState.terrainEpoch
+  ),
+  'entering topology supports before wrap must belong to the current epoch'
 );
 assert(
   topologyBeforeBoundaryPreblend.witness.topologyEventDebug.every((event) => !/^topology-\d+-/.test(event.id)),
@@ -902,10 +921,51 @@ const topologySingleSupportBoundary = createHillOfHillsTerrain({
   topologyEventClasses: topologyBoundaryEventClasses
 } as TopologyMotionParams);
 assert(
-  topologySingleSupportBoundary.witness.topologyEventDebug.length <= 2 &&
+  topologySingleSupportBoundary.witness.topologyEventDebug.length <= 1 &&
+    topologySingleSupportBoundary.witness.topologyEventDebug.every(
+      (event) => event.supportEpoch === topologySingleSupportBoundary.phaseState.terrainEpoch
+    ) &&
     new Set(topologySingleSupportBoundary.witness.topologyEventDebug.map((event) => event.id)).size ===
       topologySingleSupportBoundary.witness.topologyEventDebug.length,
-  'topology count one allows only current/adjacent support crossfade without duplicate support identities'
+  'topology count one keeps one current support before the boundary without future support preblend'
+);
+
+const topologyTailContinuityBeforeWrap = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 0.98,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseLimit: 4,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: topologyBoundaryTailEventClasses
+} as TopologyMotionParams);
+const topologyTailContinuityAtWrap = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseLimit: 4,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: topologyBoundaryTailEventClasses
+} as TopologyMotionParams);
+const topologyTailContinuityBeforeAmounts = new Map(
+  topologyTailContinuityBeforeWrap.witness.topologyEventDebug.map((event) => [event.id, event.envelope.amount])
+);
+const topologyTailContinuityOldTail = topologyTailContinuityAtWrap.witness.topologyEventDebug.filter((event) =>
+  topologyTailContinuityBeforeAmounts.has(event.id)
+);
+assert(topologyTailContinuityOldTail.length > 0, 'topology tail continuity fixture preserves old support identities');
+assert(
+  topologyTailContinuityOldTail.every(
+    (event) => event.envelope.amount <= (topologyTailContinuityBeforeAmounts.get(event.id) ?? 0) + 0.02
+  ),
+  'topology old-support tail must not rehydrate the gesture envelope at the epoch boundary'
 );
 
 const topologyBoundaryTailReference = createHillOfHillsTerrain({
@@ -918,7 +978,7 @@ const topologyBoundaryTailReference = createHillOfHillsTerrain({
   topologyPhaseBasinBias: 0,
   topologyPhaseRidgeBias: 0,
   topologyPhaseSaddleBias: 0,
-  topologyEventClasses: topologyBoundaryEventClasses
+  topologyEventClasses: topologyBoundaryTailEventClasses
 } as TopologyMotionParams);
 const topologyBoundaryTailAfterWrap = createHillOfHillsTerrain({
   ...topologyPhaseParams,
@@ -930,7 +990,7 @@ const topologyBoundaryTailAfterWrap = createHillOfHillsTerrain({
   topologyPhaseBasinBias: 0,
   topologyPhaseRidgeBias: 0,
   topologyPhaseSaddleBias: 0,
-  topologyEventClasses: topologyBoundaryEventClasses
+  topologyEventClasses: topologyBoundaryTailEventClasses
 } as TopologyMotionParams);
 const topologyBoundaryTailIds = new Set(topologyBoundaryTailReference.witness.topologyEventDebug.map((event) => event.id));
 const topologyBoundaryEnteringEvents = topologyBoundaryTailAfterWrap.witness.topologyEventDebug.filter(

@@ -63,6 +63,9 @@ export interface HillPhaseContinuityLifecycleDelta {
   tailingCount: number;
   enteredCount: number;
   exitedCount: number;
+  hotExitedCount: number;
+  maxExitedAmount: number;
+  maxExitedSupportAmount: number;
   persistedCount: number;
   tailingPersistedCount: number;
   hotEntrantCount: number;
@@ -72,6 +75,8 @@ export interface HillPhaseContinuityLifecycleDelta {
 
 export type HillPhaseContinuitySuspicionKind =
   | 'hot-entering-support'
+  | 'broad-height-step'
+  | 'local-height-spike'
   | 'large-height-delta'
   | 'large-support-delta'
   | 'material-pop'
@@ -87,6 +92,8 @@ export interface HillPhaseContinuitySuspicion {
 export interface HillPhaseContinuityDelta {
   from: HillPhaseContinuityFrameRef;
   to: HillPhaseContinuityFrameRef;
+  phaseTimeDeltaMs: number;
+  severity: number;
   matchedSampleCount: number;
   missingSampleCount: number;
   height: HillPhaseContinuityMetric;
@@ -114,6 +121,23 @@ export interface HillPhaseContinuityDelta {
   lifecycle: HillPhaseContinuityLifecycleDelta;
   activeEventSummary: readonly string[];
   suspicions: readonly HillPhaseContinuitySuspicion[];
+}
+
+export interface HillPhaseContinuityReportFrame {
+  frame: HillPhaseContinuityFrameRef;
+  sampleChecksum: string;
+  topologyChecksum: string;
+  phaseInfluenceChecksum: string;
+  supportFrameChecksum: string;
+  activeEventSummary: readonly string[];
+  delta: HillPhaseContinuityDelta | undefined;
+}
+
+export interface HillPhaseContinuityReport {
+  frameCount: number;
+  frames: readonly HillPhaseContinuityReportFrame[];
+  rankedTransitions: readonly HillPhaseContinuityDelta[];
+  suspicionCounts: Partial<Record<HillPhaseContinuitySuspicionKind, number>>;
 }
 
 interface SalientPhasePoint {
@@ -280,9 +304,10 @@ export function compareHillPhaseContinuityFrames(
   }
 
   const lifecycle = compareTopologyEventLifecycles(fromTerrain.witness.topologyEventDebug, toTerrain.witness.topologyEventDebug);
-  const delta: Omit<HillPhaseContinuityDelta, 'suspicions'> = {
+  const delta: HillPhaseUnscoredContinuityDelta = {
     from: frameRef(fromFrame),
     to: frameRef(toFrame),
+    phaseTimeDeltaMs: Math.max(0, toFrame.phaseTimeMs - fromFrame.phaseTimeMs),
     matchedSampleCount,
     missingSampleCount: Math.max(0, toTerrain.samples.length - matchedSampleCount),
     height: resolveMetric(height),
@@ -311,9 +336,58 @@ export function compareHillPhaseContinuityFrames(
     activeEventSummary: toTerrain.witness.topologyEventDebug.slice(0, 6).map(eventDebugSummary)
   };
 
+  const suspicions = createContinuitySuspicions(delta);
   return {
     ...delta,
-    suspicions: createContinuitySuspicions(delta)
+    severity: continuitySeverity(delta, suspicions),
+    suspicions
+  };
+}
+
+export function createHillPhaseContinuityReport(
+  frames: readonly HillPhaseFilmstripFrame[],
+  terrains: readonly HillOfHillsTerrain[]
+): HillPhaseContinuityReport {
+  const count = Math.min(frames.length, terrains.length);
+  const reportFrames: HillPhaseContinuityReportFrame[] = [];
+  const rankedTransitions: HillPhaseContinuityDelta[] = [];
+  const suspicionCounts: Partial<Record<HillPhaseContinuitySuspicionKind, number>> = {};
+  let previousFrame: HillPhaseFilmstripFrame | undefined;
+  let previousTerrain: HillOfHillsTerrain | undefined;
+
+  for (let index = 0; index < count; index += 1) {
+    const frame = frames[index];
+    const terrain = terrains[index];
+    const delta =
+      previousFrame && previousTerrain
+        ? compareHillPhaseContinuityFrames(previousFrame, previousTerrain, frame, terrain)
+        : undefined;
+    if (delta) {
+      rankedTransitions.push(delta);
+      for (const suspicion of uniqueSuspicionKinds(delta.suspicions)) {
+        suspicionCounts[suspicion] = (suspicionCounts[suspicion] ?? 0) + 1;
+      }
+    }
+    reportFrames.push({
+      frame: frameRef(frame),
+      sampleChecksum: terrain.witness.sampleChecksum,
+      topologyChecksum: terrain.witness.topologyChecksum,
+      phaseInfluenceChecksum: terrain.witness.phaseInfluenceChecksum,
+      supportFrameChecksum: terrain.witness.supportFrame.supportFrameChecksum,
+      activeEventSummary: terrain.witness.topologyEventDebug.slice(0, 8).map(eventDebugSummary),
+      delta
+    });
+    previousFrame = frame;
+    previousTerrain = terrain;
+  }
+
+  rankedTransitions.sort((a, b) => b.severity - a.severity);
+
+  return {
+    frameCount: count,
+    frames: reportFrames,
+    rankedTransitions,
+    suspicionCounts
   };
 }
 
@@ -325,7 +399,7 @@ export function formatHillPhaseContinuityDelta(delta: HillPhaseContinuityDelta):
           .slice(0, 2)
           .map((suspicion) => suspicion.kind)
           .join(',');
-  return `dh ${delta.height.maxAbs.toFixed(3)}/${delta.height.rms.toFixed(3)} sup ${delta.supportHeight.maxAbs.toFixed(3)} topo ${delta.topologyAmount.maxAbs.toFixed(2)} mat ${percent(delta.proxyMaterialChangeRatio)} edge ${percent(delta.materialEdgeChangeRatio)} enter ${delta.lifecycle.enteringCount}/${delta.lifecycle.hotEntrantCount} tail ${delta.lifecycle.tailingCount} ${suspicionSummary}`;
+  return `dt ${Math.round(delta.phaseTimeDeltaMs)}ms dh ${delta.height.maxAbs.toFixed(3)}/${delta.height.rms.toFixed(3)} sup ${delta.supportHeight.maxAbs.toFixed(3)} topo ${delta.topologyAmount.maxAbs.toFixed(2)} mat ${percent(delta.proxyMaterialChangeRatio)} edge ${percent(delta.materialEdgeChangeRatio)} enter ${delta.lifecycle.enteringCount}/${delta.lifecycle.hotEntrantCount} exit ${delta.lifecycle.exitedCount}/${delta.lifecycle.hotExitedCount} tail ${delta.lifecycle.tailingCount} ${suspicionSummary}`;
 }
 
 function finiteOr(value: number, fallback: number): number {
@@ -382,6 +456,9 @@ function compareTopologyEventLifecycles(
   const lifecycleCounts = countLifecycles(toEvents);
   let enteredCount = 0;
   let exitedCount = 0;
+  let hotExitedCount = 0;
+  let maxExitedAmount = 0;
+  let maxExitedSupportAmount = 0;
   let persistedCount = 0;
   let tailingPersistedCount = 0;
   let hotEntrantCount = 0;
@@ -405,7 +482,15 @@ function compareTopologyEventLifecycles(
     }
   }
   for (const event of fromEvents) {
-    exitedCount += boolCount(!toIds.has(event.id));
+    if (toIds.has(event.id)) {
+      continue;
+    }
+    exitedCount += 1;
+    maxExitedAmount = Math.max(maxExitedAmount, event.envelope.amount);
+    maxExitedSupportAmount = Math.max(maxExitedSupportAmount, event.supportAmount);
+    if (event.envelope.amount > 0.04) {
+      hotExitedCount += 1;
+    }
   }
 
   return {
@@ -414,6 +499,9 @@ function compareTopologyEventLifecycles(
     tailingCount: lifecycleCounts.tailing,
     enteredCount,
     exitedCount,
+    hotExitedCount,
+    maxExitedAmount,
+    maxExitedSupportAmount,
     persistedCount,
     tailingPersistedCount,
     hotEntrantCount,
@@ -439,14 +527,29 @@ function countLifecycles(
 }
 
 function createContinuitySuspicions(
-  delta: Omit<HillPhaseContinuityDelta, 'suspicions'>
+  delta: HillPhaseUnscoredContinuityDelta
 ): readonly HillPhaseContinuitySuspicion[] {
   const suspicions: HillPhaseContinuitySuspicion[] = [];
+  const shortContinuityWindow = isShortContinuityWindow(delta);
   if (delta.lifecycle.hotEntrantCount > 0) {
     suspicions.push({
       kind: 'hot-entering-support',
       severity: delta.lifecycle.hotEntrantCount,
       message: `${delta.lifecycle.hotEntrantCount} new support(s) entered above smooth attack threshold`
+    });
+  }
+  if (delta.height.rms > 0.28 && delta.height.maxAbs > 0.35) {
+    suspicions.push({
+      kind: 'broad-height-step',
+      severity: delta.height.rms,
+      message: `broad height field moved ${delta.height.rms.toFixed(3)} rms across matched samples`
+    });
+  }
+  if (delta.height.maxAbs > 1 && delta.height.rms < 0.18) {
+    suspicions.push({
+      kind: 'local-height-spike',
+      severity: delta.height.maxAbs,
+      message: `localized height spike reached ${delta.height.maxAbs.toFixed(3)} while field rms stayed ${delta.height.rms.toFixed(3)}`
     });
   }
   if (delta.height.maxAbs > 0.8 && delta.supportHeight.maxAbs < 0.25) {
@@ -463,28 +566,88 @@ function createContinuitySuspicions(
       message: `support height delta jumped ${delta.supportHeight.maxAbs.toFixed(3)}`
     });
   }
-  if (delta.proxyMaterialChangeRatio > 0.12 || delta.surfaceDetailChangeRatio > 0.16 || delta.materialEdgeChangeRatio > 0.16) {
+  if (
+    shortContinuityWindow &&
+    (delta.proxyMaterialChangeRatio > 0.12 || delta.surfaceDetailChangeRatio > 0.16 || delta.materialEdgeChangeRatio > 0.16)
+  ) {
     suspicions.push({
       kind: 'material-pop',
       severity: Math.max(delta.proxyMaterialChangeRatio, delta.surfaceDetailChangeRatio, delta.materialEdgeChangeRatio),
       message: `material/detail classes changed over ${percent(Math.max(delta.proxyMaterialChangeRatio, delta.surfaceDetailChangeRatio, delta.materialEdgeChangeRatio))} of matched samples`
     });
   }
-  if (delta.topologyAmount.maxAbs > 0.6 || delta.phaseInfluenceKindChangeRatio > 0.12) {
+  if (
+    shortContinuityWindow &&
+    hasVisibleTopologyContinuityDelta(delta) &&
+    (delta.topologyAmount.maxAbs > 0.6 || delta.phaseInfluenceKindChangeRatio > 0.12)
+  ) {
     suspicions.push({
       kind: 'topology-pop',
       severity: Math.max(delta.topologyAmount.maxAbs, delta.phaseInfluenceKindChangeRatio),
       message: `topology influence changed ${delta.topologyAmount.maxAbs.toFixed(2)} with ${percent(delta.phaseInfluenceKindChangeRatio)} kind churn`
     });
   }
-  if (delta.lifecycle.exitedCount > 0 && delta.lifecycle.tailingCount === 0) {
+  if (
+    shortContinuityWindow &&
+    delta.lifecycle.hotExitedCount > 0 &&
+    delta.lifecycle.tailingCount === 0 &&
+    hasVisibleContinuityDelta(delta)
+  ) {
     suspicions.push({
       kind: 'support-exit',
-      severity: delta.lifecycle.exitedCount,
-      message: `${delta.lifecycle.exitedCount} support(s) exited without a visible tailing set`
+      severity: delta.lifecycle.hotExitedCount,
+      message: `${delta.lifecycle.hotExitedCount} visible support(s) exited without a visible tailing set`
     });
   }
   return suspicions;
+}
+
+function isShortContinuityWindow(delta: HillPhaseUnscoredContinuityDelta): boolean {
+  return delta.phaseTimeDeltaMs <= 140;
+}
+
+function hasVisibleContinuityDelta(delta: HillPhaseUnscoredContinuityDelta): boolean {
+  return (
+    delta.height.maxAbs > 0.025 ||
+    delta.supportHeight.maxAbs > 0.01 ||
+    delta.topologyAmount.maxAbs > 0.06 ||
+    delta.proxyMaterialChangeRatio > 0.02 ||
+    delta.materialEdgeChangeRatio > 0.03 ||
+    delta.surfaceDetailChangeRatio > 0.03 ||
+    delta.phaseInfluenceKindChangeRatio > 0.02
+  );
+}
+
+function hasVisibleTopologyContinuityDelta(delta: HillPhaseUnscoredContinuityDelta): boolean {
+  return (
+    delta.height.maxAbs > 0.025 ||
+    delta.supportHeight.maxAbs > 0.01 ||
+    delta.topologyAmount.maxAbs > 0.06 ||
+    delta.topologyHeightDelta.maxAbs > 0.01
+  );
+}
+
+function continuitySeverity(
+  delta: HillPhaseUnscoredContinuityDelta,
+  suspicions: readonly HillPhaseContinuitySuspicion[]
+): number {
+  const suspicionSeverity = suspicions.reduce((max, suspicion) => Math.max(max, suspicion.severity), 0);
+  return Math.max(
+    suspicionSeverity,
+    delta.height.rms,
+    delta.supportHeight.rms,
+    delta.topologyAmount.rms,
+    delta.proxyMaterialChangeRatio,
+    delta.materialEdgeChangeRatio
+  );
+}
+
+type HillPhaseUnscoredContinuityDelta = Omit<HillPhaseContinuityDelta, 'severity' | 'suspicions'>;
+
+function uniqueSuspicionKinds(
+  suspicions: readonly HillPhaseContinuitySuspicion[]
+): readonly HillPhaseContinuitySuspicionKind[] {
+  return [...new Set(suspicions.map((suspicion) => suspicion.kind))];
 }
 
 function eventDebugSummary(event: HillOfHillsTopologyEventDebug): string {

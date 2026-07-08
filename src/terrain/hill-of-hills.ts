@@ -1619,7 +1619,7 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
 
   const overlapWidth = clamp(overlap, 0, 0.5);
   if (timing.epoch > 0 && overlapWidth > 0 && clock < overlapWidth) {
-    const previousClock = 1 - overlapWidth + clock;
+    const previousClock = 1;
     const fade = 1 - smoothstep(0, overlapWidth, clock);
     const previousProgress = topologyPhaseProgressAtClock(previousClock);
     const amount = clamp(previousProgress * fade, 0, 1);
@@ -1633,22 +1633,6 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
       });
     }
   }
-  if (overlapWidth > 0 && clock > 1 - overlapWidth) {
-    const nextClock = clock - (1 - overlapWidth);
-    const fade = smoothstep(1 - overlapWidth, 1, clock);
-    const nextProgress = topologyPhaseProgressAtClock(nextClock);
-    const amount = clamp(nextProgress * fade, 0, 1);
-    if (amount > 0.001) {
-      windows.push({
-        epoch: timing.epoch + 1,
-        clock: nextClock,
-        progress: nextProgress,
-        amount,
-        lifecycle: 'entering'
-      });
-    }
-  }
-
   return windows;
 }
 

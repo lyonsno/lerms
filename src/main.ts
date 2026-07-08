@@ -71,6 +71,7 @@ import {
 import {
   HILL_PHASE_FILMSTRIP_FRAME_COUNTS,
   compareHillPhaseContinuityFrames,
+  createHillPhaseContinuityReport,
   createHillPhaseFilmstripSchedule,
   fitHillPhaseFilmstripLayout,
   fitHillPhaseFilmstripViewport,
@@ -2401,7 +2402,7 @@ function createPhaseFilmstripExportControls(): HTMLElement {
     window.setTimeout(() => {
       try {
         const result = exportHillPhaseFilmstrip(frameCount);
-        status.textContent = `${result.filename} (${result.frameCount} frames)`;
+        status.textContent = `${result.filename} + ${result.reportFilename} (${result.frameCount} frames)`;
       } catch (error) {
         status.textContent = error instanceof Error ? error.message : String(error);
       } finally {
@@ -2415,7 +2416,7 @@ function createPhaseFilmstripExportControls(): HTMLElement {
   return section;
 }
 
-function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { filename: string; frameCount: number } {
+function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { filename: string; reportFilename: string; frameCount: number } {
   const schedule = createHillPhaseFilmstripSchedule(params, frameCount);
   const layout = fitHillPhaseFilmstripLayout(frameCount);
   const viewport = phaseFilmstripRenderViewport();
@@ -2442,6 +2443,7 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
 
   const savedCtx = ctx;
   const filmstripCache = createHillOfHillsLayerTileCache();
+  const frameTerrains: HillOfHillsTerrain[] = [];
   let previousFrame: HillPhaseFilmstripFrame | undefined;
   let previousTerrain: HillOfHillsTerrain | undefined;
 
@@ -2453,6 +2455,7 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
           frameId: `hill-of-hills-phase-filmstrip-${frame.index}`,
           timestampMs: performance.now() + frame.phaseTimeMs
       });
+      frameTerrains.push(frameTerrain);
       const frameBuffer = createHillOfHillsTerrainBuffer(frameTerrain);
       const continuityDelta =
         previousFrame && previousTerrain
@@ -2488,13 +2491,31 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
     ctx = savedCtx;
   }
 
-  const filename = `hill-of-hills-phase-strip-${frameCount}-${Date.now()}.png`;
+  const timestamp = Date.now();
+  const filename = `hill-of-hills-phase-strip-${frameCount}-${timestamp}.png`;
+  const reportFilename = `hill-of-hills-phase-strip-${frameCount}-${timestamp}.continuity.json`;
+  const report = createHillPhaseContinuityReport(schedule, frameTerrains);
   const anchor = document.createElement('a');
   anchor.href = stripCanvas.toDataURL('image/png');
   anchor.download = filename;
   anchor.click();
+  downloadJson(reportFilename, report);
 
-  return { filename, frameCount };
+  return { filename, reportFilename, frameCount };
+}
+
+function downloadJson(filename: string, payload: unknown): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+
+  try {
+    anchor.href = href;
+    anchor.download = filename;
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(href);
+  }
 }
 
 function phaseFilmstripRenderViewport(): { width: number; height: number } {

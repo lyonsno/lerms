@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   HILL_PHASE_FILMSTRIP_FRAME_COUNTS,
   compareHillPhaseContinuityFrames,
+  createHillPhaseContinuityReport,
   createHillPhaseFilmstripSchedule,
   fitHillPhaseFilmstripLayout,
   fitHillPhaseFilmstripViewport,
@@ -12,6 +13,8 @@ import {
 import {
   createHillOfHillsTerrain,
   defaultHillOfHillsParams,
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
+  type HillOfHillsTerrainParams,
 } from "../src/terrain/hill-of-hills.js";
 
 const allowedCounts = [...HILL_PHASE_FILMSTRIP_FRAME_COUNTS];
@@ -142,4 +145,266 @@ assert.equal(hotEntrantDelta.lifecycle.hotEntrantCount, 1);
 assert.ok(
   hotEntrantDelta.suspicions.some((suspicion) => suspicion.kind === "hot-entering-support"),
   "continuity witness should refuse to make hot support entry look smooth",
+);
+
+const inertSupportExitSource = afterTerrain.witness.topologyEventDebug.length > 0 ? afterTerrain : beforeTerrain;
+assert.ok(inertSupportExitSource.witness.topologyEventDebug.length > 0, "fixture must include support identities");
+const inertSupportExitTerrain = {
+  ...inertSupportExitSource,
+  witness: {
+    ...inertSupportExitSource.witness,
+    topologyEventDebug: [],
+  },
+};
+const inertSupportExitDelta = compareHillPhaseContinuityFrames(afterFrame, inertSupportExitSource, afterFrame, inertSupportExitTerrain);
+
+assert.ok(inertSupportExitDelta.lifecycle.exitedCount > 0);
+assert.equal(inertSupportExitDelta.height.maxAbs, 0);
+assert.equal(inertSupportExitDelta.supportHeight.maxAbs, 0);
+assert.ok(
+  !inertSupportExitDelta.suspicions.some((suspicion) => suspicion.kind === "support-exit"),
+  "support identity cleanup with no visible terrain delta should not masquerade as a pop",
+);
+
+const tinyEnvelopeActiveExitEvent = inertSupportExitSource.witness.topologyEventDebug[0];
+assert.ok(tinyEnvelopeActiveExitEvent, "fixture must include an event for tiny-envelope exit coverage");
+const tinyEnvelopeActiveExitSource = {
+  ...inertSupportExitSource,
+  witness: {
+    ...inertSupportExitSource.witness,
+    topologyEventDebug: inertSupportExitSource.witness.topologyEventDebug.map((event) =>
+      event.id === tinyEnvelopeActiveExitEvent.id
+        ? {
+            ...event,
+            supportLifecycle: "active" as const,
+            supportAmount: 1,
+            envelope: {
+              ...event.envelope,
+              amount: 0.0001,
+              phaseIn: 1,
+              phaseOut: 0,
+            },
+          }
+        : event,
+    ),
+  },
+};
+const tinyEnvelopeActiveExitTerrain = {
+  ...tinyEnvelopeActiveExitSource,
+  witness: {
+    ...tinyEnvelopeActiveExitSource.witness,
+    topologyEventDebug: tinyEnvelopeActiveExitSource.witness.topologyEventDebug.filter(
+      (event) => event.id !== tinyEnvelopeActiveExitEvent.id,
+    ),
+  },
+};
+const tinyEnvelopeActiveExitDelta = compareHillPhaseContinuityFrames(
+  afterFrame,
+  tinyEnvelopeActiveExitSource,
+  afterFrame,
+  tinyEnvelopeActiveExitTerrain,
+);
+
+assert.equal(tinyEnvelopeActiveExitDelta.lifecycle.exitedCount, 1);
+assert.equal(tinyEnvelopeActiveExitDelta.lifecycle.maxExitedSupportAmount, 1);
+assert.equal(
+  tinyEnvelopeActiveExitDelta.lifecycle.hotExitedCount,
+  0,
+  "support-window occupancy with near-zero envelope amplitude is not a visible hot exit",
+);
+
+const broadHeightStepTerrain = {
+  ...beforeTerrain,
+  samples: beforeTerrain.samples.map((sample) => ({
+    ...sample,
+    height: sample.height + 0.5,
+  })),
+};
+const broadHeightStepDelta = compareHillPhaseContinuityFrames(beforeFrame, beforeTerrain, afterFrame, broadHeightStepTerrain);
+
+assert.ok(
+  broadHeightStepDelta.suspicions.some((suspicion) => suspicion.kind === "broad-height-step"),
+  "continuity witness should distinguish a whole-field height step from a local spike",
+);
+assert.ok(
+  !broadHeightStepDelta.suspicions.some((suspicion) => suspicion.kind === "local-height-spike"),
+  "whole-field height steps should not be labeled as local vertex spikes",
+);
+
+const localHeightSpikeTerrain = {
+  ...beforeTerrain,
+  samples: beforeTerrain.samples.map((sample, index) => ({
+    ...sample,
+    height: sample.height + (index === 0 ? 2 : 0),
+  })),
+};
+const localHeightSpikeDelta = compareHillPhaseContinuityFrames(beforeFrame, beforeTerrain, afterFrame, localHeightSpikeTerrain);
+
+assert.ok(
+  localHeightSpikeDelta.suspicions.some((suspicion) => suspicion.kind === "local-height-spike"),
+  "continuity witness should call out a localized vertex-scale height spike",
+);
+assert.ok(
+  !localHeightSpikeDelta.suspicions.some((suspicion) => suspicion.kind === "broad-height-step"),
+  "localized height spikes should not be labeled as whole-field steps",
+);
+
+const reportTerrains = continuitySchedule.map((frame) =>
+  createHillOfHillsTerrain({
+    ...continuityParams,
+    topologyPhaseTimeMs: frame.phaseTimeMs,
+  }),
+);
+const continuityReport = createHillPhaseContinuityReport(continuitySchedule, reportTerrains);
+
+assert.equal(continuityReport.frames.length, continuitySchedule.length);
+assert.equal(continuityReport.frames[0].delta, undefined);
+assert.equal(continuityReport.frames[1].delta?.from.index, continuitySchedule[0].index);
+assert.ok(continuityReport.rankedTransitions.length > 0, "report should rank frame-to-frame transitions for machine diagnosis");
+assert.ok(
+  continuityReport.rankedTransitions.every((delta, index, deltas) => index === 0 || deltas[index - 1].severity >= delta.severity),
+  "ranked transitions should sort strongest continuity violations first",
+);
+assert.equal(
+  continuityReport.suspicionCounts["hot-entering-support"] ?? 0,
+  continuityReport.rankedTransitions.filter((delta) =>
+    delta.suspicions.some((suspicion) => suspicion.kind === "hot-entering-support"),
+  ).length,
+);
+assert.match(JSON.stringify(continuityReport), /"rankedTransitions"/);
+
+const zeroTailCleanupEventClasses = Object.fromEntries(
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS.map((kind) => [
+    kind,
+    {
+      ...defaultHillOfHillsParams.topologyEventClasses[kind],
+      enabled: kind === "hill_swell",
+      appetite: kind === "hill_swell" ? 1.3 : 0,
+      force: kind === "hill_swell" ? 1.2 : 0,
+      gesture: "tide",
+      phaseOffset: kind === "hill_swell" ? 0.9 : 0,
+      spread: 1,
+    },
+  ]),
+) as HillOfHillsTerrainParams["topologyEventClasses"];
+const zeroTailCleanupParams = {
+  ...defaultHillOfHillsParams,
+  seed: 9876,
+  gridResolutionX: 42,
+  gridResolutionZ: 58,
+  hillCount: 4,
+  valleyCount: 4,
+  ditchPhaseIntensity: 0,
+  trailPhaseIntensity: 0,
+  topologyPhaseSeed: 7331,
+  topologyPhaseIntensity: 0.82,
+  topologyPhaseLimit: 3,
+  topologyPhaseRadius: 1.55,
+  topologyPhaseDurationMs: 1_800,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: zeroTailCleanupEventClasses,
+} satisfies HillOfHillsTerrainParams;
+const zeroTailCleanupSchedule = createHillPhaseFilmstripSchedule(zeroTailCleanupParams, 50);
+const zeroTailCleanupTerrains = zeroTailCleanupSchedule.map((frame) =>
+  createHillOfHillsTerrain({
+    ...zeroTailCleanupParams,
+    topologyPhaseTimeMs: frame.phaseTimeMs,
+  }),
+);
+const zeroTailCleanupReport = createHillPhaseContinuityReport(zeroTailCleanupSchedule, zeroTailCleanupTerrains);
+const zeroTailCleanupDelta = zeroTailCleanupReport.frames.find((frame) => frame.frame.index === 24)?.delta;
+
+assert.ok(zeroTailCleanupDelta, "fixture should include the zero-tail cleanup transition");
+assert.equal(zeroTailCleanupDelta.lifecycle.exitedCount, 2, "fixture should remove two faded tail supports");
+assert.equal(zeroTailCleanupDelta.lifecycle.hotExitedCount, 0, "faded support cleanup should stay cold");
+assert.ok(
+  !zeroTailCleanupDelta.suspicions.some((suspicion) => suspicion.kind === "support-exit"),
+  "zero-amplitude tail cleanup should not masquerade as a topology pop",
+);
+
+const releaseToTailParams = {
+  ...defaultHillOfHillsParams,
+  gridResolutionX: 24,
+  gridResolutionZ: 28,
+  topologyPhaseIntensity: 0.85,
+  topologyPhaseLimit: 8,
+  topologyPhaseDurationMs: 1_800,
+  ditchPhaseIntensity: 0,
+  trailPhaseIntensity: 0,
+} satisfies HillOfHillsTerrainParams;
+const releaseToTailSchedule = createHillPhaseFilmstripSchedule(releaseToTailParams, 50);
+const releaseToTailTerrains = releaseToTailSchedule.map((frame) =>
+  createHillOfHillsTerrain({
+    ...releaseToTailParams,
+    topologyPhaseTimeMs: frame.phaseTimeMs,
+  }),
+);
+const releaseToTailReport = createHillPhaseContinuityReport(releaseToTailSchedule, releaseToTailTerrains);
+const releaseToTailDelta = releaseToTailReport.frames.find(
+  ({ frame, delta }) => frame.reason === "tail" && delta?.from.reason === "release",
+)?.delta;
+
+assert.ok(releaseToTailDelta, "fixture should include a release-to-tail filmstrip interval");
+assert.ok(releaseToTailDelta.lifecycle.hotExitedCount > 0, "fixture should exercise hot support exit accounting");
+assert.ok(
+  releaseToTailDelta.to.phaseTimeMs - releaseToTailDelta.from.phaseTimeMs > 250,
+  "fixture should be a coarse filmstrip interval, not an adjacent-frame continuity probe",
+);
+assert.ok(
+  !releaseToTailDelta.suspicions.some((suspicion) => suspicion.kind === "support-exit"),
+  "coarse release-to-tail motion should not be labeled as an instantaneous support-exit pop",
+);
+assert.ok(
+  !releaseToTailDelta.suspicions.some((suspicion) => suspicion.kind === "topology-pop"),
+  "coarse release-to-tail topology motion should not be labeled as an instantaneous topology pop",
+);
+
+const coldEntryKindChurnParams = {
+  ...defaultHillOfHillsParams,
+  topologyPhaseIntensity: 0.85,
+  topologyPhaseLimit: 8,
+  topologyPhaseDurationMs: 1_800,
+  ditchPhaseIntensity: 0,
+  trailPhaseIntensity: 0,
+} satisfies HillOfHillsTerrainParams;
+const coldEntryKindChurnFromFrame = {
+  index: 4,
+  reason: "rise" as const,
+  clock: 0.04,
+  epoch: 0,
+  phaseTimeMs: 0.04 * coldEntryKindChurnParams.topologyPhaseDurationMs,
+};
+const coldEntryKindChurnToFrame = {
+  index: 5,
+  reason: "rise" as const,
+  clock: 0.05,
+  epoch: 0,
+  phaseTimeMs: 0.05 * coldEntryKindChurnParams.topologyPhaseDurationMs,
+};
+const coldEntryKindChurnDelta = compareHillPhaseContinuityFrames(
+  coldEntryKindChurnFromFrame,
+  createHillOfHillsTerrain({
+    ...coldEntryKindChurnParams,
+    topologyPhaseTimeMs: coldEntryKindChurnFromFrame.phaseTimeMs,
+  }),
+  coldEntryKindChurnToFrame,
+  createHillOfHillsTerrain({
+    ...coldEntryKindChurnParams,
+    topologyPhaseTimeMs: coldEntryKindChurnToFrame.phaseTimeMs,
+  }),
+);
+
+assert.ok(coldEntryKindChurnDelta.lifecycle.enteringCount > 0, "fixture should exercise cold support entry");
+assert.ok(coldEntryKindChurnDelta.height.maxAbs < 0.001);
+assert.ok(coldEntryKindChurnDelta.supportHeight.maxAbs < 0.001);
+assert.ok(coldEntryKindChurnDelta.topologyAmount.maxAbs < 0.002);
+assert.ok(coldEntryKindChurnDelta.phaseInfluenceKindChangeRatio > 0.12);
+assert.ok(
+  !coldEntryKindChurnDelta.suspicions.some((suspicion) => suspicion.kind === "topology-pop"),
+  "cold support identity entry and classifier churn should not masquerade as a visible topology pop",
 );
