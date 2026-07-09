@@ -4,8 +4,11 @@ import {
 } from '../src/glove-well-command.ts';
 import {
   adaptWilorMiniPacketToGloveInputFrame,
+  adaptHandStateRuntimeStateToGloveInputFrame,
   GLOVE_INPUT_WILOR_ADAPTER_CONFIG_ID,
   GLOVE_INPUT_WILOR_LIVE_EFFECTIVE_ROUTE,
+  HAND_STATE_RUNTIME_ADAPTER_CONFIG_ID,
+  type HandStateRuntimeStateEnvelope,
   type WilorMiniGloveInputPacket
 } from '../src/glove-input-wilor-adapter.ts';
 
@@ -206,5 +209,196 @@ const pixelFrame = adaptWilorMiniPacketToGloveInputFrame(pixelPacket);
 assert(Math.abs(pixelFrame.fingers.index.tip.x - 0.432) < 0.001, 'pixel landmarks normalize x');
 assert(Math.abs(pixelFrame.fingers.pinky.tip.y - 0.6) < 0.001, 'pixel landmarks normalize y');
 assert(pixelFrame.fingers.pinky.sourceLandmarkIds?.includes('20'), 'array landmark indexes remain traceable');
+
+const runtimeState: HandStateRuntimeStateEnvelope = {
+  schema: 'hand-state.runtime-state.v0',
+  runtimeOwner: 'hand-state-runtime',
+  stateDir: '/tmp/handstate-runtime-state',
+  status: 'fresh',
+  fetchedAtMs: 20_200,
+  maxAgeMs: 250,
+  handInputSourceAuthority: 'synthetic_fixture',
+  handInputFreshness: 'fresh',
+  handInputRequestedRoute: 'hand-state-runtime/wilor-mini-mlx-sidecar/live-glove-input',
+  handInputEffectiveRoute: 'hand-state-runtime/state-stream/ingested-fixture',
+  handInputConfigId: 'hand-state-runtime-state-stream-test-v0',
+  handInputFallbackReason: 'fixture_live_shape_not_camera',
+  frame: {
+    schema: 'hand-state.frame.v0',
+    producer: {
+      owner: 'hand-state-runtime',
+      package: 'handstate_runtime',
+      version: '0.1.0',
+      sessionId: null,
+      processId: 1234,
+      stateDir: '/tmp/handstate-runtime-state'
+    },
+    source: {
+      requestedRoute: 'hand-state-runtime/wilor-mini-mlx-sidecar/live-glove-input',
+      effectiveRoute: 'hand-state-runtime/state-stream/ingested-fixture',
+      backend: 'fixture',
+      model: 'fixture-wilor-mini-shape-v0',
+      detector: null,
+      deviceRoute: 'cpu',
+      dtypeRoute: 'float32',
+      configId: 'hand-state-runtime-state-stream-test-v0',
+      fallbackReason: 'fixture_live_shape_not_camera',
+      rawSchema: null,
+      evidenceRoute: 'hand-state-runtime/state-stream/ingested-fixture',
+      rawEventSequence: null,
+      rawEventPath: null
+    },
+    authority: {
+      sourceAuthority: 'synthetic_fixture',
+      freshness: 'fixture',
+      fallbackReason: 'fixture_live_shape_not_camera',
+      noLiveReason: 'fixture_backend_not_live_camera',
+      authorityNote: 'Live-shaped fixture only; does not prove fresh camera or sidecar authority.',
+      promotes: {
+        liveGloveWellAuthority: false,
+        kaminosAcceptance: false,
+        firstVerticalTruth: false,
+        visualSmokeSuccess: false
+      }
+    },
+    frame: {
+      frameId: 'runtime-fixture-frame-001',
+      captureTimestampMs: 20_120,
+      ingestTimestampMs: 20_160,
+      sourceVideoSize: null,
+      encodedSize: null,
+      frameAgeAtInferenceMs: 42
+    },
+    timing: {
+      cameraFrameAgeMs: 42,
+      modelLatencyMs: null,
+      sidecarLoopLatencyMs: null,
+      publishAgeMs: 10,
+      stateStreamAgeMs: 40,
+      roundTripMs: null
+    },
+    coordinateFrame: {
+      space: 'screen_normalized',
+      origin: 'top_left',
+      handedness: 'operator_unmirrored',
+      depthPolicy: 'non_load_bearing'
+    },
+    hand: {
+      handedness: 'right',
+      confidence: 0.94,
+      palmCenter: { x: 0.42, y: 0.68 },
+      bbox: null,
+      landmarks: [
+        { index: 0, name: 'wrist', x: 0.42, y: 0.86 },
+        { index: 1, name: 'thumb_cmc', x: 0.38, y: 0.8 },
+        { index: 2, name: 'thumb_mcp', x: 0.36, y: 0.73 },
+        { index: 3, name: 'thumb_ip', x: 0.365, y: 0.67 },
+        { index: 4, name: 'thumb_tip', x: 0.405, y: 0.615 },
+        { index: 5, name: 'index_mcp', x: 0.455, y: 0.72 },
+        { index: 6, name: 'index_pip', x: 0.447, y: 0.67 },
+        { index: 7, name: 'index_dip', x: 0.439, y: 0.635 },
+        { index: 8, name: 'index_tip', x: 0.432, y: 0.605 },
+        { index: 9, name: 'middle_mcp', x: 0.48, y: 0.73 },
+        { index: 10, name: 'middle_pip', x: 0.484, y: 0.68 },
+        { index: 11, name: 'middle_dip', x: 0.487, y: 0.648 },
+        { index: 12, name: 'middle_tip', x: 0.49, y: 0.62 },
+        { index: 13, name: 'ring_mcp', x: 0.515, y: 0.735 },
+        { index: 14, name: 'ring_pip', x: 0.523, y: 0.695 },
+        { index: 15, name: 'ring_dip', x: 0.529, y: 0.67 },
+        { index: 16, name: 'ring_tip', x: 0.535, y: 0.65 },
+        { index: 17, name: 'pinky_mcp', x: 0.55, y: 0.74 },
+        { index: 18, name: 'pinky_pip', x: 0.59, y: 0.69 },
+        { index: 19, name: 'pinky_dip', x: 0.625, y: 0.64 },
+        { index: 20, name: 'pinky_tip', x: 0.665, y: 0.6 }
+      ],
+      keypoints3d: null,
+      palmBasis: null,
+      palmNormal: null,
+      openness: null,
+      pinch: null,
+      fist: null,
+      spread: null
+    },
+    mano: {
+      requested: false,
+      available: false,
+      coordinateSpace: null,
+      vertexCount: 0,
+      faceCount: 0,
+      vertices: null,
+      faces: null,
+      diagnostic: 'not_requested'
+    },
+    diagnostics: {
+      noHand: false,
+      staleSkip: false,
+      backendErrors: [],
+      droppedFrames: 0,
+      routeTruth: 'fixture_not_live_camera',
+      hiddenFallback: false,
+      validationWarnings: ['fixture_live_shape_not_camera']
+    }
+  },
+  clientProjectImports: []
+};
+
+const runtimeFrame = adaptHandStateRuntimeStateToGloveInputFrame(runtimeState);
+assert(runtimeFrame.schema === GLOVE_INPUT_FRAME_SCHEMA, 'runtime state adapter emits glove input frame schema');
+assert(runtimeFrame.frameId === 'runtime-fixture-frame-001', 'runtime state adapter uses canonical frame id');
+assert(runtimeFrame.source.authority === 'synthetic_fixture', 'runtime fixture state stays synthetic fixture authority');
+assert(runtimeFrame.source.route === 'hand-state-runtime/wilor-mini-mlx-sidecar/live-glove-input', 'runtime state source route uses requested runtime route');
+assert(runtimeFrame.source.requestedRoute === runtimeState.handInputRequestedRoute, 'runtime state preserves requested route');
+assert(runtimeFrame.source.effectiveRoute === runtimeState.handInputEffectiveRoute, 'runtime state preserves effective route');
+assert(runtimeFrame.source.configId === HAND_STATE_RUNTIME_ADAPTER_CONFIG_ID, 'runtime adapter config is explicit and stable');
+assert(runtimeFrame.source.producerConfigId === runtimeState.handInputConfigId, 'runtime state preserves producer config id');
+assert(runtimeFrame.source.fallbackReason === 'fixture_live_shape_not_camera', 'runtime state preserves fallback reason even when state is fresh');
+assert(runtimeFrame.source.sampleAgeMs === 40, 'runtime state sample age follows state-stream age');
+assert(runtimeFrame.timing.cameraFrameAgeMs === 42, 'runtime state preserves camera frame age');
+assert(runtimeFrame.timing.publishAgeMs === 10, 'runtime state preserves publish age');
+assert(runtimeFrame.hand.confidence === 0.94, 'runtime state hand confidence is preserved');
+assert(runtimeFrame.fingers.index.sourceLandmarkIds?.includes('index_tip'), 'runtime landmark names remain traceable');
+assert(runtimeFrame.gestures.pinch.active === true, 'runtime state landmarks still drive pinch');
+assert(runtimeFrame.gestures.pinkyAim.active === true, 'runtime state landmarks still drive pinky aim');
+assert(runtimeFrame.coordinateFrame.depthPolicy === 'non_load_bearing', 'runtime state preserves non-load-bearing depth');
+
+assertThrows(
+  () =>
+    adaptHandStateRuntimeStateToGloveInputFrame({
+      ...runtimeState,
+      status: 'fallback',
+      handInputSourceAuthority: 'fallback',
+      handInputFreshness: 'missing',
+      handInputEffectiveRoute: 'hand-state-runtime/wilor-mini-mlx-sidecar/stale-or-missing',
+      handInputConfigId: 'hand-state-runtime-live-v0',
+      handInputFallbackReason: 'no_ingested_hand_state_frame',
+      frame: {
+        ...runtimeState.frame,
+        frame: { ...runtimeState.frame.frame, frameId: 'none' },
+        source: {
+          ...runtimeState.frame.source,
+          backend: 'none',
+          model: null,
+          effectiveRoute: 'hand-state-runtime/wilor-mini-mlx-sidecar/stale-or-missing',
+          configId: 'hand-state-runtime-live-v0',
+          fallbackReason: 'no_ingested_hand_state_frame'
+        },
+        authority: {
+          ...runtimeState.frame.authority,
+          sourceAuthority: 'fallback',
+          freshness: 'stale',
+          fallbackReason: 'no_ingested_hand_state_frame',
+          noLiveReason: 'no_ingested_hand_state_frame'
+        },
+        hand: {
+          ...runtimeState.frame.hand,
+          handedness: 'unknown',
+          confidence: 0,
+          palmCenter: null,
+          landmarks: []
+        }
+      }
+    }),
+  'no live hand landmarks'
+);
 
 console.log('glove input WiLoR adapter contracts ok');
