@@ -118,7 +118,10 @@ assert.ok(continuityDelta.lifecycle.tailingCount > 0, "continuity witness should
 assert.equal(continuityDelta.lifecycle.hotEntrantCount, 0, "new supports must not enter already hot");
 assert.match(formatHillPhaseContinuityDelta(continuityDelta), /dh .* mat .* enter .* tail /);
 
-const firstEnteringEvent = afterTerrain.witness.topologyEventDebug.find((event) => event.supportLifecycle === "entering");
+const beforeEventIds = new Set(beforeTerrain.witness.topologyEventDebug.map((event) => event.id));
+const firstEnteringEvent = afterTerrain.witness.topologyEventDebug.find(
+  (event) => event.supportLifecycle === "entering" && !beforeEventIds.has(event.id),
+);
 assert.ok(firstEnteringEvent, "fixture must include an entering topology event for false-closure coverage");
 const hotEntrantTerrain = {
   ...afterTerrain,
@@ -350,7 +353,11 @@ const releaseToTailDelta = releaseToTailReport.frames.find(
 )?.delta;
 
 assert.ok(releaseToTailDelta, "fixture should include a release-to-tail filmstrip interval");
-assert.ok(releaseToTailDelta.lifecycle.hotExitedCount > 0, "fixture should exercise hot support exit accounting");
+assert.equal(
+  releaseToTailDelta.lifecycle.hotExitedCount,
+  0,
+  "support identities must stay present through release/tail until their visible envelope is cold",
+);
 assert.ok(
   releaseToTailDelta.to.phaseTimeMs - releaseToTailDelta.from.phaseTimeMs > 250,
   "fixture should be a coarse filmstrip interval, not an adjacent-frame continuity probe",
@@ -362,6 +369,43 @@ assert.ok(
 assert.ok(
   !releaseToTailDelta.suspicions.some((suspicion) => suspicion.kind === "topology-pop"),
   "coarse release-to-tail topology motion should not be labeled as an instantaneous topology pop",
+);
+
+const mixedLifecycleContinuityParams = {
+  ...defaultHillOfHillsParams,
+  gridResolutionX: 28,
+  gridResolutionZ: 32,
+  hillCount: 5,
+  valleyCount: 5,
+  ditchPhaseIntensity: 0,
+  ditchPhaseLimit: 0,
+  trailPhaseIntensity: 0,
+  trailPhaseLimit: 0,
+  topologyPhaseIntensity: 1,
+  topologyPhaseLimit: 12,
+  topologyPhaseDurationMs: 1_800,
+  topologyPhaseTimeMs: 0,
+  topologyPhaseOverlap: 0.32,
+} satisfies HillOfHillsTerrainParams;
+const mixedLifecycleContinuitySchedule = createHillPhaseFilmstripSchedule(mixedLifecycleContinuityParams, 25);
+const mixedLifecycleContinuityTerrains = mixedLifecycleContinuitySchedule.map((frame) =>
+  createHillOfHillsTerrain({
+    ...mixedLifecycleContinuityParams,
+    topologyPhaseTimeMs: frame.phaseTimeMs,
+  }),
+);
+const mixedLifecycleContinuityReport = createHillPhaseContinuityReport(
+  mixedLifecycleContinuitySchedule,
+  mixedLifecycleContinuityTerrains,
+);
+const hotLifecycleTransitions = mixedLifecycleContinuityReport.rankedTransitions.filter(
+  (delta) => delta.lifecycle.hotEntrantCount > 0 || delta.lifecycle.hotExitedCount > 0,
+);
+
+assert.deepEqual(
+  hotLifecycleTransitions.map((delta) => formatHillPhaseContinuityDelta(delta)),
+  [],
+  "mixed topology motion must admit supports cold and tail them until cold",
 );
 
 const coldEntryKindChurnParams = {

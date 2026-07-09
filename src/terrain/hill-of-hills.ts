@@ -1519,7 +1519,6 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         if (!eventConfig.enabled || eventConfig.appetite <= 0 || eventConfig.force <= 0) continue;
         const gestureState = topologyGestureState(eventConfig.gesture, wrapUnit(window.clock + eventConfig.phaseOffset));
         const supportedGestureState = topologySupportGestureState(gestureState, window);
-        if (supportedGestureState.amount <= 0.001) continue;
         const id = `topology-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
         const supportRng = mulberry32(detailSeedFor(params.topologyPhaseSeed, candidate.x, candidate.z, candidate.topologyKind));
         const angle = (supportRng() - 0.5) * 0.5;
@@ -1533,7 +1532,6 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         const sideDitchOffset = radius * (0.4 + supportRng() * 0.14);
         const localProgress = clamp(supportedGestureState.amount * (0.82 + supportRng() * 0.22), 0, 1);
         const localIntensity = clamp(params.topologyPhaseIntensity * supportedGestureState.amount * eventConfig.force * (0.68 + supportRng() * 0.28), 0, 1);
-        if (localIntensity <= 0.001) continue;
         const envelope = topologyEventEnvelope(
           supportedGestureState,
           params,
@@ -1704,7 +1702,7 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
 
   const overlapWidth = clamp(overlap, 0, 0.5);
   if (timing.epoch > 0 && overlapWidth > 0 && clock < overlapWidth) {
-    const previousClock = 1;
+    const previousClock = clamp(1 - clock, 0, 1);
     const fade = 1 - smoothstep(0, overlapWidth, clock);
     const previousProgress = topologyPhaseProgressAtClock(previousClock);
     const amount = clamp(previousProgress * fade, 0, 1);
