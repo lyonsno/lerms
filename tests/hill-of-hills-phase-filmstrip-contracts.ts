@@ -408,6 +408,74 @@ assert.deepEqual(
   "mixed topology motion must admit supports cold and tail them until cold",
 );
 
+const hotAppliedTopologyEventClasses = Object.fromEntries(
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS.map((kind) => [
+    kind,
+    {
+      ...defaultHillOfHillsParams.topologyEventClasses[kind],
+      enabled: ["hill_slump", "valley_deepen", "ridge_lift", "saddle_pinch"].includes(kind),
+      appetite: ["hill_slump", "valley_deepen", "ridge_lift", "saddle_pinch"].includes(kind) ? 2 : 0,
+      force: ["hill_slump", "valley_deepen", "ridge_lift", "saddle_pinch"].includes(kind) ? 2 : 0,
+      gesture: kind === "saddle_pinch" ? "pulse" : "surge",
+      phaseOffset: 0,
+      spread: 1.7,
+    },
+  ]),
+) as HillOfHillsTerrainParams["topologyEventClasses"];
+const hotAppliedTopologyContinuityParams = {
+  ...defaultHillOfHillsParams,
+  seed: 118,
+  gridResolutionX: 28,
+  gridResolutionZ: 32,
+  hillCount: 5,
+  valleyCount: 5,
+  hillHeight: 2.2,
+  valleyHeight: 2.2,
+  ditchPhaseIntensity: 0,
+  ditchPhaseLimit: 0,
+  trailPhaseIntensity: 0,
+  trailPhaseLimit: 0,
+  topologyPhaseSeed: 9017,
+  topologyPhaseIntensity: 1,
+  topologyPhaseLimit: 10,
+  topologyPhaseRadius: 1.9,
+  topologyPhaseHeightScale: 1.5,
+  topologyPhaseDurationMs: 1_920,
+  topologyPhaseTimeMs: 0,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 2,
+  topologyPhaseRidgeBias: 2,
+  topologyPhaseSaddleBias: 1.4,
+  topologyPhaseBasinBias: 0,
+  topologyEventClasses: hotAppliedTopologyEventClasses,
+} satisfies HillOfHillsTerrainParams;
+const hotAppliedTopologySchedule = createHillPhaseFilmstripSchedule(hotAppliedTopologyContinuityParams, 10);
+const hotAppliedTopologyTerrains = hotAppliedTopologySchedule.map((frame) =>
+  createHillOfHillsTerrain({
+    ...hotAppliedTopologyContinuityParams,
+    topologyPhaseTimeMs: frame.phaseTimeMs,
+  }),
+);
+const hotAppliedTopologyReport = createHillPhaseContinuityReport(
+  hotAppliedTopologySchedule,
+  hotAppliedTopologyTerrains,
+);
+const hotAppliedTopologyJumps = hotAppliedTopologyReport.rankedTransitions.filter(
+  (delta) =>
+    delta.lifecycle.hotEntrantCount === 0 &&
+    delta.lifecycle.hotExitedCount === 0 &&
+    delta.height.maxAbs > 0.8 &&
+    delta.topologyHeightDelta.maxAbs > 0.55 &&
+    delta.suspicions.some((suspicion) => suspicion.kind === "large-height-delta"),
+);
+
+assert.deepEqual(
+  hotAppliedTopologyJumps.map((delta) => formatHillPhaseContinuityDelta(delta)),
+  [],
+  "stable topology supports should not create broad applied-height jumps while their support lifecycle is clean",
+);
+
 const coldEntryKindChurnParams = {
   ...defaultHillOfHillsParams,
   topologyPhaseIntensity: 0.85,

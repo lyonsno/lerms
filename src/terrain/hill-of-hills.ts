@@ -2448,9 +2448,13 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
   let bestAmount = 0;
   let bestTrailAmount = 0;
   let bestSideDitchAmount = 0;
-  let bestTopologyAmount = 0;
-  let bestTopologyHeightDelta = 0;
   let bestEpisodeId: string | undefined;
+  let topologyKind: HillOfHillsPhaseInfluenceKind = 'none';
+  let topologyEpisodeId: string | undefined;
+  let topologyDominantAmount = 0;
+  let topologyAmount = 0;
+  let topologyHeightDeltaSum = 0;
+  let topologyWeight = 0;
 
   for (const episode of phaseState.activeEpisodes) {
     if (episode.kind === 'trail_forming') {
@@ -2461,8 +2465,6 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
         bestAmount = amount;
         bestTrailAmount = influence.trailAmount;
         bestSideDitchAmount = influence.sideDitchAmount;
-        bestTopologyAmount = 0;
-        bestTopologyHeightDelta = 0;
         bestEpisodeId = episode.id;
       }
       continue;
@@ -2470,14 +2472,15 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
 
     if (episode.kind !== 'ditch_forming') {
       const influence = topologyInfluenceAtEpisode(episode, x, z);
-      if (influence.amount > bestAmount) {
-        bestKind = episode.kind;
-        bestAmount = influence.amount;
-        bestTrailAmount = 0;
-        bestSideDitchAmount = 0;
-        bestTopologyAmount = influence.amount;
-        bestTopologyHeightDelta = influence.heightDelta;
-        bestEpisodeId = episode.id;
+      if (influence.amount > 0) {
+        topologyAmount = 1 - (1 - topologyAmount) * (1 - influence.amount);
+        topologyHeightDeltaSum += influence.heightDelta;
+        topologyWeight += influence.amount;
+        if (influence.amount > topologyDominantAmount) {
+          topologyKind = episode.kind;
+          topologyDominantAmount = influence.amount;
+          topologyEpisodeId = episode.id;
+        }
       }
       continue;
     }
@@ -2492,10 +2495,18 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
       bestAmount = amount;
       bestTrailAmount = 0;
       bestSideDitchAmount = amount;
-      bestTopologyAmount = 0;
-      bestTopologyHeightDelta = 0;
       bestEpisodeId = episode.id;
     }
+  }
+
+  const topologyHeightDelta =
+    topologyWeight > 0 ? topologyHeightDeltaSum / Math.max(1, Math.sqrt(topologyWeight)) : 0;
+  if (topologyAmount > bestAmount) {
+    bestKind = topologyKind;
+    bestAmount = topologyAmount;
+    bestTrailAmount = 0;
+    bestSideDitchAmount = 0;
+    bestEpisodeId = topologyEpisodeId;
   }
 
   if (bestAmount <= 0) {
@@ -2514,9 +2525,9 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
     amount: bestAmount,
     trailAmount: bestTrailAmount,
     sideDitchAmount: bestSideDitchAmount,
-    topologyAmount: bestTopologyAmount,
-    topologyHeightDelta: bestTopologyHeightDelta,
-    episodeId: bestEpisodeId
+    topologyAmount,
+    topologyHeightDelta,
+    episodeId: bestEpisodeId ?? topologyEpisodeId
   };
 }
 
@@ -2532,7 +2543,10 @@ function topologyInfluenceAtEpisode(episode: HillOfHillsPhaseEpisode, x: number,
     return { amount: 0, heightDelta: 0 };
   }
 
-  const scale = (0.22 + episode.seedSlope * 0.08 + episode.radius * 0.035) * episode.progress * episode.heightScale;
+  const scale =
+    (0.18 + episode.seedSlope * 0.055 + episode.radius * 0.026) *
+    clamp(episode.progress, 0, 1) *
+    episode.heightScale;
   if (episode.kind === 'valley_deepen') {
     return { amount, heightDelta: -amount * scale * (0.85 + episode.seedValleyStrength * 0.32) };
   }
@@ -3511,11 +3525,10 @@ function applyPhaseToStableHeightParts(
   const phaseDitch =
     phaseInfluence.sideDitchAmount * (0.18 + params.valleyHeight * 0.24 + params.wallHeight * 0.035) +
     phaseInfluence.trailAmount * (0.06 + params.valleyHeight * 0.05);
-  const phaseTopology = clamp(
-    phaseInfluence.topologyHeightDelta * (0.8 + params.hillHeight * 0.22 + params.valleyHeight * 0.18),
-    -0.95,
-    0.95
-  );
+  const rawPhaseTopology =
+    phaseInfluence.topologyHeightDelta * (0.8 + params.hillHeight * 0.22 + params.valleyHeight * 0.18);
+  const topologyLimit = 0.78;
+  const phaseTopology = Math.tanh(rawPhaseTopology / topologyLimit) * topologyLimit;
   const floorProtection = 1 - smoothstep(halfFloor * 0.45, halfFloor * 0.95, lateral);
   const macroDamping = 1 - floorProtection * 0.44;
   const valleyFloorDamping = 1 - floorProtection * 0.34;
