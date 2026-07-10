@@ -132,6 +132,12 @@ const PROXY_MATERIAL_CODEBOOK: readonly HillOfHillsProxyMaterialKind[] = [
   'growth-lip'
 ];
 const PHASE_FILMSTRIP_CAPTION_HEIGHT = 64;
+interface HillPhaseFilmstripExportResult {
+  filename: string;
+  reportFilename: string;
+  frameCount: number;
+  report: ReturnType<typeof createHillPhaseContinuityReport>;
+}
 const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
   'none',
   'tuft-line',
@@ -2512,7 +2518,9 @@ function createPhaseFilmstripExportControls(): HTMLElement {
   const name = document.createElement('span');
   const select = document.createElement('select');
   const button = document.createElement('button');
+  const reportButton = document.createElement('button');
   const status = document.createElement('div');
+  let lastExport: HillPhaseFilmstripExportResult | undefined;
 
   section.className = 'phase-filmstrip-export';
   name.textContent = 'Phase strip';
@@ -2525,6 +2533,9 @@ function createPhaseFilmstripExportControls(): HTMLElement {
   select.value = '10';
   button.type = 'button';
   button.textContent = 'Export phase strip';
+  reportButton.type = 'button';
+  reportButton.textContent = 'Download continuity JSON';
+  reportButton.disabled = true;
   status.className = 'phase-filmstrip-status';
   status.textContent = 'next salient topology points';
   button.addEventListener('click', () => {
@@ -2534,7 +2545,9 @@ function createPhaseFilmstripExportControls(): HTMLElement {
     window.setTimeout(() => {
       try {
         const result = exportHillPhaseFilmstrip(frameCount);
-        status.textContent = `${result.filename} + ${result.reportFilename} (${result.frameCount} frames)`;
+        lastExport = result;
+        reportButton.disabled = false;
+        status.textContent = `${result.filename} exported; JSON staged (${result.frameCount} frames)`;
       } catch (error) {
         status.textContent = error instanceof Error ? error.message : String(error);
       } finally {
@@ -2542,13 +2555,22 @@ function createPhaseFilmstripExportControls(): HTMLElement {
       }
     }, 0);
   });
+  reportButton.addEventListener('click', () => {
+    if (!lastExport) {
+      status.textContent = 'export a phase strip first';
+      return;
+    }
+
+    downloadJson(lastExport.reportFilename, lastExport.report);
+    status.textContent = `${lastExport.reportFilename} downloaded`;
+  });
 
   label.append(name, select);
-  section.append(label, button, status);
+  section.append(label, button, reportButton, status);
   return section;
 }
 
-function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { filename: string; reportFilename: string; frameCount: number } {
+function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): HillPhaseFilmstripExportResult {
   const schedule = createHillPhaseFilmstripSchedule(params, frameCount);
   const layout = fitHillPhaseFilmstripLayout(frameCount);
   const viewport = phaseFilmstripRenderViewport();
@@ -2631,9 +2653,8 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): { f
   anchor.href = stripCanvas.toDataURL('image/png');
   anchor.download = filename;
   anchor.click();
-  downloadJson(reportFilename, report);
 
-  return { filename, reportFilename, frameCount };
+  return { filename, reportFilename, frameCount, report };
 }
 
 function downloadJson(filename: string, payload: unknown): void {
