@@ -74,6 +74,11 @@ import {
   type HillOfHillsParamSettingsStorage
 } from './terrain/hill-of-hills-param-settings.js';
 import {
+  applyHillDiagnosticParamPreset,
+  applyHillDiagnosticPreviewPreset,
+  hillDiagnosticPresetFromSearch
+} from './terrain/hill-of-hills-diagnostic-presets.js';
+import {
   HILL_PHASE_FILMSTRIP_FRAME_COUNTS,
   compareHillPhaseContinuityFrames,
   createHillPhaseContinuityReport,
@@ -210,10 +215,12 @@ function withoutPreviewDitchFormation(nextParams: HillOfHillsTerrainParams): Hil
   };
 }
 
+const hillDiagnosticPreset = hillDiagnosticPresetFromSearch(window.location.search);
 let params: HillOfHillsTerrainParams = withoutPreviewDitchFormation({
   ...defaultPreviewParams,
   ...loadHillOfHillsParamSettings(safeParamSettingsStorage(), defaultPreviewParams)
 });
+params = applyHillDiagnosticParamPreset(params, hillDiagnosticPreset);
 const terrainCache = createHillOfHillsLayerTileCache();
 const previewSourceOptions = {
   route: 'hill-of-hills-terrain-preview-cache',
@@ -361,6 +368,7 @@ const previewLayerSpecs: readonly { key: HillPreviewLayerKey; label: string }[] 
 const controls = createControls();
 const viewControls = createViewControls();
 let previewSettings: HillPreviewSettings = loadHillPreviewSettings(safePreviewSettingsStorage());
+previewSettings = applyHillDiagnosticPreviewPreset(previewSettings, hillDiagnosticPreset);
 const previewDebugControls = createPreviewDebugControls();
 const witnessPanel = createWitnessPanel();
 
