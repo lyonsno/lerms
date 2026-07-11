@@ -908,6 +908,38 @@ const topologyBoundaryEventClasses: HillOfHillsTerrainParams['topologyEventClass
     }
   ])
 ) as HillOfHillsTerrainParams['topologyEventClasses'];
+const topologyRoamingPressureA = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseLimit: 0,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 0.12,
+  topologyPhaseDriftIntensity: 1
+} as TopologyMotionParams & { topologyPhaseDriftIntensity: number });
+const topologyRoamingPressureB = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseLimit: 0,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 2.62,
+  topologyPhaseDriftIntensity: 1
+} as TopologyMotionParams & { topologyPhaseDriftIntensity: number });
+const topologyRoamingPressureOffA = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseLimit: 0,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 0.12,
+  topologyPhaseDriftIntensity: 0
+} as TopologyMotionParams & { topologyPhaseDriftIntensity: number });
+const topologyRoamingPressureOffB = createHillOfHillsTerrain({
+  ...topologyPhaseParams,
+  topologyPhaseLimit: 0,
+  topologyPhaseTimeMs: topologyPhaseParams.topologyPhaseDurationMs * 2.62,
+  topologyPhaseDriftIntensity: 0
+} as TopologyMotionParams & { topologyPhaseDriftIntensity: number });
+assert(
+  topologyRoamingPressureA.witness.pressureFieldChecksum !== topologyRoamingPressureB.witness.pressureFieldChecksum,
+  'topology drift pressure moves ecological basins even when no topology supports are selected'
+);
+assert(
+  topologyRoamingPressureOffA.witness.pressureFieldChecksum === topologyRoamingPressureOffB.witness.pressureFieldChecksum,
+  'disabled topology drift pressure leaves stable pressure fields deterministic across time'
+);
 const topologyBoundaryTailEventClasses = Object.fromEntries(
   topologyEventKinds.map((kind) => [
     kind,

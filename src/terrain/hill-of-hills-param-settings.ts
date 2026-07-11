@@ -54,6 +54,7 @@ export const HILL_OF_HILLS_PERSISTED_PARAM_RANGES = {
   topologyPhaseSaddleBias: { min: 0, max: 2 },
   topologyPhaseOverlap: { min: 0, max: 0.5 },
   topologyPhaseDetailScale: { min: 0, max: 2 },
+  topologyPhaseDriftIntensity: { min: 0, max: 1 },
   topologyPhaseTimeMs: { min: 0, max: 2600 },
   topologyPhaseDurationMs: { min: 800, max: 5200 }
 } as const satisfies Partial<Record<keyof HillOfHillsTerrainParams, { min: number; max: number }>>;

@@ -201,6 +201,7 @@ const defaultPreviewParams: HillOfHillsTerrainParams = {
   topologyPhaseSaddleBias: 1,
   topologyPhaseOverlap: 0.32,
   topologyPhaseDetailScale: 1,
+  topologyPhaseDriftIntensity: 0.55,
   topologyPhaseTimeMs: 720,
   topologyPhaseDurationMs: 2200,
   gridResolutionX: 116,
@@ -343,6 +344,7 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'topologyPhaseSaddleBias', label: 'Saddle bias', min: 0, max: 2, step: 0.05 },
   { key: 'topologyPhaseOverlap', label: 'Topology overlap', min: 0, max: 0.5, step: 0.01 },
   { key: 'topologyPhaseDetailScale', label: 'Topology detail', min: 0, max: 2, step: 0.05 },
+  { key: 'topologyPhaseDriftIntensity', label: 'Basin drift', min: 0, max: 1, step: 0.05 },
   { key: 'topologyPhaseTimeMs', label: 'Topology phase', min: 0, max: 2600, step: 40 },
   { key: 'topologyPhaseDurationMs', label: 'Topology cadence', min: 800, max: 5200, step: 80 }
 ];

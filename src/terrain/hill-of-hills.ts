@@ -419,6 +419,7 @@ export interface HillOfHillsTerrainParams {
   topologyPhaseSaddleBias: number;
   topologyPhaseOverlap: number;
   topologyPhaseDetailScale: number;
+  topologyPhaseDriftIntensity: number;
   topologyPhaseTimeMs: number;
   topologyPhaseDurationMs: number;
   topologyEventClasses: HillOfHillsTopologyEventClassConfigMap;
@@ -926,6 +927,7 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   topologyPhaseSaddleBias: 1,
   topologyPhaseOverlap: 0.32,
   topologyPhaseDetailScale: 1,
+  topologyPhaseDriftIntensity: 0,
   topologyPhaseTimeMs: 0,
   topologyPhaseDurationMs: 1800,
   topologyEventClasses: defaultHillOfHillsTopologyEventClasses,
@@ -1319,6 +1321,7 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     topologyPhaseSaddleBias: clamp(finiteOr(params.topologyPhaseSaddleBias, 1), 0, 2),
     topologyPhaseOverlap: clamp(finiteOr(params.topologyPhaseOverlap, 0.32), 0, 0.5),
     topologyPhaseDetailScale: clamp(finiteOr(params.topologyPhaseDetailScale, 1), 0, 2),
+    topologyPhaseDriftIntensity: clamp(finiteOr(params.topologyPhaseDriftIntensity, 0), 0, 1),
     topologyPhaseTimeMs: Math.max(0, finiteOr(params.topologyPhaseTimeMs, 0)),
     topologyPhaseDurationMs: finiteAtLeast(params.topologyPhaseDurationMs, 240),
     topologyEventClasses: normalizeTopologyEventClasses(params.topologyEventClasses),
@@ -1510,7 +1513,13 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
     for (const window of topologyWindows) {
       if (window.amount <= 0.001) continue;
       const rng = mulberry32(params.topologyPhaseSeed + window.epoch * 104729 + params.seed * 31);
-      const selectedCandidates = selectTopologyMotionCandidates(params, topologyCandidateSummary.candidates, params.topologyPhaseLimit, rng);
+      const selectedCandidates = selectTopologyMotionCandidates(
+        params,
+        topologyCandidateSummary.candidates,
+        params.topologyPhaseLimit,
+        rng,
+        window.epoch + window.clock
+      );
       selectedForScoreRange.push(...selectedCandidates);
 
       for (let i = 0; i < selectedCandidates.length; i += 1) {
@@ -2260,15 +2269,21 @@ function selectTopologyMotionCandidates(
   params: HillOfHillsTerrainParams,
   candidates: readonly TopologyMotionCandidate[],
   limit: number,
-  rng: () => number
+  rng: () => number,
+  phaseCursor = topologyPhaseCursor(params)
 ): TopologyMotionCandidate[] {
   const minimumSeparation = Math.max(params.topologyPhaseRadius * 1.08, params.floorWidth * 0.36);
   const selected: TopologyMotionCandidate[] = [];
   const ranked = candidates
-    .map((candidate) => ({
-      candidate,
-      rankScore: candidate.score + (rng() - 0.5) * 0.03
-    }))
+    .map((candidate) => {
+      const driftPressure = topologyDriftPressureAt(params, candidate.x, candidate.z, phaseCursor);
+      const driftAffinity = topologyDriftAffinityFor(candidate.topologyKind, driftPressure);
+      const driftBoost = driftAffinity * params.topologyPhaseDriftIntensity * params.topologyPhaseIntensity;
+      return {
+        candidate,
+        rankScore: candidate.score * (1 + driftBoost * 0.22) + driftBoost * 0.16 + (rng() - 0.5) * 0.03
+      };
+    })
     .sort((a, b) => b.rankScore - a.rankScore);
 
   for (const rankedCandidate of ranked) {
@@ -2281,6 +2296,101 @@ function selectTopologyMotionCandidates(
   }
 
   return selected;
+}
+
+interface TopologyDriftPressure {
+  basin: number;
+  bloom: number;
+  damp: number;
+  exposure: number;
+  ridge: number;
+  strata: number;
+  appetite: number;
+}
+
+function topologyPhaseCursor(params: Pick<HillOfHillsTerrainParams, 'topologyPhaseTimeMs' | 'topologyPhaseDurationMs'>): number {
+  return finiteOr(params.topologyPhaseTimeMs, 0) / Math.max(1, finiteOr(params.topologyPhaseDurationMs, 1));
+}
+
+function topologyDriftPressureAt(
+  params: Pick<
+    HillOfHillsTerrainParams,
+    'seed' | 'width' | 'length' | 'channelRadius' | 'topologyPhaseSeed' | 'topologyPhaseIntensity' | 'topologyPhaseDriftIntensity' | 'topologyPhaseTimeMs' | 'topologyPhaseDurationMs'
+  >,
+  x: number,
+  z: number,
+  phaseCursor = topologyPhaseCursor(params)
+): TopologyDriftPressure {
+  const intensity = clamp(params.topologyPhaseIntensity * params.topologyPhaseDriftIntensity, 0, 1);
+  if (intensity <= 0.0001) {
+    return {
+      basin: 0,
+      bloom: 0,
+      damp: 0,
+      exposure: 0,
+      ridge: 0,
+      strata: 0,
+      appetite: 0
+    };
+  }
+
+  const tau = Math.PI * 2;
+  const seedPhase = params.seed * 0.0137 + params.topologyPhaseSeed * 0.0029;
+  const phase = phaseCursor * tau;
+  const nx = x / Math.max(0.001, params.width * 0.46);
+  const nz = z / Math.max(0.001, params.length * 0.46);
+
+  const lobe = (slot: number, speed: number, spreadX: number, spreadZ: number, xReach: number, zReach: number): number => {
+    const p = phase * speed + seedPhase * (slot * 0.37 + 0.61);
+    const cx = Math.sin(p + slot * 1.91) * xReach + Math.sin(p * 0.41 + seedPhase * 1.7) * xReach * 0.32;
+    const cz = Math.cos(p * 0.83 + slot * 2.17) * zReach + Math.sin(p * 0.31 + seedPhase * 0.9) * zReach * 0.28;
+    const dx = (nx - cx) / spreadX;
+    const dz = (nz - cz) / spreadZ;
+    return Math.exp(-(dx * dx + dz * dz));
+  };
+
+  const slowBasin = lobe(1, 0.23, 0.34, 0.42, 0.52, 0.58);
+  const meadowBloom = lobe(2, 0.31, 0.27, 0.34, 0.62, 0.54);
+  const dampRun = lobe(3, 0.41, 0.24, 0.5, 0.5, 0.68);
+  const exposedShoulder = lobe(4, 0.29, 0.22, 0.32, 0.72, 0.46);
+  const strataWake = lobe(5, 0.17, 0.26, 0.3, 0.66, 0.62);
+  const ridgePulse = lobe(6, 0.37, 0.18, 0.44, 0.78, 0.5);
+  const appetite = clamp((slowBasin + meadowBloom + dampRun + exposedShoulder + strataWake + ridgePulse) / 2.9, 0, 1);
+
+  return {
+    basin: clamp(slowBasin * intensity, 0, 1),
+    bloom: clamp(meadowBloom * intensity, 0, 1),
+    damp: clamp(dampRun * intensity, 0, 1),
+    exposure: clamp(exposedShoulder * intensity, 0, 1),
+    ridge: clamp(ridgePulse * intensity, 0, 1),
+    strata: clamp(strataWake * intensity, 0, 1),
+    appetite: clamp(appetite * intensity, 0, 1)
+  };
+}
+
+function topologyDriftAffinityFor(kind: HillOfHillsTopologyPhaseKind, pressure: TopologyDriftPressure): number {
+  switch (kind) {
+    case 'hill_swell':
+      return clamp(pressure.bloom * 0.58 + pressure.ridge * 0.28 + pressure.appetite * 0.14, 0, 1);
+    case 'hill_slump':
+      return clamp(pressure.exposure * 0.48 + pressure.damp * 0.24 + pressure.appetite * 0.18, 0, 1);
+    case 'valley_deepen':
+      return clamp(pressure.damp * 0.62 + pressure.basin * 0.22 + pressure.strata * 0.12, 0, 1);
+    case 'valley_fill':
+      return clamp(pressure.basin * 0.48 + pressure.bloom * 0.34 + pressure.damp * 0.12, 0, 1);
+    case 'ridge_lift':
+      return clamp(pressure.ridge * 0.56 + pressure.strata * 0.26 + pressure.exposure * 0.12, 0, 1);
+    case 'ridge_shear':
+      return clamp(pressure.exposure * 0.5 + pressure.ridge * 0.28 + pressure.strata * 0.18, 0, 1);
+    case 'saddle_pinch':
+      return clamp(pressure.appetite * 0.42 + pressure.basin * 0.24 + pressure.ridge * 0.18, 0, 1);
+    case 'saddle_pass':
+      return clamp(pressure.appetite * 0.4 + pressure.damp * 0.26 + pressure.bloom * 0.18, 0, 1);
+    case 'basin_bloom':
+      return clamp(pressure.bloom * 0.58 + pressure.basin * 0.32 + pressure.damp * 0.08, 0, 1);
+    case 'strata_reveal':
+      return clamp(pressure.strata * 0.56 + pressure.exposure * 0.32 + pressure.ridge * 0.08, 0, 1);
+  }
 }
 
 function scoreRangeForCandidates(candidates: readonly TrailSeedCandidate[]): Range {
@@ -2822,7 +2932,7 @@ function sampleTerrainFromParts(
   const region = classifyRegion(params, x, z, heightParts, slope);
   const topology = topologyAt(params, x, z, heightParts, dx, dz, slope, region, phaseInfluence);
   const proxyMaterial = proxyMaterialFor(region, topology);
-  const pressure = pressureFieldsFor(heightParts, slope, region, topology, proxyMaterial, phaseInfluence);
+  const pressure = pressureFieldsFor(params, x, z, heightParts, slope, region, topology, proxyMaterial, phaseInfluence);
   const support = supportSampleFor(params, phaseState, x, z, heightParts, phaseInfluence);
   const surfaceDetail = surfaceDetailFor(params, x, z, region, topology, proxyMaterial, phaseInfluence, slope);
   const materialEdge = materialEdgeFor(params, x, z, region, topology, proxyMaterial, phaseInfluence, surfaceDetail, slope);
@@ -3222,6 +3332,9 @@ function proxyMaterialFor(region: TerrainRegion, topology: HillOfHillsTopology):
 }
 
 function pressureFieldsFor(
+  params: HillOfHillsTerrainParams,
+  x: number,
+  z: number,
   heightParts: HeightParts,
   slope: number,
   region: TerrainRegion,
@@ -3292,20 +3405,21 @@ function pressureFieldsFor(
     0,
     1
   );
+  const driftPressure = topologyDriftPressureAt(params, x, z);
 
   return {
     slope: clamp(slope, 0, 1),
-    curvature,
-    ridge: topology.ridgeStrength,
-    valley: topology.valleyStrength,
-    saddle,
-    basin,
-    exposure,
+    curvature: clamp(curvature + driftPressure.ridge * 0.1 + driftPressure.strata * 0.08 - driftPressure.basin * 0.04, 0, 1),
+    ridge: clamp(topology.ridgeStrength + driftPressure.ridge * 0.18 + driftPressure.exposure * 0.06 - driftPressure.damp * 0.04, 0, 1),
+    valley: clamp(topology.valleyStrength + driftPressure.damp * 0.16 + driftPressure.basin * 0.1 - driftPressure.exposure * 0.05, 0, 1),
+    saddle: clamp(saddle + driftPressure.appetite * 0.08, 0, 1),
+    basin: clamp(basin + driftPressure.basin * 0.3 + driftPressure.damp * 0.08 - driftPressure.exposure * 0.06, 0, 1),
+    exposure: clamp(exposure + driftPressure.exposure * 0.24 + driftPressure.strata * 0.08 - driftPressure.bloom * 0.08, 0, 1),
     route: topology.routePressure,
-    erosion,
-    bloom,
-    strata,
-    vegetation
+    erosion: clamp(erosion + driftPressure.damp * 0.14 + driftPressure.strata * 0.12, 0, 1),
+    bloom: clamp(bloom + driftPressure.bloom * 0.34 + driftPressure.basin * 0.06 - driftPressure.exposure * 0.08, 0, 1),
+    strata: clamp(strata + driftPressure.strata * 0.28 + driftPressure.exposure * 0.06 - driftPressure.bloom * 0.04, 0, 1),
+    vegetation: clamp(vegetation + driftPressure.bloom * 0.26 + driftPressure.basin * 0.08 - driftPressure.exposure * 0.08, 0, 1)
   };
 }
 
