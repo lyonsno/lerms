@@ -520,3 +520,90 @@ assert.ok(
   !coldEntryKindChurnDelta.suspicions.some((suspicion) => suspicion.kind === "topology-pop"),
   "cold support identity entry and classifier churn should not masquerade as a visible topology pop",
 );
+
+const roamingBasinTopologyEventClasses = Object.fromEntries(
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS.map((kind) => {
+    const enabled = [
+      "hill_swell",
+      "hill_slump",
+      "valley_deepen",
+      "valley_fill",
+      "ridge_lift",
+      "ridge_shear",
+      "saddle_pinch",
+      "saddle_pass",
+    ].includes(kind);
+
+    return [
+      kind,
+      {
+        ...defaultHillOfHillsParams.topologyEventClasses[kind],
+        enabled,
+        appetite: enabled ? 2 : 0,
+        force: enabled ? 2 : 0,
+        gesture: kind.includes("saddle") ? "pulse" : "surge",
+        phaseOffset: 0,
+        spread: 1.7,
+      },
+    ];
+  }),
+) as HillOfHillsTerrainParams["topologyEventClasses"];
+const roamingBasinHotEntryParams = {
+  ...defaultHillOfHillsParams,
+  seed: 1,
+  gridResolutionX: 20,
+  gridResolutionZ: 22,
+  hillCount: 5,
+  valleyCount: 5,
+  ditchPhaseIntensity: 0,
+  ditchPhaseLimit: 0,
+  trailPhaseIntensity: 0,
+  trailPhaseLimit: 0,
+  topologyPhaseSeed: 1,
+  topologyPhaseIntensity: 1,
+  topologyPhaseDriftIntensity: 1,
+  topologyPhaseLimit: 10,
+  topologyPhaseDurationMs: 5_200,
+  topologyPhaseTimeMs: 0,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 2,
+  topologyPhaseRidgeBias: 2,
+  topologyPhaseSaddleBias: 1.4,
+  topologyPhaseBasinBias: 0,
+  topologyEventClasses: roamingBasinTopologyEventClasses,
+} satisfies HillOfHillsTerrainParams;
+const roamingBasinHotEntryFromFrame = {
+  index: 23,
+  reason: "attack" as const,
+  clock: 0.12,
+  epoch: 4,
+  phaseTimeMs: 4.12 * roamingBasinHotEntryParams.topologyPhaseDurationMs,
+};
+const roamingBasinHotEntryToFrame = {
+  index: 24,
+  reason: "rise" as const,
+  clock: 0.28,
+  epoch: 4,
+  phaseTimeMs: 4.28 * roamingBasinHotEntryParams.topologyPhaseDurationMs,
+};
+const roamingBasinHotEntryDelta = compareHillPhaseContinuityFrames(
+  roamingBasinHotEntryFromFrame,
+  createHillOfHillsTerrain({
+    ...roamingBasinHotEntryParams,
+    topologyPhaseTimeMs: roamingBasinHotEntryFromFrame.phaseTimeMs,
+  }),
+  roamingBasinHotEntryToFrame,
+  createHillOfHillsTerrain({
+    ...roamingBasinHotEntryParams,
+    topologyPhaseTimeMs: roamingBasinHotEntryToFrame.phaseTimeMs,
+  }),
+);
+
+assert.equal(
+  roamingBasinHotEntryDelta.lifecycle.hotEntrantCount,
+  0,
+  `roaming pressure must not reselect supports after an event envelope is hot: ${formatHillPhaseContinuityDelta(
+    roamingBasinHotEntryDelta,
+  )}`,
+);

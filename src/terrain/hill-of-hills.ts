@@ -1518,7 +1518,7 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         topologyCandidateSummary.candidates,
         params.topologyPhaseLimit,
         rng,
-        window.epoch + window.clock
+        topologySelectionPhaseCursor(window)
       );
       selectedForScoreRange.push(...selectedCandidates);
 
@@ -1730,6 +1730,10 @@ function topologyPhaseWindows(timing: { epoch: number; clock: number }, overlap:
 
 function topologyPhaseProgressAtClock(clock: number): number {
   return smoothstep(0.04, 0.46, clamp(clock, 0, 1));
+}
+
+function topologySelectionPhaseCursor(window: TopologyPhaseWindow): number {
+  return window.epoch + 0.5;
 }
 
 function topologyGestureState(gesture: HillOfHillsTopologyGesturePreset, clock: number): TopologyGestureState {
