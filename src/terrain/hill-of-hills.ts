@@ -719,6 +719,14 @@ interface PersistentTopologyField {
   velocity: readonly number[];
   force: readonly number[];
   hillMembership: readonly number[];
+  topologySelections: readonly PersistentTopologySelection[];
+}
+
+interface PersistentTopologySelection {
+  epoch: number;
+  candidates: readonly TopologyMotionCandidate[];
+  candidateChecksum: string;
+  candidateScoreRange: Range;
 }
 
 interface DirtyRecomputeWitness {
@@ -1476,19 +1484,24 @@ function createPhaseState(
   params: HillOfHillsTerrainParams,
   previousPersistentField?: PersistentTopologyField
 ): HillOfHillsPhaseState {
-  const proceduralState = createProceduralPhaseState(params);
   if (params.topologyDynamicsMode !== 'persistent_pressure') {
-    return proceduralState;
+    return createProceduralPhaseState(params);
   }
+
+  const persistentTopologyField = createPersistentTopologyField(params, previousPersistentField);
+  const proceduralState = createProceduralPhaseState(params, persistentTopologyField);
 
   return {
     ...proceduralState,
     topologyDynamicsMode: 'persistent_pressure',
-    persistentTopologyField: createPersistentTopologyField(params, previousPersistentField)
+    persistentTopologyField
   };
 }
 
-function createProceduralPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseState {
+function createProceduralPhaseState(
+  params: HillOfHillsTerrainParams,
+  persistentTopologyField?: PersistentTopologyField
+): HillOfHillsPhaseState {
   const episodes: HillOfHillsPhaseEpisode[] = [];
   const ditchTiming = phaseTiming(params.ditchPhaseTimeMs, params.ditchPhaseDurationMs);
   const trailTiming = phaseTiming(params.trailPhaseTimeMs, params.trailPhaseDurationMs);
@@ -1585,20 +1598,39 @@ function createProceduralPhaseState(params: HillOfHillsTerrainParams): HillOfHil
   }
 
   if (params.topologyPhaseIntensity > 0 && params.topologyPhaseLimit > 0) {
-    topologyCandidateSummary = scoreTopologyMotionCandidates(params);
+    if (!persistentTopologyField) {
+      topologyCandidateSummary = scoreTopologyMotionCandidates(params);
+    }
     const selectedForScoreRange: TopologyMotionCandidate[] = [];
     const topologyEpisodeById = new Map<string, HillOfHillsPhaseEpisode>();
 
     for (const window of topologyWindows) {
       if (window.amount <= 0.001) continue;
-      const rng = mulberry32(params.topologyPhaseSeed + window.epoch * 104729 + params.seed * 31);
-      const selectedCandidates = selectTopologyMotionCandidates(
-        params,
-        topologyCandidateSummary.candidates,
-        params.topologyPhaseLimit,
-        rng,
-        topologySelectionPhaseCursor(window)
+      const persistentSelection = persistentTopologyField?.topologySelections.find(
+        (selection) => selection.epoch === window.epoch
       );
+      let selectedCandidates: readonly TopologyMotionCandidate[];
+      if (persistentSelection) {
+        selectedCandidates = persistentSelection.candidates;
+        if (window.epoch === topologyTiming.epoch) {
+          topologyCandidateSummary = {
+            candidates: persistentSelection.candidates,
+            checksum: persistentSelection.candidateChecksum,
+            scoreRange: persistentSelection.candidateScoreRange
+          };
+        }
+      } else {
+        const candidateSummary = scoreTopologyMotionCandidates(params, persistentTopologyField);
+        const rng = mulberry32(params.topologyPhaseSeed + window.epoch * 104729 + params.seed * 31);
+        selectedCandidates = selectTopologyMotionCandidates(
+          params,
+          candidateSummary.candidates,
+          params.topologyPhaseLimit,
+          rng,
+          topologySelectionPhaseCursor(window)
+        );
+        topologyCandidateSummary = candidateSummary;
+      }
       selectedForScoreRange.push(...selectedCandidates);
 
       for (let i = 0; i < selectedCandidates.length; i += 1) {
@@ -2103,7 +2135,10 @@ function selectDitchCandidates(
   return selected;
 }
 
-function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): TopologyMotionCandidateSummary {
+function scoreTopologyMotionCandidates(
+  params: HillOfHillsTerrainParams,
+  persistentTopologyField?: PersistentTopologyField
+): TopologyMotionCandidateSummary {
   const phaseState = stablePhaseStateForTopologyScoring();
   const phaseInfluence = emptyPhaseInfluence();
   const candidates: TopologyMotionCandidate[] = [];
@@ -2312,7 +2347,11 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
       for (const option of configuredEventOptions) {
         if (option.score > selected.score) selected = option;
       }
-      const score = clamp(selected.score * (0.76 + activeInterior * 0.24), 0, 1);
+      const explorationWeight =
+        selected.kind === 'hill_swell' && persistentTopologyField
+          ? persistentHillExplorationWeightAt(persistentTopologyField, params, x, z)
+          : 1;
+      const score = clamp(selected.score * (0.76 + activeInterior * 0.24) * explorationWeight, 0, 1);
       const direction = normalize([
         topology.flowDirection[0] * 0.42 - dx * 0.18,
         0,
@@ -2336,6 +2375,7 @@ function scoreTopologyMotionCandidates(params: HillOfHillsTerrainParams): Topolo
         growthPotential: topology.growthPotential,
         eligibility: {
           ...eligibilityBase,
+          hill: clamp(eligibilityBase.hill * explorationWeight, 0, 1),
           score
         },
         reason: selected.reason,
@@ -2671,6 +2711,9 @@ function createPersistentTopologyField(
   let hillMembership = reusablePreviousField
     ? Array.from(reusablePreviousField.hillMembership)
     : new Array<number>(sampleCount).fill(0);
+  let topologySelections = reusablePreviousField
+    ? Array.from(reusablePreviousField.topologySelections)
+    : [];
   const targetSeconds = params.topologyPhaseTimeMs / 1000;
   const fixedStepSeconds = 1 / 60;
   const integrationOriginMs = reusablePreviousField?.timeMs ?? 0;
@@ -2679,7 +2722,32 @@ function createPersistentTopologyField(
   while (elapsedSeconds < targetSeconds - 1e-9) {
     const stepSeconds = Math.min(fixedStepSeconds, targetSeconds - elapsedSeconds);
     const sampleTimeMs = (elapsedSeconds + stepSeconds) * 1000;
-    const schedule = persistentTopologySchedule(params, sampleTimeMs);
+    let currentField: PersistentTopologyField = {
+      timeMs: elapsedSeconds * 1000,
+      integrationOriginMs,
+      xCount,
+      zCount,
+      dx,
+      dz,
+      deformation,
+      velocity,
+      force,
+      hillMembership,
+      topologySelections
+    };
+    const selectionEpoch = Math.floor(sampleTimeMs / Math.max(1, params.topologyPhaseDurationMs));
+    if (!topologySelections.some((selection) => selection.epoch === selectionEpoch)) {
+      const selection = createPersistentTopologySelection(params, selectionEpoch, currentField);
+      topologySelections = [
+        ...topologySelections.filter((candidate) => candidate.epoch >= selectionEpoch - 1),
+        selection
+      ];
+      currentField = {
+        ...currentField,
+        topologySelections
+      };
+    }
+    const schedule = persistentTopologySchedule(params, sampleTimeMs, currentField);
     const nextDeformation = deformation.slice();
     const nextVelocity = velocity.slice();
     const nextForce = force.slice();
@@ -2742,7 +2810,37 @@ function createPersistentTopologyField(
     deformation,
     velocity,
     force,
-    hillMembership
+    hillMembership,
+    topologySelections
+  };
+}
+
+function createPersistentTopologySelection(
+  params: HillOfHillsTerrainParams,
+  epoch: number,
+  field: PersistentTopologyField
+): PersistentTopologySelection {
+  if (params.topologyPhaseIntensity <= 0 || params.topologyPhaseLimit <= 0) {
+    return {
+      epoch,
+      candidates: [],
+      candidateChecksum: 'none',
+      candidateScoreRange: zeroRange()
+    };
+  }
+  const candidateSummary = scoreTopologyMotionCandidates(params, field);
+  const rng = mulberry32(params.topologyPhaseSeed + epoch * 104729 + params.seed * 31);
+  return {
+    epoch,
+    candidates: selectTopologyMotionCandidates(
+      params,
+      candidateSummary.candidates,
+      params.topologyPhaseLimit,
+      rng,
+      epoch + 0.5
+    ),
+    candidateChecksum: candidateSummary.checksum,
+    candidateScoreRange: candidateSummary.scoreRange
   };
 }
 
@@ -2759,13 +2857,17 @@ function persistentTopologyTrajectoryKey(params: HillOfHillsTerrainParams): stri
   );
 }
 
-function persistentTopologySchedule(params: HillOfHillsTerrainParams, timeMs: number): HillOfHillsPhaseState {
+function persistentTopologySchedule(
+  params: HillOfHillsTerrainParams,
+  timeMs: number,
+  persistentTopologyField: PersistentTopologyField
+): HillOfHillsPhaseState {
   const scheduleParams: HillOfHillsTerrainParams = {
     ...params,
     topologyPhaseTimeMs: timeMs,
     topologyDynamicsMode: 'direct_synthesis'
   };
-  return createProceduralPhaseState(scheduleParams);
+  return createProceduralPhaseState(scheduleParams, persistentTopologyField);
 }
 
 function hillSwellEventForceAt(
@@ -2802,6 +2904,23 @@ function hillSwellEligibilityFromDeformedState(
   const wallExclusion = 1 - smoothstep(params.channelRadius * 0.72, params.channelRadius, Math.abs(x));
   const longitudinalInterior = 1 - smoothstep(params.length * 0.42, params.length * 0.5, Math.abs(z));
   return clamp(baseRelief * 0.46 + deformedRelief * 0.3 + roundedCrown * 0.12 + wallExclusion * longitudinalInterior * 0.12, 0, 1);
+}
+
+function persistentHillExplorationWeightAt(
+  field: PersistentTopologyField,
+  params: HillOfHillsTerrainParams,
+  x: number,
+  z: number
+): number {
+  const dynamics = persistentTopologySampleAt(field, params, x, z);
+  const deformationSaturation = smoothstep(0.035, 0.24, Math.max(0, dynamics.deformation));
+  const activeForceSaturation = smoothstep(0.015, 0.24, dynamics.force);
+  const saturation = clamp(
+    dynamics.hillMembership * 0.72 + deformationSaturation * 0.2 + activeForceSaturation * 0.08,
+    0,
+    1
+  );
+  return 1 - saturation * 0.88;
 }
 
 function persistentTopologySampleAt(field: PersistentTopologyField, params: HillOfHillsTerrainParams, x: number, z: number) {

@@ -14,6 +14,7 @@ import {
   sampleHillOfHillsTerrain,
   type HillOfHillsTerrainParams
 } from '../src/terrain/hill-of-hills.js';
+import { applyHillDiagnosticParamPreset } from '../src/terrain/hill-of-hills-diagnostic-presets.js';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -1445,6 +1446,67 @@ const boundaryMembershipDelta = persistentAfterBoundary.samples.reduce((maximum,
 assert(
   boundaryMembershipDelta < 0.08,
   'continuous hill membership cannot hard-jump merely because the dominant phase label changes'
+);
+
+const persistentExplorationPreset = applyHillDiagnosticParamPreset(
+  {
+    ...defaultHillOfHillsParams,
+    gridResolutionX: 24,
+    gridResolutionZ: 30
+  },
+  'continuity-hills'
+);
+const persistentHillOnlyExplorationParams: HillOfHillsTerrainParams = {
+  ...persistentExplorationPreset,
+  topologyPhaseLimit: 2,
+  topologyEventClasses: {
+    ...persistentExplorationPreset.topologyEventClasses,
+    hill_slump: {
+      ...persistentExplorationPreset.topologyEventClasses.hill_slump,
+      enabled: false,
+      appetite: 0,
+      force: 0
+    }
+  }
+};
+const persistentExplorationEarly = createHillOfHillsTerrain({
+  ...persistentHillOnlyExplorationParams,
+  topologyPhaseTimeMs: 0.24 * persistentHillOnlyExplorationParams.topologyPhaseDurationMs
+});
+const persistentExplorationLate = createHillOfHillsTerrain({
+  ...persistentHillOnlyExplorationParams,
+  topologyPhaseTimeMs: 0.68 * persistentHillOnlyExplorationParams.topologyPhaseDurationMs
+});
+const persistentExplorationSupportIds = (terrain: typeof persistentExplorationEarly) =>
+  terrain.phaseState.activeEpisodes
+    .filter((episode) => episode.kind === 'hill_swell')
+    .map((episode) => episode.id)
+    .sort();
+assert(
+  JSON.stringify(persistentExplorationSupportIds(persistentExplorationEarly)) ===
+    JSON.stringify(persistentExplorationSupportIds(persistentExplorationLate)),
+  'persistent support selection snapshots world state once per epoch instead of churning as its own force accumulates'
+);
+const persistentSupportOccurrences = new Map<string, number>();
+for (let epoch = 0; epoch < 7; epoch += 1) {
+  const terrain =
+    epoch === 0
+      ? persistentExplorationLate
+      : createHillOfHillsTerrain({
+          ...persistentHillOnlyExplorationParams,
+          topologyPhaseTimeMs: (epoch + 0.68) * persistentHillOnlyExplorationParams.topologyPhaseDurationMs
+        });
+  const supports = terrain.phaseState.activeEpisodes.filter((episode) => episode.kind === 'hill_swell');
+  assert(supports.length === 2, `persistent exploration epoch ${epoch} retains the requested hill-swell force basis`);
+  for (const support of supports) {
+    const key = `${support.center[0].toFixed(2)},${support.center[2].toFixed(2)}`;
+    persistentSupportOccurrences.set(key, (persistentSupportOccurrences.get(key) ?? 0) + 1);
+  }
+}
+const persistentSupportMaximumRecurrence = Math.max(...persistentSupportOccurrences.values());
+assert(
+  persistentSupportOccurrences.size >= 6 && persistentSupportMaximumRecurrence <= 4,
+  `persistent world state redirects future hill supports away from saturated anchors; observed ${persistentSupportOccurrences.size} locations with maximum recurrence ${persistentSupportMaximumRecurrence}`
 );
 
 const persistentCache = createHillOfHillsLayerTileCache();

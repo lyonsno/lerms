@@ -57,7 +57,7 @@ assert(paramPreset.topologyPhaseBasinBias === 0, 'continuity preset suppresses b
 
 for (const eventKind of HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS) {
   const eventConfig = paramPreset.topologyEventClasses[eventKind];
-  if (eventKind === 'hill_swell' || eventKind === 'hill_slump') {
+  if (eventKind === 'hill_swell') {
     assert(eventConfig.enabled, `continuity preset keeps ${eventKind} enabled`);
     assert(eventConfig.appetite > 0, `continuity preset gives ${eventKind} nonzero appetite`);
     continue;
