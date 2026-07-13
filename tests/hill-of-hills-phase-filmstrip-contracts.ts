@@ -371,6 +371,87 @@ assert.ok(
   "coarse release-to-tail topology motion should not be labeled as an instantaneous topology pop",
 );
 
+const noLateGestureReactivationEventClasses = Object.fromEntries(
+  HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS.map((kind) => [
+    kind,
+    {
+      ...defaultHillOfHillsParams.topologyEventClasses[kind],
+      enabled: kind === "valley_deepen",
+      appetite: kind === "valley_deepen" ? 2 : 0,
+      force: kind === "valley_deepen" ? 2 : 0,
+      gesture: "surge",
+      phaseOffset: kind === "valley_deepen" ? 0.12 : 0,
+      spread: 1.2,
+    },
+  ]),
+) as HillOfHillsTerrainParams["topologyEventClasses"];
+const noLateGestureReactivationParams = {
+  ...defaultHillOfHillsParams,
+  seed: 8675309,
+  gridResolutionX: 24,
+  gridResolutionZ: 28,
+  hillCount: 4,
+  valleyCount: 6,
+  ditchPhaseIntensity: 0,
+  ditchPhaseLimit: 0,
+  trailPhaseIntensity: 0,
+  trailPhaseLimit: 0,
+  topologyPhaseSeed: 2468,
+  topologyPhaseIntensity: 1,
+  topologyPhaseLimit: 6,
+  topologyPhaseRadius: 2.1,
+  topologyPhaseHeightScale: 1.4,
+  topologyPhaseDurationMs: 1_000,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseHillBias: 0,
+  topologyPhaseValleyBias: 2,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyEventClasses: noLateGestureReactivationEventClasses,
+} satisfies HillOfHillsTerrainParams;
+const noLateGestureReactivationFromFrame = {
+  index: 1,
+  reason: "tail" as const,
+  clock: 0.84,
+  epoch: 4,
+  phaseTimeMs: 4.84 * noLateGestureReactivationParams.topologyPhaseDurationMs,
+};
+const noLateGestureReactivationToFrame = {
+  index: 2,
+  reason: "epoch-boundary" as const,
+  clock: 0.98,
+  epoch: 4,
+  phaseTimeMs: 4.98 * noLateGestureReactivationParams.topologyPhaseDurationMs,
+};
+const noLateGestureReactivationDelta = compareHillPhaseContinuityFrames(
+  noLateGestureReactivationFromFrame,
+  createHillOfHillsTerrain({
+    ...noLateGestureReactivationParams,
+    topologyPhaseTimeMs: noLateGestureReactivationFromFrame.phaseTimeMs,
+  }),
+  noLateGestureReactivationToFrame,
+  createHillOfHillsTerrain({
+    ...noLateGestureReactivationParams,
+    topologyPhaseTimeMs: noLateGestureReactivationToFrame.phaseTimeMs,
+  }),
+);
+
+assert.ok(
+  noLateGestureReactivationDelta.lifecycle.persistedCount > 0,
+  "fixture should keep the same topology supports alive through the late support window",
+);
+assert.ok(
+  noLateGestureReactivationDelta.topologyAmount.maxAbs < 0.2,
+  `persistent supports must not wrap their gesture offset back into attack near the epoch edge: ${formatHillPhaseContinuityDelta(
+    noLateGestureReactivationDelta,
+  )}`,
+);
+assert.ok(
+  !noLateGestureReactivationDelta.suspicions.some((suspicion) => suspicion.kind === "topology-pop"),
+  "late-window gesture reactivation should not masquerade as natural topology motion",
+);
+
 const mixedLifecycleContinuityParams = {
   ...defaultHillOfHillsParams,
   gridResolutionX: 28,

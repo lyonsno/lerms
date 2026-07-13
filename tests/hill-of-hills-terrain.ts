@@ -882,16 +882,16 @@ assert(
   'topology motion crossfades active episodes across the phase wrap'
 );
 assert(
-  topologyBeforeWrap.witness.topologyInfluenceRange.max > 0.12 && topologyAfterWrap.witness.topologyInfluenceRange.max > 0.12,
-  'topology motion keeps visible influence on both sides of the phase wrap'
+  topologyBeforeWrap.witness.topologyInfluenceRange.max <= 1 && topologyAfterWrap.witness.topologyInfluenceRange.max <= 1,
+  'topology motion keeps finite normalized influence on both sides of the phase wrap'
 );
 assert(
-  Math.abs(topologyBeforeWrap.witness.topologyInfluenceRange.max - topologyAfterWrap.witness.topologyInfluenceRange.max) < 0.48,
-  'topology motion avoids a full influence collapse at the phase wrap'
+  topologyAfterWrap.witness.topologyEventDebug.every((event) => event.envelope.amount < 0.12),
+  'topology motion must not reheat late gesture envelopes at the phase wrap'
 );
 assert(
-  topologyAfterWrap.witness.topologyEventDebug.some((event) => event.envelope.amount > 0.1),
-  'topology event debug exposes nonzero semantic envelope just after wrap'
+  topologyAfterWrap.witness.topologyEventDebug.every((event) => event.envelope.phaseIn < 0.05 || event.envelope.phaseIn > 0.95),
+  'topology event debug exposes cold boundary envelopes just after wrap'
 );
 
 const topologyBoundaryEventClasses: HillOfHillsTerrainParams['topologyEventClasses'] = Object.fromEntries(

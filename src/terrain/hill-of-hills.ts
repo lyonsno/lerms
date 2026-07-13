@@ -1526,7 +1526,7 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
         const candidate = selectedCandidates[i];
         const eventConfig = topologyEventClassConfig(params, candidate.topologyKind);
         if (!eventConfig.enabled || eventConfig.appetite <= 0 || eventConfig.force <= 0) continue;
-        const gestureState = topologyGestureState(eventConfig.gesture, wrapUnit(window.clock + eventConfig.phaseOffset));
+        const gestureState = topologyGestureState(eventConfig.gesture, topologyGestureClock(window, eventConfig.phaseOffset));
         const supportedGestureState = topologySupportGestureState(gestureState, window);
         const id = `topology-${candidate.topologyKind}-${roundId(candidate.x)}-${roundId(candidate.z)}`;
         const supportRng = mulberry32(detailSeedFor(params.topologyPhaseSeed, candidate.x, candidate.z, candidate.topologyKind));
@@ -1734,6 +1734,10 @@ function topologyPhaseProgressAtClock(clock: number): number {
 
 function topologySelectionPhaseCursor(window: TopologyPhaseWindow): number {
   return window.epoch + 0.5;
+}
+
+function topologyGestureClock(window: TopologyPhaseWindow, phaseOffset: number): number {
+  return clamp(window.clock + phaseOffset, 0, 1);
 }
 
 function topologyGestureState(gesture: HillOfHillsTopologyGesturePreset, clock: number): TopologyGestureState {
@@ -4393,10 +4397,6 @@ function smoothstep(edge0: number, edge1: number, value: number): number {
 function smoothCap(value: number): number {
   const t = clamp(value, 0, 1);
   return t * t * (3 - 2 * t);
-}
-
-function wrapUnit(value: number): number {
-  return ((value % 1) + 1) % 1;
 }
 
 function normalize(vector: Vec3): Vec3 {
