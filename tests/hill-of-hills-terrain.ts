@@ -1393,6 +1393,22 @@ const maxDynamics = (terrain: typeof persistentPeak, field: 'topologyDeformation
     const value = persistentDynamics(terrainSample)[field];
     return Math.max(maximum, Math.abs(value ?? 0));
   }, 0);
+const persistentDisabled = createHillOfHillsTerrain({
+  ...persistentTopologyParams,
+  topologyPhaseIntensity: 0,
+  topologyPhaseLimit: 0,
+  topologyPhaseTimeMs: 1000
+});
+assert(
+  persistentDisabled.witness.activePhaseCount === 0 &&
+    persistentDisabled.witness.topologyForceRange.max === 0 &&
+    persistentDisabled.witness.topologyDeformationRange.max === 0 &&
+    persistentDisabled.witness.topologyVelocityRange.max === 0 &&
+    persistentDisabled.witness.hillSwellMembershipRange.max === 0 &&
+    persistentDisabled.witness.topologyInfluenceRange.max === 0 &&
+    (persistentDisabled.witness.phaseInfluenceKinds.none ?? 0) === persistentDisabled.samples.length,
+  'disabled persistent topology stays semantically and dynamically inert'
+);
 assert(
   maxDynamics(persistentTail, 'topologyForce') < maxDynamics(persistentPeak, 'topologyForce'),
   'withdrawing a hill force lowers force during the gesture tail'

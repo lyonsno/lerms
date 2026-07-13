@@ -2704,8 +2704,15 @@ function createPersistentTopologyField(
         const netForce = clamp(eventForce + restorativeForce + smoothingForce - velocity[index] * 1.35, -2.4, 2.4);
         const nextV = clamp(velocity[index] + netForce * stepSeconds, -1.2, 1.2);
         const nextD = clamp(center + nextV * stepSeconds, -0.72, 0.72);
+        const dynamicPresence = Math.max(
+          smoothstep(0.0005, 0.08, eventForce),
+          smoothstep(0.001, 0.16, Math.max(0, nextD)),
+          smoothstep(0.002, 0.55, Math.abs(nextV))
+        );
         const membershipTarget = clamp(
-          eligibility * 0.55 + smoothstep(0.002, 0.16, nextD) * 0.32 + smoothstep(0.01, 0.55, Math.abs(nextV)) * 0.13,
+          eligibility * dynamicPresence * 0.55 +
+            smoothstep(0.002, 0.16, nextD) * 0.32 +
+            smoothstep(0.01, 0.55, Math.abs(nextV)) * 0.13,
           0,
           1
         );
@@ -2723,16 +2730,6 @@ function createPersistentTopologyField(
     force = nextForce;
     hillMembership = nextHillMembership;
     elapsedSeconds += stepSeconds;
-  }
-
-  if (!reusablePreviousField && targetSeconds === 0) {
-    hillMembership = hillMembership.map((_, index) => {
-      const xi = index % xCount;
-      const zi = Math.floor(index / xCount);
-      const x = -params.width * 0.5 + xi * dx;
-      const z = -params.length * 0.5 + zi * dz;
-      return hillSwellEligibilityFromDeformedState(params, x, z, 0, 0);
-    });
   }
 
   return {
