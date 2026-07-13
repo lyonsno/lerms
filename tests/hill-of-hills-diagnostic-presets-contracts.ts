@@ -47,6 +47,7 @@ assert(paramPreset.ditchPhaseLimit === 0, 'continuity preset hard-disables ditch
 assert(paramPreset.trailPhaseIntensity === 0, 'continuity preset disables trail intensity for clean diagnosis');
 assert(paramPreset.trailPhaseLimit === 0, 'continuity preset disables trail supports for clean diagnosis');
 assert(paramPreset.topologyPhaseIntensity > 0, 'continuity preset enables topology motion');
+assert(paramPreset.topologyDynamicsMode === 'persistent_pressure', 'continuity preset exercises the persistent topology route');
 assert(paramPreset.topologyPhaseLimit >= 3, 'continuity preset keeps enough hill supports to show broad phase motion');
 assert(paramPreset.topologyPhaseHillBias > 0, 'continuity preset enables hill topology bias');
 assert(paramPreset.topologyPhaseValleyBias === 0, 'continuity preset suppresses valley topology bias');

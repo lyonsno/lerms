@@ -1335,4 +1335,166 @@ const frame = createHillOfHillsFrame(baseline);
 assertFirstVerticalFrame(frame);
 assert(frame.terrainSamples.length === baseline.samples.length, 'first vertical frame includes generated terrain samples');
 
+type PersistentTopologyMotionParams = TopologyMotionParams & {
+  topologyDynamicsMode: 'persistent_pressure';
+};
+const persistentTopologyParams: PersistentTopologyMotionParams = {
+  ...topologyPhaseParams,
+  gridResolutionX: 24,
+  gridResolutionZ: 30,
+  topologyDynamicsMode: 'persistent_pressure',
+  topologyPhaseDurationMs: 1200,
+  topologyPhaseLimit: 2,
+  topologyPhaseOverlap: 0.32,
+  topologyPhaseHillBias: 2,
+  topologyPhaseValleyBias: 0,
+  topologyPhaseBasinBias: 0,
+  topologyPhaseRidgeBias: 0,
+  topologyPhaseSaddleBias: 0,
+  topologyEventClasses: topologyBoundaryEventClasses
+};
+const persistentPeak = createHillOfHillsTerrain({
+  ...persistentTopologyParams,
+  topologyPhaseTimeMs: persistentTopologyParams.topologyPhaseDurationMs * 0.46
+});
+const persistentTail = createHillOfHillsTerrain({
+  ...persistentTopologyParams,
+  topologyPhaseTimeMs: persistentTopologyParams.topologyPhaseDurationMs * 0.84
+});
+const persistentBeforeBoundary = createHillOfHillsTerrain({
+  ...persistentTopologyParams,
+  topologyPhaseTimeMs: persistentTopologyParams.topologyPhaseDurationMs * 0.998
+});
+const persistentAfterBoundary = createHillOfHillsTerrain({
+  ...persistentTopologyParams,
+  topologyPhaseTimeMs: persistentTopologyParams.topologyPhaseDurationMs * 1.002
+});
+const persistentDynamics = (terrainSample: (typeof persistentPeak.samples)[number]) =>
+  terrainSample.phaseInfluence as typeof terrainSample.phaseInfluence & {
+    topologyDeformation?: number;
+    topologyVelocity?: number;
+    topologyForce?: number;
+    semanticMemberships?: Partial<Record<(typeof topologyEventKinds)[number], number>>;
+  };
+assert(
+  persistentPeak.samples.every((terrainSample) => {
+    const dynamics = persistentDynamics(terrainSample);
+    return (
+      Number.isFinite(dynamics.topologyDeformation) &&
+      Number.isFinite(dynamics.topologyVelocity) &&
+      Number.isFinite(dynamics.topologyForce) &&
+      typeof dynamics.semanticMemberships === 'object'
+    );
+  }),
+  'persistent topology dynamics exports deformation, velocity, force, and semantic memberships'
+);
+const maxDynamics = (terrain: typeof persistentPeak, field: 'topologyDeformation' | 'topologyVelocity' | 'topologyForce') =>
+  terrain.samples.reduce((maximum, terrainSample) => {
+    const value = persistentDynamics(terrainSample)[field];
+    return Math.max(maximum, Math.abs(value ?? 0));
+  }, 0);
+assert(
+  maxDynamics(persistentTail, 'topologyForce') < maxDynamics(persistentPeak, 'topologyForce'),
+  'withdrawing a hill force lowers force during the gesture tail'
+);
+assert(
+  maxDynamics(persistentTail, 'topologyDeformation') > 0.015 && maxDynamics(persistentTail, 'topologyVelocity') > 0.0001,
+  'withdrawing a hill force leaves deformation and velocity to settle smoothly'
+);
+const beforeBoundaryById = new Map(persistentBeforeBoundary.samples.map((terrainSample) => [terrainSample.id, terrainSample]));
+const boundaryDeformationDelta = persistentAfterBoundary.samples.reduce((maximum, terrainSample) => {
+  const before = beforeBoundaryById.get(terrainSample.id);
+  if (!before) return maximum;
+  return Math.max(
+    maximum,
+    Math.abs(
+      (persistentDynamics(terrainSample).topologyDeformation ?? 0) -
+        (persistentDynamics(before).topologyDeformation ?? 0)
+    )
+  );
+}, 0);
+assert(
+  maxDynamics(persistentBeforeBoundary, 'topologyDeformation') > 0.015 &&
+    maxDynamics(persistentAfterBoundary, 'topologyDeformation') > 0.015 &&
+    boundaryDeformationDelta < 0.02,
+  'epoch rollover cannot reset persistent topology deformation'
+);
+const boundaryMembershipDelta = persistentAfterBoundary.samples.reduce((maximum, terrainSample) => {
+  const before = beforeBoundaryById.get(terrainSample.id);
+  if (!before) return maximum;
+  const beforeMembership = persistentDynamics(before).semanticMemberships?.hill_swell ?? 0;
+  const afterMembership = persistentDynamics(terrainSample).semanticMemberships?.hill_swell ?? 0;
+  return Math.max(maximum, Math.abs(afterMembership - beforeMembership));
+}, 0);
+assert(
+  boundaryMembershipDelta < 0.08,
+  'continuous hill membership cannot hard-jump merely because the dominant phase label changes'
+);
+
+const persistentCache = createHillOfHillsLayerTileCache();
+createHillOfHillsTerrainWithCache(persistentCache, {
+  ...persistentTopologyParams,
+  topologyPhaseTimeMs: 840
+});
+const persistentCachedAdvance = createHillOfHillsTerrainWithCache(persistentCache, {
+  ...persistentTopologyParams,
+  topologyPhaseTimeMs: 856
+});
+const cachedDynamicsWitness = persistentCachedAdvance.witness as typeof persistentCachedAdvance.witness & {
+  topologyDynamicsIntegrationOriginMs?: number;
+};
+assert(
+  cachedDynamicsWitness.topologyDynamicsIntegrationOriginMs === 840,
+  'the live tile-cache route advances persistent topology from its previously witnessed world state'
+);
+
+const persistentCachedRewind = createHillOfHillsTerrainWithCache(persistentCache, {
+  ...persistentTopologyParams,
+  topologyPhaseTimeMs: 120
+});
+const rewoundDynamicsWitness = persistentCachedRewind.witness as typeof persistentCachedRewind.witness & {
+  topologyDynamicsIntegrationOriginMs?: number;
+};
+assert(
+  rewoundDynamicsWitness.topologyDynamicsIntegrationOriginMs === 0,
+  'rewinding topology time loudly restarts deterministic integration from the trajectory origin'
+);
+
+const comparisonModeCache = createHillOfHillsLayerTileCache();
+const comparisonSource = {
+  route: 'hill-of-hills/topology-dynamics-comparison-contract',
+  frameId: 'topology-dynamics-comparison-frame',
+  configId: 'topology-dynamics-comparison-config',
+  timestampMs: 1200,
+  sampleAgeMs: 0
+} as const;
+createHillOfHillsTerrainWithCache(
+  comparisonModeCache,
+  {
+    ...persistentTopologyParams,
+    topologyPhaseTimeMs: 0
+  },
+  comparisonSource
+);
+const directComparisonAfterPersistent = createHillOfHillsTerrainWithCache(
+  comparisonModeCache,
+  {
+    ...persistentTopologyParams,
+    topologyDynamicsMode: 'direct_synthesis',
+    topologyPhaseTimeMs: 0
+  },
+  comparisonSource
+);
+assert(
+  directComparisonAfterPersistent.samples.every(
+    (terrainSample) => (terrainSample.phaseInfluence.semanticMemberships.hill_swell ?? 0) === 0
+  ),
+  'switching comparison modes cannot reuse persistent semantic membership samples on the direct route'
+);
+assert(
+  directComparisonAfterPersistent.witness.cacheInvalidated &&
+    directComparisonAfterPersistent.witness.cacheRecomputedSampleCount === directComparisonAfterPersistent.samples.length,
+  'switching comparison modes explicitly invalidates every sample rather than depending on incidental support dirtiness'
+);
+
 console.log('hill of hills terrain ok');

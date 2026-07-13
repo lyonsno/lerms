@@ -33,6 +33,7 @@ export function applyHillDiagnosticParamPreset(
     ditchPhaseLimit: 0,
     trailPhaseIntensity: 0,
     trailPhaseLimit: 0,
+    topologyDynamicsMode: 'persistent_pressure',
     topologyPhaseIntensity: 0.58,
     topologyPhaseLimit: 4,
     topologyPhaseRadius: 1.55,

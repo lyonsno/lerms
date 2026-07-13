@@ -17,6 +17,7 @@ import {
   type HillOfHillsTerrainBufferMetricChannel,
   type HillOfHillsTerrainParams,
   type HillOfHillsTopologyEventClassConfig,
+  type HillOfHillsTopologyDynamicsMode,
   type HillOfHillsTopologyPhaseKind,
 } from './terrain/hill-of-hills.js';
 import {
@@ -1904,6 +1905,8 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `ditch phase: ${witness.effectiveParams.ditchPhaseTimeMs.toFixed(0)}ms clock ${witness.ditchPhaseClock.toFixed(2)} progress ${witness.ditchPhaseProgress.toFixed(2)}`,
     `trail phase: ${witness.effectiveParams.trailPhaseTimeMs.toFixed(0)}ms clock ${witness.trailPhaseClock.toFixed(2)} progress ${witness.trailPhaseProgress.toFixed(2)}`,
     `topology phase: ${witness.effectiveParams.topologyPhaseTimeMs.toFixed(0)}ms clock ${witness.topologyPhaseClock.toFixed(2)} progress ${witness.topologyPhaseProgress.toFixed(2)}`,
+    `dynamics: ${witness.topologyDynamicsMode} origin ${witness.topologyDynamicsIntegrationOriginMs.toFixed(0)}ms ${compactChecksum(witness.topologyDynamicsChecksum)}`,
+    `dynamics range: deformation ${witness.topologyDeformationRange.min.toFixed(3)}..${witness.topologyDeformationRange.max.toFixed(3)} velocity ${witness.topologyVelocityRange.min.toFixed(3)}..${witness.topologyVelocityRange.max.toFixed(3)} force ${witness.topologyForceRange.min.toFixed(3)}..${witness.topologyForceRange.max.toFixed(3)} hill ${witness.hillSwellMembershipRange.min.toFixed(2)}..${witness.hillSwellMembershipRange.max.toFixed(2)}`,
     `phase checksum: ${witness.phaseChecksum} / influence ${witness.phaseInfluenceChecksum}`,
     `trail seed: ${witness.trailSeedMethod} / candidates ${witness.trailCandidateChecksum}`,
     `trail score: ${witness.trailCandidateScoreRange.min.toFixed(2)} .. ${witness.trailCandidateScoreRange.max.toFixed(2)} / selected ${witness.selectedTrailScoreRange.min.toFixed(2)} .. ${witness.selectedTrailScoreRange.max.toFixed(2)}`,
@@ -1953,6 +1956,7 @@ function activePreviewLayerSummary(): string {
 function createControls(): { element: HTMLElement } {
   const element = document.createElement('section');
   element.className = 'terrain-controls';
+  appendTopologyDynamicsModeControl(element);
 
   for (const spec of controlSpecs) {
     const row = document.createElement('label');
@@ -2034,6 +2038,54 @@ function createControls(): { element: HTMLElement } {
       margin-top: 12px;
       padding-top: 10px;
       border-top: 1px solid rgba(242, 223, 160, 0.18);
+    }
+    .topology-dynamics-control {
+      display: grid;
+      grid-template-columns: minmax(96px, 1fr) minmax(0, 1.3fr);
+      gap: 8px;
+      align-items: center;
+      margin: 10px 0 0;
+      padding: 10px 0 0;
+      border: 0;
+      border-top: 1px solid rgba(242, 223, 160, 0.18);
+      min-width: 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .topology-dynamics-label {
+      min-width: 0;
+    }
+    .topology-dynamics-options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      min-height: 26px;
+      border: 1px solid rgba(136, 224, 186, 0.24);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .topology-dynamics-options label {
+      display: grid;
+      grid-template-columns: 1fr;
+      min-height: 26px;
+      cursor: pointer;
+    }
+    .topology-dynamics-options label + label {
+      border-left: 1px solid rgba(136, 224, 186, 0.24);
+    }
+    .topology-dynamics-options input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .topology-dynamics-options span {
+      display: grid;
+      place-items: center;
+      padding: 4px 6px;
+      color: rgba(244, 227, 176, 0.78);
+    }
+    .topology-dynamics-options input:checked + span {
+      background: rgba(136, 224, 186, 0.2);
+      color: #d7f7e8;
     }
     .topology-event-controls h2 {
       margin: 0;
@@ -2137,6 +2189,7 @@ function createControls(): { element: HTMLElement } {
       max-height: calc(100vh - 360px);
       overflow: auto;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
       padding: 12px;
       border: 1px solid rgba(136, 224, 186, 0.25);
       background: rgba(3, 9, 8, 0.76);
@@ -2146,27 +2199,29 @@ function createControls(): { element: HTMLElement } {
     }
     @media (max-width: 780px) {
       .terrain-controls {
-        top: auto;
-        bottom: 180px;
+        top: 12px;
+        bottom: auto;
         right: 12px;
         width: calc(100vw - 24px);
-        max-height: 30vh;
+        max-height: 84px;
       }
       .preview-debug-controls {
         left: 12px;
-        bottom: 166px;
-        width: calc(100vw - 24px);
-        max-height: 22vh;
+        bottom: 156px;
+        width: min(220px, calc(100vw - 24px));
+        max-height: 110px;
       }
       .view-controls {
         right: 12px;
         bottom: 12px;
         width: calc(100vw - 24px);
+        max-height: 132px;
       }
       .terrain-witness {
         left: 12px;
-        top: 12px;
+        top: 108px;
         max-width: calc(100vw - 24px);
+        max-height: 150px;
       }
     }
   `;
@@ -2187,6 +2242,46 @@ function appendTopologyEventClassControls(parent: HTMLElement): void {
   }
 
   parent.append(section);
+}
+
+function appendTopologyDynamicsModeControl(parent: HTMLElement): void {
+  const fieldset = document.createElement('div');
+  const legend = document.createElement('span');
+  const options = document.createElement('div');
+  fieldset.className = 'topology-dynamics-control';
+  fieldset.role = 'radiogroup';
+  fieldset.setAttribute('aria-label', 'Topology dynamics');
+  legend.className = 'topology-dynamics-label';
+  legend.textContent = 'Topology dynamics';
+  options.className = 'topology-dynamics-options';
+
+  const modeOptions: readonly { value: HillOfHillsTopologyDynamicsMode; label: string }[] = [
+    { value: 'direct_synthesis', label: 'Direct' },
+    { value: 'persistent_pressure', label: 'Pressure' }
+  ];
+  for (const mode of modeOptions) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    const text = document.createElement('span');
+    input.type = 'radio';
+    input.name = 'topology-dynamics-mode';
+    input.value = mode.value;
+    input.checked = params.topologyDynamicsMode === mode.value;
+    input.addEventListener('input', () => {
+      if (!input.checked) return;
+      params = {
+        ...params,
+        topologyDynamicsMode: mode.value
+      };
+      persistParamSettings();
+    });
+    text.textContent = mode.label;
+    label.append(input, text);
+    options.append(label);
+  }
+
+  fieldset.append(legend, options);
+  parent.append(fieldset);
 }
 
 function createTopologyEventClassCard(kind: HillOfHillsTopologyPhaseKind): HTMLElement {

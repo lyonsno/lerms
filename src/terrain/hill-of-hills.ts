@@ -38,6 +38,7 @@ export const HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS = [
 export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 'invalid';
 export type HillOfHillsTopologyPhaseKind = (typeof HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS)[number];
 export type HillOfHillsTopologyGesturePreset = (typeof HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS)[number];
+export type HillOfHillsTopologyDynamicsMode = 'direct_synthesis' | 'persistent_pressure';
 export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming' | 'trail_forming' | 'topology_morphing' | 'mixed_forming';
 export type HillOfHillsPhaseKind = 'ditch_forming' | 'trail_forming' | HillOfHillsTopologyPhaseKind;
 export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
@@ -127,6 +128,10 @@ export type HillOfHillsTerrainBufferMetricChannel =
   | 'sideDitchAmount'
   | 'topologyAmount'
   | 'topologyHeightDelta'
+  | 'topologyDeformation'
+  | 'topologyVelocity'
+  | 'topologyForce'
+  | 'hillSwellMembership'
   | 'wetness'
   | 'growthTint'
   | 'previousHeight'
@@ -314,6 +319,8 @@ export interface HillOfHillsPhaseState {
   topologyEventCandidateChecksum: string;
   topologyEventCandidateScoreRange: Range;
   selectedTopologyEventScoreRange: Range;
+  topologyDynamicsMode: HillOfHillsTopologyDynamicsMode;
+  persistentTopologyField?: PersistentTopologyField;
 }
 
 export interface HillOfHillsPhaseInfluence {
@@ -323,6 +330,10 @@ export interface HillOfHillsPhaseInfluence {
   sideDitchAmount: number;
   topologyAmount: number;
   topologyHeightDelta: number;
+  topologyDeformation: number;
+  topologyVelocity: number;
+  topologyForce: number;
+  semanticMemberships: Partial<Record<HillOfHillsTopologyPhaseKind, number>>;
   episodeId?: string;
 }
 
@@ -422,6 +433,7 @@ export interface HillOfHillsTerrainParams {
   topologyPhaseDriftIntensity: number;
   topologyPhaseTimeMs: number;
   topologyPhaseDurationMs: number;
+  topologyDynamicsMode: HillOfHillsTopologyDynamicsMode;
   topologyEventClasses: HillOfHillsTopologyEventClassConfigMap;
   gridResolutionX: number;
   gridResolutionZ: number;
@@ -479,6 +491,8 @@ export interface HillOfHillsLayerTileCache {
   stableLayerKey?: string;
   stableLayerChecksum?: string;
   sourceKey?: string;
+  topologyDynamicsKey?: string;
+  persistentTopologyField?: PersistentTopologyField;
   stableHeightfield?: StableGridHeightfield;
   samples?: readonly HillOfHillsTerrainSample[];
   previousDirtyTiles?: readonly string[];
@@ -558,6 +572,13 @@ export interface HillOfHillsWitness {
   trailInfluenceRange: Range;
   sideDitchInfluenceRange: Range;
   topologyInfluenceRange: Range;
+  topologyDynamicsMode: HillOfHillsTopologyDynamicsMode;
+  topologyDynamicsChecksum: string;
+  topologyDynamicsIntegrationOriginMs: number;
+  topologyDeformationRange: Range;
+  topologyVelocityRange: Range;
+  topologyForceRange: Range;
+  hillSwellMembershipRange: Range;
   phaseInfluenceKinds: Partial<Record<HillOfHillsPhaseInfluenceKind, number>>;
   trailSeedMethod: HillOfHillsTrailSeedMethod;
   trailCandidateChecksum: string;
@@ -687,6 +708,19 @@ interface StableGridHeightfield {
   heights: readonly HeightParts[];
 }
 
+interface PersistentTopologyField {
+  timeMs: number;
+  integrationOriginMs: number;
+  xCount: number;
+  zCount: number;
+  dx: number;
+  dz: number;
+  deformation: readonly number[];
+  velocity: readonly number[];
+  force: readonly number[];
+  hillMembership: readonly number[];
+}
+
 interface DirtyRecomputeWitness {
   mode: HillOfHillsRecomputeMode;
   tileSize: {
@@ -736,6 +770,10 @@ const TERRAIN_BUFFER_METRIC_CHANNELS: readonly HillOfHillsTerrainBufferMetricCha
   'sideDitchAmount',
   'topologyAmount',
   'topologyHeightDelta',
+  'topologyDeformation',
+  'topologyVelocity',
+  'topologyForce',
+  'hillSwellMembership',
   'wetness',
   'growthTint',
   'previousHeight',
@@ -930,6 +968,7 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   topologyPhaseDriftIntensity: 0,
   topologyPhaseTimeMs: 0,
   topologyPhaseDurationMs: 1800,
+  topologyDynamicsMode: 'direct_synthesis',
   topologyEventClasses: defaultHillOfHillsTopologyEventClasses,
   gridResolutionX: 72,
   gridResolutionZ: 96,
@@ -970,7 +1009,15 @@ export function createHillOfHillsTerrainWithCache(
   const effectiveParams = normalizeParams({ ...defaultHillOfHillsParams, ...params });
   const fallbackStatus = normalizeFallbackStatus(sourceOptions);
   const source = createTerrainSource(effectiveParams, sourceOptions, fallbackStatus);
-  const phaseState = createPhaseState(effectiveParams);
+  const topologyDynamicsKey = persistentTopologyTrajectoryKey(effectiveParams);
+  const reusablePersistentField =
+    effectiveParams.topologyDynamicsMode === 'persistent_pressure' &&
+    cache.topologyDynamicsKey === topologyDynamicsKey &&
+    cache.persistentTopologyField &&
+    cache.persistentTopologyField.timeMs <= effectiveParams.topologyPhaseTimeMs
+      ? cache.persistentTopologyField
+      : undefined;
+  const phaseState = createPhaseState(effectiveParams, reusablePersistentField);
   const stableLayerKey = stableLayerCacheKey(effectiveParams);
   const stableLayerChecksum = checksum(stableLayerKey);
   const sourceKey = sourceCacheKey(source);
@@ -980,7 +1027,8 @@ export function createHillOfHillsTerrainWithCache(
     cache.samples === undefined ||
     cache.samples.length !== effectiveParams.gridResolutionX * effectiveParams.gridResolutionZ;
   const sourceInvalidated = cache.sourceKey !== undefined && cache.sourceKey !== sourceKey;
-  const sampleInvalidated = stableInvalidated || sourceInvalidated;
+  const topologyDynamicsInvalidated = cache.topologyDynamicsKey !== topologyDynamicsKey;
+  const sampleInvalidated = stableInvalidated || sourceInvalidated || topologyDynamicsInvalidated;
 
   let stableHeightfield = cache.stableHeightfield;
   let samples: readonly HillOfHillsTerrainSample[];
@@ -1017,6 +1065,8 @@ export function createHillOfHillsTerrainWithCache(
   cache.stableLayerKey = stableLayerKey;
   cache.stableLayerChecksum = stableLayerChecksum;
   cache.sourceKey = sourceKey;
+  cache.topologyDynamicsKey = topologyDynamicsKey;
+  cache.persistentTopologyField = phaseState.persistentTopologyField;
   cache.stableHeightfield = stableHeightfield;
   cache.samples = samples;
   cache.previousDirtyTiles = dirtyRecomputeWitness(effectiveParams, phaseState).dirtyTiles;
@@ -1094,26 +1144,30 @@ export function createHillOfHillsTerrainBuffer(terrain: HillOfHillsTerrain): Hil
     metrics[metricOffset + 8] = sample.phaseInfluence.sideDitchAmount;
     metrics[metricOffset + 9] = sample.phaseInfluence.topologyAmount;
     metrics[metricOffset + 10] = sample.phaseInfluence.topologyHeightDelta;
-    metrics[metricOffset + 11] = sample.proxyMaterial.wetness;
-    metrics[metricOffset + 12] = sample.proxyMaterial.growthTint;
-    metrics[metricOffset + 13] = sample.support.previousHeight;
-    metrics[metricOffset + 14] = sample.support.heightDelta;
-    metrics[metricOffset + 15] = sample.support.surfaceVelocity[1];
-    metrics[metricOffset + 16] = sample.surfaceDetail.density;
-    metrics[metricOffset + 17] = sample.surfaceDetail.edgeMix;
-    metrics[metricOffset + 18] = sample.materialEdge.strength;
-    metrics[metricOffset + 19] = sample.materialEdge.dissolve;
-    metrics[metricOffset + 20] = sample.pressure.slope;
-    metrics[metricOffset + 21] = sample.pressure.curvature;
-    metrics[metricOffset + 22] = sample.pressure.ridge;
-    metrics[metricOffset + 23] = sample.pressure.valley;
-    metrics[metricOffset + 24] = sample.pressure.saddle;
-    metrics[metricOffset + 25] = sample.pressure.basin;
-    metrics[metricOffset + 26] = sample.pressure.exposure;
-    metrics[metricOffset + 27] = sample.pressure.erosion;
-    metrics[metricOffset + 28] = sample.pressure.bloom;
-    metrics[metricOffset + 29] = sample.pressure.strata;
-    metrics[metricOffset + 30] = sample.pressure.vegetation;
+    metrics[metricOffset + 11] = sample.phaseInfluence.topologyDeformation;
+    metrics[metricOffset + 12] = sample.phaseInfluence.topologyVelocity;
+    metrics[metricOffset + 13] = sample.phaseInfluence.topologyForce;
+    metrics[metricOffset + 14] = sample.phaseInfluence.semanticMemberships.hill_swell ?? 0;
+    metrics[metricOffset + 15] = sample.proxyMaterial.wetness;
+    metrics[metricOffset + 16] = sample.proxyMaterial.growthTint;
+    metrics[metricOffset + 17] = sample.support.previousHeight;
+    metrics[metricOffset + 18] = sample.support.heightDelta;
+    metrics[metricOffset + 19] = sample.support.surfaceVelocity[1];
+    metrics[metricOffset + 20] = sample.surfaceDetail.density;
+    metrics[metricOffset + 21] = sample.surfaceDetail.edgeMix;
+    metrics[metricOffset + 22] = sample.materialEdge.strength;
+    metrics[metricOffset + 23] = sample.materialEdge.dissolve;
+    metrics[metricOffset + 24] = sample.pressure.slope;
+    metrics[metricOffset + 25] = sample.pressure.curvature;
+    metrics[metricOffset + 26] = sample.pressure.ridge;
+    metrics[metricOffset + 27] = sample.pressure.valley;
+    metrics[metricOffset + 28] = sample.pressure.saddle;
+    metrics[metricOffset + 29] = sample.pressure.basin;
+    metrics[metricOffset + 30] = sample.pressure.exposure;
+    metrics[metricOffset + 31] = sample.pressure.erosion;
+    metrics[metricOffset + 32] = sample.pressure.bloom;
+    metrics[metricOffset + 33] = sample.pressure.strata;
+    metrics[metricOffset + 34] = sample.pressure.vegetation;
     regionCodes[index] = codeForTerrainRegion(sample.region);
     materialCodes[index] = codeForProxyMaterial(sample.proxyMaterial.kind);
     surfaceDetailCodes[index] = codeForSurfaceDetail(sample.surfaceDetail.kind);
@@ -1189,6 +1243,10 @@ export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainB
   const sideDitchAmount = metric(buffer, metricOffset, 'sideDitchAmount');
   const topologyAmount = metric(buffer, metricOffset, 'topologyAmount');
   const topologyHeightDelta = metric(buffer, metricOffset, 'topologyHeightDelta');
+  const topologyDeformation = optionalMetric(buffer, metricOffset, 'topologyDeformation', 0);
+  const topologyVelocity = optionalMetric(buffer, metricOffset, 'topologyVelocity', 0);
+  const topologyForce = optionalMetric(buffer, metricOffset, 'topologyForce', 0);
+  const hillSwellMembership = optionalMetric(buffer, metricOffset, 'hillSwellMembership', 0);
   const heightDelta = metric(buffer, metricOffset, 'heightDelta');
   const surfaceVelocityY = metric(buffer, metricOffset, 'surfaceVelocityY');
   const pressure = pressureFieldsFromBuffer(buffer, metricOffset);
@@ -1234,7 +1292,11 @@ export function decodeHillOfHillsTerrainBufferSample(buffer: HillOfHillsTerrainB
       trailAmount,
       sideDitchAmount,
       topologyAmount,
-      topologyHeightDelta
+      topologyHeightDelta,
+      topologyDeformation,
+      topologyVelocity,
+      topologyForce,
+      semanticMemberships: hillSwellMembership > 0 ? { hill_swell: hillSwellMembership } : {}
     },
     support: {
       supportClass: 'single_valued_heightfield',
@@ -1324,6 +1386,7 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     topologyPhaseDriftIntensity: clamp(finiteOr(params.topologyPhaseDriftIntensity, 0), 0, 1),
     topologyPhaseTimeMs: Math.max(0, finiteOr(params.topologyPhaseTimeMs, 0)),
     topologyPhaseDurationMs: finiteAtLeast(params.topologyPhaseDurationMs, 240),
+    topologyDynamicsMode: params.topologyDynamicsMode === 'persistent_pressure' ? 'persistent_pressure' : 'direct_synthesis',
     topologyEventClasses: normalizeTopologyEventClasses(params.topologyEventClasses),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
     gridResolutionZ: Math.max(8, Math.round(finiteOr(params.gridResolutionZ, 96))),
@@ -1409,7 +1472,23 @@ function authorityForFallbackStatus(
   return requestedAuthority ?? 'live_simulation';
 }
 
-function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseState {
+function createPhaseState(
+  params: HillOfHillsTerrainParams,
+  previousPersistentField?: PersistentTopologyField
+): HillOfHillsPhaseState {
+  const proceduralState = createProceduralPhaseState(params);
+  if (params.topologyDynamicsMode !== 'persistent_pressure') {
+    return proceduralState;
+  }
+
+  return {
+    ...proceduralState,
+    topologyDynamicsMode: 'persistent_pressure',
+    persistentTopologyField: createPersistentTopologyField(params, previousPersistentField)
+  };
+}
+
+function createProceduralPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseState {
   const episodes: HillOfHillsPhaseEpisode[] = [];
   const ditchTiming = phaseTiming(params.ditchPhaseTimeMs, params.ditchPhaseDurationMs);
   const trailTiming = phaseTiming(params.trailPhaseTimeMs, params.trailPhaseDurationMs);
@@ -1644,7 +1723,8 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
       selectedTrailScoreRange,
       topologyEventCandidateChecksum: topologyCandidateSummary.checksum,
       topologyEventCandidateScoreRange: topologyCandidateSummary.scoreRange,
-      selectedTopologyEventScoreRange
+      selectedTopologyEventScoreRange,
+      topologyDynamicsMode: 'direct_synthesis'
     };
   }
 
@@ -1667,7 +1747,8 @@ function createPhaseState(params: HillOfHillsTerrainParams): HillOfHillsPhaseSta
     selectedTrailScoreRange,
     topologyEventCandidateChecksum: topologyCandidateSummary.checksum,
     topologyEventCandidateScoreRange: topologyCandidateSummary.scoreRange,
-    selectedTopologyEventScoreRange
+    selectedTopologyEventScoreRange,
+    topologyDynamicsMode: 'direct_synthesis'
   };
 }
 
@@ -2456,7 +2537,8 @@ function stablePhaseStateForTopologyScoring(): HillOfHillsPhaseState {
     selectedTrailScoreRange: zeroRange(),
     topologyEventCandidateChecksum: 'none',
     topologyEventCandidateScoreRange: zeroRange(),
-    selectedTopologyEventScoreRange: zeroRange()
+    selectedTopologyEventScoreRange: zeroRange(),
+    topologyDynamicsMode: 'direct_synthesis'
   };
 }
 
@@ -2467,7 +2549,11 @@ function emptyPhaseInfluence(): HillOfHillsPhaseInfluence {
     trailAmount: 0,
     sideDitchAmount: 0,
     topologyAmount: 0,
-    topologyHeightDelta: 0
+    topologyHeightDelta: 0,
+    topologyDeformation: 0,
+    topologyVelocity: 0,
+    topologyForce: 0,
+    semanticMemberships: {}
   };
 }
 
@@ -2561,7 +2647,189 @@ function activePhaseKinds(episodes: readonly HillOfHillsPhaseEpisode[]): Partial
   return counts;
 }
 
-function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: number): HillOfHillsPhaseInfluence {
+function createPersistentTopologyField(
+  params: HillOfHillsTerrainParams,
+  previousField?: PersistentTopologyField
+): PersistentTopologyField {
+  const xCount = Math.min(24, Math.max(8, params.gridResolutionX));
+  const zCount = Math.min(32, Math.max(8, params.gridResolutionZ));
+  const dx = params.width / Math.max(1, xCount - 1);
+  const dz = params.length / Math.max(1, zCount - 1);
+  const sampleCount = xCount * zCount;
+  const reusablePreviousField =
+    previousField &&
+    previousField.xCount === xCount &&
+    previousField.zCount === zCount &&
+    previousField.timeMs <= params.topologyPhaseTimeMs
+      ? previousField
+      : undefined;
+  let deformation = reusablePreviousField
+    ? Array.from(reusablePreviousField.deformation)
+    : new Array<number>(sampleCount).fill(0);
+  let velocity = reusablePreviousField ? Array.from(reusablePreviousField.velocity) : new Array<number>(sampleCount).fill(0);
+  let force = reusablePreviousField ? Array.from(reusablePreviousField.force) : new Array<number>(sampleCount).fill(0);
+  let hillMembership = reusablePreviousField
+    ? Array.from(reusablePreviousField.hillMembership)
+    : new Array<number>(sampleCount).fill(0);
+  const targetSeconds = params.topologyPhaseTimeMs / 1000;
+  const fixedStepSeconds = 1 / 60;
+  const integrationOriginMs = reusablePreviousField?.timeMs ?? 0;
+  let elapsedSeconds = integrationOriginMs / 1000;
+
+  while (elapsedSeconds < targetSeconds - 1e-9) {
+    const stepSeconds = Math.min(fixedStepSeconds, targetSeconds - elapsedSeconds);
+    const sampleTimeMs = (elapsedSeconds + stepSeconds) * 1000;
+    const schedule = persistentTopologySchedule(params, sampleTimeMs);
+    const nextDeformation = deformation.slice();
+    const nextVelocity = velocity.slice();
+    const nextForce = force.slice();
+    const nextHillMembership = hillMembership.slice();
+
+    for (let zi = 0; zi < zCount; zi += 1) {
+      const z = -params.length * 0.5 + zi * dz;
+      for (let xi = 0; xi < xCount; xi += 1) {
+        const x = -params.width * 0.5 + xi * dx;
+        const index = zi * xCount + xi;
+        const center = deformation[index];
+        const left = deformation[zi * xCount + Math.max(0, xi - 1)];
+        const right = deformation[zi * xCount + Math.min(xCount - 1, xi + 1)];
+        const back = deformation[Math.max(0, zi - 1) * xCount + xi];
+        const forward = deformation[Math.min(zCount - 1, zi + 1) * xCount + xi];
+        const laplacian = (left + right + back + forward - center * 4) / Math.max(0.001, dx * dz);
+        const eligibility = hillSwellEligibilityFromDeformedState(params, x, z, center, laplacian);
+        const eventForce = hillSwellEventForceAt(schedule, params, x, z) * (0.52 + eligibility * 0.48);
+        const comfortExcess = Math.max(0, Math.abs(center) - 0.035);
+        const restorativeForce = -Math.sign(center) * comfortExcess * 0.72;
+        const smoothingForce = laplacian * 0.045;
+        const netForce = clamp(eventForce + restorativeForce + smoothingForce - velocity[index] * 1.35, -2.4, 2.4);
+        const nextV = clamp(velocity[index] + netForce * stepSeconds, -1.2, 1.2);
+        const nextD = clamp(center + nextV * stepSeconds, -0.72, 0.72);
+        const membershipTarget = clamp(
+          eligibility * 0.55 + smoothstep(0.002, 0.16, nextD) * 0.32 + smoothstep(0.01, 0.55, Math.abs(nextV)) * 0.13,
+          0,
+          1
+        );
+        const membershipBlend = 1 - Math.exp(-stepSeconds * 5.5);
+
+        nextVelocity[index] = nextV;
+        nextDeformation[index] = nextD;
+        nextForce[index] = eventForce;
+        nextHillMembership[index] = hillMembership[index] + (membershipTarget - hillMembership[index]) * membershipBlend;
+      }
+    }
+
+    deformation = nextDeformation;
+    velocity = nextVelocity;
+    force = nextForce;
+    hillMembership = nextHillMembership;
+    elapsedSeconds += stepSeconds;
+  }
+
+  if (!reusablePreviousField && targetSeconds === 0) {
+    hillMembership = hillMembership.map((_, index) => {
+      const xi = index % xCount;
+      const zi = Math.floor(index / xCount);
+      const x = -params.width * 0.5 + xi * dx;
+      const z = -params.length * 0.5 + zi * dz;
+      return hillSwellEligibilityFromDeformedState(params, x, z, 0, 0);
+    });
+  }
+
+  return {
+    timeMs: params.topologyPhaseTimeMs,
+    integrationOriginMs,
+    xCount,
+    zCount,
+    dx,
+    dz,
+    deformation,
+    velocity,
+    force,
+    hillMembership
+  };
+}
+
+function persistentTopologyTrajectoryKey(params: HillOfHillsTerrainParams): string {
+  if (params.topologyDynamicsMode === 'direct_synthesis') {
+    return 'direct_synthesis';
+  }
+  return checksum(
+    JSON.stringify({
+      ...params,
+      topologyPhaseTimeMs: 0,
+      topologyDynamicsMode: 'persistent_pressure'
+    })
+  );
+}
+
+function persistentTopologySchedule(params: HillOfHillsTerrainParams, timeMs: number): HillOfHillsPhaseState {
+  const scheduleParams: HillOfHillsTerrainParams = {
+    ...params,
+    topologyPhaseTimeMs: timeMs,
+    topologyDynamicsMode: 'direct_synthesis'
+  };
+  return createProceduralPhaseState(scheduleParams);
+}
+
+function hillSwellEventForceAt(
+  phaseState: HillOfHillsPhaseState,
+  params: HillOfHillsTerrainParams,
+  x: number,
+  z: number
+): number {
+  let total = 0;
+  for (const episode of phaseState.activeEpisodes) {
+    if (episode.kind !== 'hill_swell' || !episode.topologyEvent) continue;
+    const px = x - episode.center[0];
+    const pz = z - episode.center[2];
+    const radial = Math.hypot(px / Math.max(0.001, episode.radius), pz / Math.max(0.001, episode.radius * 1.06));
+    const spatial = 1 - smoothstep(0.08, 1, radial);
+    const envelope = episode.topologyEvent.envelope;
+    const gestureAmount = clamp(envelope.phaseIn * (1 - envelope.phaseOut), 0, 1);
+    total += spatial * gestureAmount * params.topologyPhaseIntensity * envelope.force * episode.heightScale * 1.15;
+  }
+  return clamp(total, 0, 2.4);
+}
+
+function hillSwellEligibilityFromDeformedState(
+  params: HillOfHillsTerrainParams,
+  x: number,
+  z: number,
+  deformation: number,
+  deformationLaplacian: number
+): number {
+  const stable = stableHeightAt(params, x, z);
+  const baseRelief = stable.hills / Math.max(0.001, params.hillHeight * 1.6);
+  const deformedRelief = smoothstep(-0.03, 0.2, deformation);
+  const roundedCrown = 1 - smoothstep(0.08, 0.9, Math.max(0, deformationLaplacian));
+  const wallExclusion = 1 - smoothstep(params.channelRadius * 0.72, params.channelRadius, Math.abs(x));
+  const longitudinalInterior = 1 - smoothstep(params.length * 0.42, params.length * 0.5, Math.abs(z));
+  return clamp(baseRelief * 0.46 + deformedRelief * 0.3 + roundedCrown * 0.12 + wallExclusion * longitudinalInterior * 0.12, 0, 1);
+}
+
+function persistentTopologySampleAt(field: PersistentTopologyField, params: HillOfHillsTerrainParams, x: number, z: number) {
+  const gridX = clamp((x + params.width * 0.5) / Math.max(0.001, field.dx), 0, field.xCount - 1);
+  const gridZ = clamp((z + params.length * 0.5) / Math.max(0.001, field.dz), 0, field.zCount - 1);
+  const x0 = Math.floor(gridX);
+  const z0 = Math.floor(gridZ);
+  const x1 = Math.min(field.xCount - 1, x0 + 1);
+  const z1 = Math.min(field.zCount - 1, z0 + 1);
+  const tx = gridX - x0;
+  const tz = gridZ - z0;
+  const interpolate = (values: readonly number[]) => {
+    const a = values[z0 * field.xCount + x0] * (1 - tx) + values[z0 * field.xCount + x1] * tx;
+    const b = values[z1 * field.xCount + x0] * (1 - tx) + values[z1 * field.xCount + x1] * tx;
+    return a * (1 - tz) + b * tz;
+  };
+  return {
+    deformation: interpolate(field.deformation),
+    velocity: interpolate(field.velocity),
+    force: interpolate(field.force),
+    hillMembership: clamp(interpolate(field.hillMembership), 0, 1)
+  };
+}
+
+function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: number, params?: HillOfHillsTerrainParams): HillOfHillsPhaseInfluence {
   let bestKind: HillOfHillsPhaseInfluenceKind = 'none';
   let bestAmount = 0;
   let bestTrailAmount = 0;
@@ -2589,6 +2857,9 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
     }
 
     if (episode.kind !== 'ditch_forming') {
+      if (phaseState.topologyDynamicsMode === 'persistent_pressure' && episode.kind === 'hill_swell') {
+        continue;
+      }
       const influence = topologyInfluenceAtEpisode(episode, x, z);
       if (influence.amount > 0) {
         topologyAmount = 1 - (1 - topologyAmount) * (1 - influence.amount);
@@ -2617,8 +2888,29 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
     }
   }
 
-  const topologyHeightDelta =
+  let topologyHeightDelta =
     topologyWeight > 0 ? topologyHeightDeltaSum / Math.max(1, Math.sqrt(topologyWeight)) : 0;
+  let topologyDeformation = 0;
+  let topologyVelocity = 0;
+  let topologyForce = 0;
+  let semanticMemberships: Partial<Record<HillOfHillsTopologyPhaseKind, number>> = {};
+
+  if (phaseState.topologyDynamicsMode === 'persistent_pressure' && phaseState.persistentTopologyField && params) {
+    const dynamics = persistentTopologySampleAt(phaseState.persistentTopologyField, params, x, z);
+    topologyDeformation = dynamics.deformation;
+    topologyVelocity = dynamics.velocity;
+    topologyForce = dynamics.force;
+    semanticMemberships = { hill_swell: dynamics.hillMembership };
+    topologyAmount = 1 - (1 - topologyAmount) * (1 - dynamics.hillMembership);
+    const heightScale = 0.8 + params.hillHeight * 0.22 + params.valleyHeight * 0.18;
+    topologyHeightDelta += dynamics.deformation / Math.max(0.001, heightScale);
+    if (dynamics.hillMembership > topologyDominantAmount) {
+      topologyKind = 'hill_swell';
+      topologyDominantAmount = dynamics.hillMembership;
+      topologyEpisodeId = 'persistent-hill-swell-field';
+    }
+  }
+
   if (topologyAmount > bestAmount) {
     bestKind = topologyKind;
     bestAmount = topologyAmount;
@@ -2634,7 +2926,11 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
       trailAmount: 0,
       sideDitchAmount: 0,
       topologyAmount: 0,
-      topologyHeightDelta: 0
+      topologyHeightDelta: 0,
+      topologyDeformation,
+      topologyVelocity,
+      topologyForce,
+      semanticMemberships
     };
   }
 
@@ -2645,6 +2941,10 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
     sideDitchAmount: bestSideDitchAmount,
     topologyAmount,
     topologyHeightDelta,
+    topologyDeformation,
+    topologyVelocity,
+    topologyForce,
+    semanticMemberships,
     episodeId: bestEpisodeId ?? topologyEpisodeId
   };
 }
@@ -2789,7 +3089,7 @@ function buildGridHeightfield(params: HillOfHillsTerrainParams, phaseState: Hill
     const zi = Math.floor(index / params.gridResolutionX);
     const x = -params.width * 0.5 + xi * stableHeightfield.dx;
     const z = -params.length * 0.5 + zi * stableHeightfield.dz;
-    const phaseInfluence = phaseInfluenceAt(phaseState, x, z);
+    const phaseInfluence = phaseInfluenceAt(phaseState, x, z, params);
     heights.push(applyPhaseToStableHeightParts(params, x, stableHeightfield.heights[index], phaseInfluence));
     phaseInfluences.push(phaseInfluence);
   }
@@ -2895,7 +3195,7 @@ function phaseInfluenceForGridIndex(
   }
   const x = -params.width * 0.5 + xi * heightfield.dx;
   const z = -params.length * 0.5 + zi * heightfield.dz;
-  return phaseInfluenceAt(phaseState, x, z);
+  return phaseInfluenceAt(phaseState, x, z, params);
 }
 
 function sampleTerrain(
@@ -2908,7 +3208,7 @@ function sampleTerrain(
 ): HillOfHillsTerrainSample {
   const clampedX = clamp(x, -params.width * 0.5, params.width * 0.5);
   const clampedZ = clamp(z, -params.length * 0.5, params.length * 0.5);
-  const phaseInfluence = phaseInfluenceAt(phaseState, clampedX, clampedZ);
+  const phaseInfluence = phaseInfluenceAt(phaseState, clampedX, clampedZ, params);
   const heightParts = heightAt(params, phaseState, clampedX, clampedZ);
   const height = heightParts.height;
   const epsX = Math.max(0.02, params.width / (params.gridResolutionX * 2));
@@ -3192,10 +3492,15 @@ function supportSampleFor(
     z: worldZToSampleIndex(params, z)
   };
   const activeMotion = phaseState.activeEpisodes.length > 0 && phaseInfluence.amount > 0;
-  const heightDelta = activeMotion ? clamp((heightParts.phaseTopology - heightParts.phaseDitch) * 0.08, -0.24, 0.24) : 0;
+  const persistentMotion = phaseState.topologyDynamicsMode === 'persistent_pressure';
+  const heightDelta = persistentMotion
+    ? clamp(phaseInfluence.topologyVelocity * (16 / 1000), -0.24, 0.24)
+    : activeMotion
+      ? clamp((heightParts.phaseTopology - heightParts.phaseDitch) * 0.08, -0.24, 0.24)
+      : 0;
   const previousHeight = heightParts.height - heightDelta;
   const supportTickSeconds = 16 / 1000;
-  const surfaceVelocity: Vec3 = [0, heightDelta / supportTickSeconds, 0];
+  const surfaceVelocity: Vec3 = [0, persistentMotion ? phaseInfluence.topologyVelocity : heightDelta / supportTickSeconds, 0];
   const shock: HillOfHillsSupportShockClass = Math.abs(heightDelta) > 0.45 ? 'shock_reset' : 'none';
   const motionClass: HillOfHillsSupportMotionClass = shock === 'shock_reset' ? 'shock_reset' : activeMotion ? 'phase_morph' : 'stable';
 
@@ -3595,7 +3900,7 @@ function blendedProxyColor(blends: HillOfHillsProxyMaterial['blends']): Vec3 {
 }
 
 function heightAt(params: HillOfHillsTerrainParams, phaseState: HillOfHillsPhaseState, x: number, z: number): HeightParts {
-  return applyPhaseToStableHeightParts(params, x, stableHeightAt(params, x, z), phaseInfluenceAt(phaseState, x, z));
+  return applyPhaseToStableHeightParts(params, x, stableHeightAt(params, x, z), phaseInfluenceAt(phaseState, x, z, params));
 }
 
 function stableHeightAt(params: HillOfHillsTerrainParams, x: number, z: number): HeightParts {
@@ -3889,6 +4194,10 @@ function createWitness(
   const trailInfluenceRange = createRange();
   const sideDitchInfluenceRange = createRange();
   const topologyInfluenceRange = createRange();
+  const topologyDeformationRange = createRange();
+  const topologyVelocityRange = createRange();
+  const topologyForceRange = createRange();
+  const hillSwellMembershipRange = createRange();
   const recomputeWitness = dirtyRecomputeWitness(params, phaseState, cacheStats?.dirtyTiles);
   const supportFrame = supportFrameWitness(params, phaseState, samples, recomputeWitness);
   const resolvedCacheStats =
@@ -3918,6 +4227,10 @@ function createWitness(
     includeInRange(trailInfluenceRange, sample.phaseInfluence.trailAmount);
     includeInRange(sideDitchInfluenceRange, sample.phaseInfluence.sideDitchAmount);
     includeInRange(topologyInfluenceRange, sample.phaseInfluence.topologyAmount);
+    includeInRange(topologyDeformationRange, sample.phaseInfluence.topologyDeformation);
+    includeInRange(topologyVelocityRange, sample.phaseInfluence.topologyVelocity);
+    includeInRange(topologyForceRange, sample.phaseInfluence.topologyForce);
+    includeInRange(hillSwellMembershipRange, sample.phaseInfluence.semanticMemberships.hill_swell ?? 0);
     includeInRange(topologyRanges.flowAccumulation, sample.topology.flowAccumulation);
     includeInRange(topologyRanges.ridgeStrength, sample.topology.ridgeStrength);
     includeInRange(topologyRanges.valleyStrength, sample.topology.valleyStrength);
@@ -3992,6 +4305,13 @@ function createWitness(
     trailInfluenceRange,
     sideDitchInfluenceRange,
     topologyInfluenceRange,
+    topologyDynamicsMode: phaseState.topologyDynamicsMode,
+    topologyDynamicsChecksum: checksumParts(samples.map((sample) => topologyDynamicsSignature(sample))),
+    topologyDynamicsIntegrationOriginMs: phaseState.persistentTopologyField?.integrationOriginMs ?? 0,
+    topologyDeformationRange: settledRange(topologyDeformationRange),
+    topologyVelocityRange: settledRange(topologyVelocityRange),
+    topologyForceRange: settledRange(topologyForceRange),
+    hillSwellMembershipRange: settledRange(hillSwellMembershipRange),
     phaseInfluenceKinds,
     trailSeedMethod: phaseState.trailSeedMethod,
     trailCandidateChecksum: phaseState.trailCandidateChecksum,
@@ -4090,7 +4410,21 @@ function phaseInfluenceSignature(sample: HillOfHillsTerrainSample): string {
     sample.phaseInfluence.trailAmount.toFixed(3),
     sample.phaseInfluence.sideDitchAmount.toFixed(3),
     sample.phaseInfluence.topologyAmount.toFixed(3),
-    sample.phaseInfluence.topologyHeightDelta.toFixed(3)
+    sample.phaseInfluence.topologyHeightDelta.toFixed(3),
+    sample.phaseInfluence.topologyDeformation.toFixed(3),
+    sample.phaseInfluence.topologyVelocity.toFixed(3),
+    sample.phaseInfluence.topologyForce.toFixed(3),
+    (sample.phaseInfluence.semanticMemberships.hill_swell ?? 0).toFixed(3)
+  ].join(':');
+}
+
+function topologyDynamicsSignature(sample: HillOfHillsTerrainSample): string {
+  return [
+    sample.id,
+    sample.phaseInfluence.topologyDeformation.toFixed(4),
+    sample.phaseInfluence.topologyVelocity.toFixed(4),
+    sample.phaseInfluence.topologyForce.toFixed(4),
+    (sample.phaseInfluence.semanticMemberships.hill_swell ?? 0).toFixed(4)
   ].join(':');
 }
 
@@ -4219,6 +4553,27 @@ function dirtyRecomputeWitness(
 
       for (let tileZ = minTileZ; tileZ <= maxTileZ; tileZ += 1) {
         for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
+          dirtyTiles.add(`${tileX}:${tileZ}`);
+        }
+      }
+    }
+
+    const persistentField = phaseState.persistentTopologyField;
+    if (phaseState.topologyDynamicsMode === 'persistent_pressure' && persistentField) {
+      for (let fieldZ = 0; fieldZ < persistentField.zCount; fieldZ += 1) {
+        for (let fieldX = 0; fieldX < persistentField.xCount; fieldX += 1) {
+          const fieldIndex = fieldZ * persistentField.xCount + fieldX;
+          if (
+            Math.abs(persistentField.deformation[fieldIndex]) <= 0.0005 &&
+            Math.abs(persistentField.velocity[fieldIndex]) <= 0.0005 &&
+            Math.abs(persistentField.force[fieldIndex]) <= 0.0005
+          ) {
+            continue;
+          }
+          const sampleX = Math.round((fieldX / Math.max(1, persistentField.xCount - 1)) * (params.gridResolutionX - 1));
+          const sampleZ = Math.round((fieldZ / Math.max(1, persistentField.zCount - 1)) * (params.gridResolutionZ - 1));
+          const tileX = clampInt(Math.floor(sampleX / tileSize.x), 0, tileColumns - 1);
+          const tileZ = clampInt(Math.floor(sampleZ / tileSize.z), 0, tileRows - 1);
           dirtyTiles.add(`${tileX}:${tileZ}`);
         }
       }

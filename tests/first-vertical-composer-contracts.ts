@@ -98,7 +98,11 @@ const terrainSample: HillOfHillsTerrainSample = {
     trailAmount: 0,
     sideDitchAmount: 0,
     topologyAmount: 0,
-    topologyHeightDelta: 0
+    topologyHeightDelta: 0,
+    topologyDeformation: 0,
+    topologyVelocity: 0,
+    topologyForce: 0,
+    semanticMemberships: {}
   },
   support: {
     supportClass: 'single_valued_heightfield',
@@ -196,7 +200,8 @@ const terrain: HillOfHillsTerrain = {
     selectedTrailScoreRange: { min: 0, max: 0 },
     topologyEventCandidateChecksum: 'none',
     topologyEventCandidateScoreRange: { min: 0, max: 0 },
-    selectedTopologyEventScoreRange: { min: 0, max: 0 }
+    selectedTopologyEventScoreRange: { min: 0, max: 0 },
+    topologyDynamicsMode: 'direct_synthesis'
   },
   samples: [terrainSample],
   witness: {
@@ -325,6 +330,13 @@ const terrain: HillOfHillsTerrain = {
     trailInfluenceRange: { min: 0, max: 0 },
     sideDitchInfluenceRange: { min: 0, max: 0 },
     topologyInfluenceRange: { min: 0, max: 0 },
+    topologyDynamicsMode: 'direct_synthesis',
+    topologyDynamicsChecksum: 'composer-dynamics-fixture-checksum',
+    topologyDynamicsIntegrationOriginMs: 0,
+    topologyDeformationRange: { min: 0, max: 0 },
+    topologyVelocityRange: { min: 0, max: 0 },
+    topologyForceRange: { min: 0, max: 0 },
+    hillSwellMembershipRange: { min: 0, max: 0 },
     phaseInfluenceKinds: { none: 1 },
     trailSeedMethod: 'none',
     trailCandidateChecksum: 'none',
