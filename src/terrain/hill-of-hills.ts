@@ -724,6 +724,7 @@ interface PersistentTopologyField {
 
 interface PersistentTopologySelection {
   epoch: number;
+  selectionKey: string;
   candidates: readonly TopologyMotionCandidate[];
   candidateChecksum: string;
   candidateScoreRange: Range;
@@ -2736,10 +2737,14 @@ function createPersistentTopologyField(
       topologySelections
     };
     const selectionEpoch = Math.floor(sampleTimeMs / Math.max(1, params.topologyPhaseDurationMs));
-    if (!topologySelections.some((selection) => selection.epoch === selectionEpoch)) {
+    const selectionKey = persistentTopologySelectionKey(params);
+    const currentSelection = topologySelections.find((selection) => selection.epoch === selectionEpoch);
+    if (!currentSelection || currentSelection.selectionKey !== selectionKey) {
       const selection = createPersistentTopologySelection(params, selectionEpoch, currentField);
       topologySelections = [
-        ...topologySelections.filter((candidate) => candidate.epoch >= selectionEpoch - 1),
+        ...topologySelections.filter(
+          (candidate) => candidate.epoch >= selectionEpoch - 1 && candidate.epoch !== selectionEpoch
+        ),
         selection
       ];
       currentField = {
@@ -2820,9 +2825,11 @@ function createPersistentTopologySelection(
   epoch: number,
   field: PersistentTopologyField
 ): PersistentTopologySelection {
+  const selectionKey = persistentTopologySelectionKey(params);
   if (params.topologyPhaseIntensity <= 0 || params.topologyPhaseLimit <= 0) {
     return {
       epoch,
+      selectionKey,
       candidates: [],
       candidateChecksum: 'none',
       candidateScoreRange: zeroRange()
@@ -2832,6 +2839,7 @@ function createPersistentTopologySelection(
   const rng = mulberry32(params.topologyPhaseSeed + epoch * 104729 + params.seed * 31);
   return {
     epoch,
+    selectionKey,
     candidates: selectTopologyMotionCandidates(
       params,
       candidateSummary.candidates,
@@ -2850,9 +2858,31 @@ function persistentTopologyTrajectoryKey(params: HillOfHillsTerrainParams): stri
   }
   return checksum(
     JSON.stringify({
-      ...params,
-      topologyPhaseTimeMs: 0,
+      seed: params.seed,
+      width: params.width,
+      length: params.length,
+      fieldResolutionX: Math.min(24, Math.max(8, params.gridResolutionX)),
+      fieldResolutionZ: Math.min(32, Math.max(8, params.gridResolutionZ)),
+      topologyPhaseSeed: params.topologyPhaseSeed,
       topologyDynamicsMode: 'persistent_pressure'
+    })
+  );
+}
+
+function persistentTopologySelectionKey(params: HillOfHillsTerrainParams): string {
+  return checksum(
+    JSON.stringify({
+      topologyPhaseIntensity: params.topologyPhaseIntensity,
+      topologyPhaseLimit: params.topologyPhaseLimit,
+      topologyPhaseRadius: params.topologyPhaseRadius,
+      topologyPhaseBasinBias: params.topologyPhaseBasinBias,
+      topologyPhaseValleyBias: params.topologyPhaseValleyBias,
+      topologyPhaseHillBias: params.topologyPhaseHillBias,
+      topologyPhaseRidgeBias: params.topologyPhaseRidgeBias,
+      topologyPhaseSaddleBias: params.topologyPhaseSaddleBias,
+      topologyPhaseDriftIntensity: params.topologyPhaseDriftIntensity,
+      topologyPhaseDurationMs: params.topologyPhaseDurationMs,
+      topologyEventClasses: params.topologyEventClasses
     })
   );
 }

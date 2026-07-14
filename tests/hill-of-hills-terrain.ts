@@ -1526,6 +1526,42 @@ assert(
   'the live tile-cache route advances persistent topology from its previously witnessed world state'
 );
 
+const operatorControlCache = createHillOfHillsLayerTileCache();
+const operatorControlLow = createHillOfHillsTerrainWithCache(operatorControlCache, {
+  ...persistentTopologyParams,
+  topologyPhaseIntensity: 0.18,
+  topologyPhaseTimeMs: 280
+});
+const operatorControlHigh = createHillOfHillsTerrainWithCache(operatorControlCache, {
+  ...persistentTopologyParams,
+  topologyPhaseIntensity: 1,
+  topologyPhaseTimeMs: 296
+});
+assert(
+  operatorControlHigh.witness.topologyDynamicsIntegrationOriginMs === 280,
+  'changing an operator force control advances the existing world state instead of replaying from trajectory origin'
+);
+assert(
+  operatorControlHigh.witness.topologyForceRange.max > operatorControlLow.witness.topologyForceRange.max * 2,
+  'changing an operator force control materially changes the force applied to the preserved world state'
+);
+
+const baseTuningCache = createHillOfHillsLayerTileCache();
+createHillOfHillsTerrainWithCache(baseTuningCache, {
+  ...persistentTopologyParams,
+  crownZ: defaultHillOfHillsParams.crownZ,
+  topologyPhaseTimeMs: 280
+});
+const baseTuningAdvance = createHillOfHillsTerrainWithCache(baseTuningCache, {
+  ...persistentTopologyParams,
+  crownZ: defaultHillOfHillsParams.crownZ + 0.1,
+  topologyPhaseTimeMs: 296
+});
+assert(
+  baseTuningAdvance.witness.topologyDynamicsIntegrationOriginMs === 280,
+  'base-terrain tuning on the same coordinate domain cannot erase persistent deformation and replay from origin'
+);
+
 const persistentCachedRewind = createHillOfHillsTerrainWithCache(persistentCache, {
   ...persistentTopologyParams,
   topologyPhaseTimeMs: 120

@@ -17,6 +17,18 @@ import {
   type HillOfHillsTerrainParams,
 } from "../src/terrain/hill-of-hills.js";
 
+function reportRequestFor(
+  requestedParams: HillOfHillsTerrainParams,
+  terrains: readonly ReturnType<typeof createHillOfHillsTerrain>[],
+) {
+  return {
+    requestedParams,
+    requestedSource: {
+      route: terrains[0].source.route,
+    },
+  };
+}
+
 const allowedCounts = [...HILL_PHASE_FILMSTRIP_FRAME_COUNTS];
 
 assert.deepEqual(allowedCounts, [5, 10, 15, 25, 50]);
@@ -252,16 +264,80 @@ assert.ok(
   "localized height spikes should not be labeled as whole-field steps",
 );
 
+const reportSource: { route: string; configId: string } = {
+  route: "hill-of-hills/phase-filmstrip-contract",
+  configId: "phase-filmstrip-contract-v1",
+};
 const reportTerrains = continuitySchedule.map((frame) =>
-  createHillOfHillsTerrain({
-    ...continuityParams,
-    topologyPhaseTimeMs: frame.phaseTimeMs,
-  }),
+  createHillOfHillsTerrain(
+    {
+      ...continuityParams,
+      topologyPhaseTimeMs: frame.phaseTimeMs,
+    },
+    {
+      ...reportSource,
+      frameId: `phase-filmstrip-contract-${frame.index}`,
+      timestampMs: frame.phaseTimeMs,
+    },
+  ),
 );
-const continuityReport = createHillPhaseContinuityReport(continuitySchedule, reportTerrains);
+const reportRequest = {
+  requestedParams: continuityParams,
+  requireExactControls: true,
+  requestedSource: reportSource,
+};
+const createAuthenticatedContinuityReport = createHillPhaseContinuityReport as unknown as (
+  frames: typeof continuitySchedule,
+  terrains: typeof reportTerrains,
+  request: typeof reportRequest,
+) => Omit<ReturnType<typeof createHillPhaseContinuityReport>, "frames"> & {
+  schema: "lerms.hill-phase-continuity-report.v1";
+  requestedControls: Pick<HillOfHillsTerrainParams, "topologyPhaseIntensity">;
+  effectiveControls: Pick<HillOfHillsTerrainParams, "topologyPhaseLimit">;
+  sourceIdentity: {
+    requestedRoute: string;
+    effectiveRoute: string;
+    effectiveConfigId: string;
+  };
+  frames: readonly (ReturnType<typeof createHillPhaseContinuityReport>["frames"][number] & {
+    dynamics: {
+      deformation: { max: number };
+      velocity: { max: number };
+      force: { max: number };
+      hillSwellMembership: { max: number };
+    };
+  })[];
+};
 
+assert.throws(
+  () => createAuthenticatedContinuityReport(continuitySchedule.slice(0, -1), reportTerrains, reportRequest),
+  /frame.*terrain|terrain.*frame/i,
+  "continuity reports must reject partial frame evidence instead of silently truncating it",
+);
+assert.throws(
+  () =>
+    createAuthenticatedContinuityReport(continuitySchedule, reportTerrains, {
+      ...reportRequest,
+      requestedSource: { ...reportSource, route: "hill-of-hills/wrong-route" },
+    }),
+  /route/i,
+  "continuity reports must reject an effective route that differs from the requested route",
+);
+
+const continuityReport = createAuthenticatedContinuityReport(continuitySchedule, reportTerrains, reportRequest);
+
+assert.equal(continuityReport.schema, "lerms.hill-phase-continuity-report.v1");
+assert.equal(continuityReport.requestedControls.topologyPhaseIntensity, continuityParams.topologyPhaseIntensity);
+assert.equal(continuityReport.effectiveControls.topologyPhaseLimit, continuityParams.topologyPhaseLimit);
+assert.equal(continuityReport.sourceIdentity.requestedRoute, reportSource.route);
+assert.equal(continuityReport.sourceIdentity.effectiveRoute, reportSource.route);
+assert.equal(continuityReport.sourceIdentity.effectiveConfigId, reportSource.configId);
 assert.equal(continuityReport.frames.length, continuitySchedule.length);
 assert.equal(continuityReport.frames[0].delta, undefined);
+assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamics.deformation.max)));
+assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamics.velocity.max)));
+assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamics.force.max)));
+assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamics.hillSwellMembership.max)));
 assert.equal(continuityReport.frames[1].delta?.from.index, continuitySchedule[0].index);
 assert.ok(continuityReport.rankedTransitions.length > 0, "report should rank frame-to-frame transitions for machine diagnosis");
 assert.ok(
@@ -319,7 +395,11 @@ const zeroTailCleanupTerrains = zeroTailCleanupSchedule.map((frame) =>
     topologyPhaseTimeMs: frame.phaseTimeMs,
   }),
 );
-const zeroTailCleanupReport = createHillPhaseContinuityReport(zeroTailCleanupSchedule, zeroTailCleanupTerrains);
+const zeroTailCleanupReport = createHillPhaseContinuityReport(
+  zeroTailCleanupSchedule,
+  zeroTailCleanupTerrains,
+  reportRequestFor(zeroTailCleanupParams, zeroTailCleanupTerrains),
+);
 const zeroTailCleanupDelta = zeroTailCleanupReport.frames.find((frame) => frame.frame.index === 24)?.delta;
 
 assert.ok(zeroTailCleanupDelta, "fixture should include the zero-tail cleanup transition");
@@ -347,7 +427,11 @@ const releaseToTailTerrains = releaseToTailSchedule.map((frame) =>
     topologyPhaseTimeMs: frame.phaseTimeMs,
   }),
 );
-const releaseToTailReport = createHillPhaseContinuityReport(releaseToTailSchedule, releaseToTailTerrains);
+const releaseToTailReport = createHillPhaseContinuityReport(
+  releaseToTailSchedule,
+  releaseToTailTerrains,
+  reportRequestFor(releaseToTailParams, releaseToTailTerrains),
+);
 const releaseToTailDelta = releaseToTailReport.frames.find(
   ({ frame, delta }) => frame.reason === "tail" && delta?.from.reason === "release",
 )?.delta;
@@ -478,6 +562,7 @@ const mixedLifecycleContinuityTerrains = mixedLifecycleContinuitySchedule.map((f
 const mixedLifecycleContinuityReport = createHillPhaseContinuityReport(
   mixedLifecycleContinuitySchedule,
   mixedLifecycleContinuityTerrains,
+  reportRequestFor(mixedLifecycleContinuityParams, mixedLifecycleContinuityTerrains),
 );
 const hotLifecycleTransitions = mixedLifecycleContinuityReport.rankedTransitions.filter(
   (delta) => delta.lifecycle.hotEntrantCount > 0 || delta.lifecycle.hotExitedCount > 0,
@@ -541,6 +626,7 @@ const hotAppliedTopologyTerrains = hotAppliedTopologySchedule.map((frame) =>
 const hotAppliedTopologyReport = createHillPhaseContinuityReport(
   hotAppliedTopologySchedule,
   hotAppliedTopologyTerrains,
+  reportRequestFor(hotAppliedTopologyContinuityParams, hotAppliedTopologyTerrains),
 );
 const hotAppliedTopologyJumps = hotAppliedTopologyReport.rankedTransitions.filter(
   (delta) =>

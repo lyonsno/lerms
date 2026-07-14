@@ -2,9 +2,12 @@ import type {
   HillOfHillsTerrain,
   HillOfHillsTerrainParams,
   HillOfHillsTerrainSample,
+  HillOfHillsTopologyEventClassConfigMap,
   HillOfHillsTopologyEventDebug,
   HillOfHillsTopologySupportLifecycle
 } from './hill-of-hills.js';
+
+export const HILL_PHASE_CONTINUITY_REPORT_SCHEMA = 'lerms.hill-phase-continuity-report.v1' as const;
 
 export const HILL_PHASE_FILMSTRIP_FRAME_COUNTS = [5, 10, 15, 25, 50] as const;
 
@@ -129,11 +132,68 @@ export interface HillPhaseContinuityReportFrame {
   topologyChecksum: string;
   phaseInfluenceChecksum: string;
   supportFrameChecksum: string;
+  dynamics: HillPhaseContinuityDynamicsEvidence;
   activeEventSummary: readonly string[];
   delta: HillPhaseContinuityDelta | undefined;
 }
 
+export interface HillPhaseContinuityRangeEvidence {
+  min: number;
+  max: number;
+}
+
+export interface HillPhaseContinuityDynamicsEvidence {
+  mode: HillOfHillsTerrainParams['topologyDynamicsMode'];
+  integrationOriginMs: number;
+  deformation: HillPhaseContinuityRangeEvidence;
+  velocity: HillPhaseContinuityRangeEvidence;
+  force: HillPhaseContinuityRangeEvidence;
+  hillSwellMembership: HillPhaseContinuityRangeEvidence;
+}
+
+export interface HillPhaseContinuityControls {
+  topologyDynamicsMode: HillOfHillsTerrainParams['topologyDynamicsMode'];
+  topologyPhaseIntensity: number;
+  topologyPhaseLimit: number;
+  topologyPhaseRadius: number;
+  topologyPhaseHeightScale: number;
+  topologyPhaseBasinBias: number;
+  topologyPhaseValleyBias: number;
+  topologyPhaseHillBias: number;
+  topologyPhaseRidgeBias: number;
+  topologyPhaseSaddleBias: number;
+  topologyPhaseOverlap: number;
+  topologyPhaseDetailScale: number;
+  topologyPhaseDriftIntensity: number;
+  topologyPhaseDurationMs: number;
+  topologyEventClasses: HillOfHillsTopologyEventClassConfigMap;
+}
+
+export interface HillPhaseContinuityReportRequest {
+  requestedParams: HillOfHillsTerrainParams;
+  requireExactControls?: boolean;
+  requestedSource: {
+    route: string;
+    configId?: string;
+  };
+}
+
+export interface HillPhaseContinuitySourceIdentity {
+  requestedRoute: string;
+  requestedConfigId?: string;
+  effectiveAuthority: HillOfHillsTerrain['source']['authority'];
+  effectiveRoute: string;
+  effectiveBackend?: string;
+  effectiveConfigId?: string;
+  effectiveConfigIds: readonly string[];
+  fallbackStatus: HillOfHillsTerrain['witness']['fallbackStatus'];
+}
+
 export interface HillPhaseContinuityReport {
+  schema: typeof HILL_PHASE_CONTINUITY_REPORT_SCHEMA;
+  requestedControls: HillPhaseContinuityControls;
+  effectiveControls: HillPhaseContinuityControls;
+  sourceIdentity: HillPhaseContinuitySourceIdentity;
   frameCount: number;
   frames: readonly HillPhaseContinuityReportFrame[];
   rankedTransitions: readonly HillPhaseContinuityDelta[];
@@ -346,9 +406,16 @@ export function compareHillPhaseContinuityFrames(
 
 export function createHillPhaseContinuityReport(
   frames: readonly HillPhaseFilmstripFrame[],
-  terrains: readonly HillOfHillsTerrain[]
+  terrains: readonly HillOfHillsTerrain[],
+  request: HillPhaseContinuityReportRequest
 ): HillPhaseContinuityReport {
-  const count = Math.min(frames.length, terrains.length);
+  validateContinuityReportEvidence(frames, terrains, request);
+  const count = frames.length;
+  const requestedControls = continuityControls(request.requestedParams);
+  const effectiveControls = continuityControls(terrains[0].params);
+  const effectiveConfigIds = Array.from(
+    new Set(terrains.map((terrain) => terrain.source.configId).filter((configId): configId is string => Boolean(configId)))
+  );
   const reportFrames: HillPhaseContinuityReportFrame[] = [];
   const rankedTransitions: HillPhaseContinuityDelta[] = [];
   const suspicionCounts: Partial<Record<HillPhaseContinuitySuspicionKind, number>> = {};
@@ -374,6 +441,14 @@ export function createHillPhaseContinuityReport(
       topologyChecksum: terrain.witness.topologyChecksum,
       phaseInfluenceChecksum: terrain.witness.phaseInfluenceChecksum,
       supportFrameChecksum: terrain.witness.supportFrame.supportFrameChecksum,
+      dynamics: {
+        mode: terrain.witness.topologyDynamicsMode,
+        integrationOriginMs: terrain.witness.topologyDynamicsIntegrationOriginMs,
+        deformation: rangeEvidence(terrain.witness.topologyDeformationRange),
+        velocity: rangeEvidence(terrain.witness.topologyVelocityRange),
+        force: rangeEvidence(terrain.witness.topologyForceRange),
+        hillSwellMembership: rangeEvidence(terrain.witness.hillSwellMembershipRange)
+      },
       activeEventSummary: terrain.witness.topologyEventDebug.slice(0, 8).map(eventDebugSummary),
       delta
     });
@@ -384,11 +459,107 @@ export function createHillPhaseContinuityReport(
   rankedTransitions.sort((a, b) => b.severity - a.severity);
 
   return {
+    schema: HILL_PHASE_CONTINUITY_REPORT_SCHEMA,
+    requestedControls,
+    effectiveControls,
+    sourceIdentity: {
+      requestedRoute: request.requestedSource.route,
+      requestedConfigId: request.requestedSource.configId,
+      effectiveAuthority: terrains[0].source.authority,
+      effectiveRoute: terrains[0].source.route,
+      effectiveBackend: terrains[0].source.backend,
+      effectiveConfigId: effectiveConfigIds.length === 1 ? effectiveConfigIds[0] : undefined,
+      effectiveConfigIds,
+      fallbackStatus: terrains[0].witness.fallbackStatus
+    },
     frameCount: count,
     frames: reportFrames,
     rankedTransitions,
     suspicionCounts
   };
+}
+
+function validateContinuityReportEvidence(
+  frames: readonly HillPhaseFilmstripFrame[],
+  terrains: readonly HillOfHillsTerrain[],
+  request: HillPhaseContinuityReportRequest
+): void {
+  if (frames.length === 0 || frames.length !== terrains.length) {
+    throw new Error(`phase continuity report frame/terrain count mismatch: ${frames.length}/${terrains.length}`);
+  }
+  const requestedControls = continuityControls(request.requestedParams);
+  const expectedSampleCount = terrains[0].samples.length;
+  for (let index = 0; index < frames.length; index += 1) {
+    const frame = frames[index];
+    const terrain = terrains[index];
+    if (terrain.samples.length === 0 || terrain.samples.length !== expectedSampleCount) {
+      throw new Error(`phase continuity report partial terrain at frame ${index}`);
+    }
+    if (terrain.source.route !== request.requestedSource.route) {
+      throw new Error(
+        `phase continuity report route mismatch at frame ${index}: requested ${request.requestedSource.route}, effective ${terrain.source.route}`
+      );
+    }
+    if (request.requestedSource.configId && terrain.source.configId !== request.requestedSource.configId) {
+      throw new Error(
+        `phase continuity report config mismatch at frame ${index}: requested ${request.requestedSource.configId}, effective ${terrain.source.configId ?? 'missing'}`
+      );
+    }
+    if (terrain.source.authority !== 'live_simulation' || terrain.witness.fallbackStatus !== 'none') {
+      throw new Error(
+        `phase continuity report non-live source at frame ${index}: ${terrain.source.authority}/${terrain.witness.fallbackStatus}`
+      );
+    }
+    if (Math.abs(terrain.params.topologyPhaseTimeMs - frame.phaseTimeMs) > 0.001) {
+      throw new Error(`phase continuity report stale frame time at frame ${index}`);
+    }
+    if (
+      request.requireExactControls &&
+      !continuityControlsMatch(requestedControls, continuityControls(terrain.params), request.requestedParams.worldScale)
+    ) {
+      throw new Error(`phase continuity report effective controls mismatch at frame ${index}`);
+    }
+  }
+}
+
+function continuityControls(params: HillOfHillsTerrainParams): HillPhaseContinuityControls {
+  const topologyEventClasses = {} as HillOfHillsTopologyEventClassConfigMap;
+  for (const [kind, config] of Object.entries(params.topologyEventClasses)) {
+    topologyEventClasses[kind as keyof HillOfHillsTopologyEventClassConfigMap] = { ...config };
+  }
+  return {
+    topologyDynamicsMode: params.topologyDynamicsMode,
+    topologyPhaseIntensity: params.topologyPhaseIntensity,
+    topologyPhaseLimit: params.topologyPhaseLimit,
+    topologyPhaseRadius: params.topologyPhaseRadius,
+    topologyPhaseHeightScale: params.topologyPhaseHeightScale,
+    topologyPhaseBasinBias: params.topologyPhaseBasinBias,
+    topologyPhaseValleyBias: params.topologyPhaseValleyBias,
+    topologyPhaseHillBias: params.topologyPhaseHillBias,
+    topologyPhaseRidgeBias: params.topologyPhaseRidgeBias,
+    topologyPhaseSaddleBias: params.topologyPhaseSaddleBias,
+    topologyPhaseOverlap: params.topologyPhaseOverlap,
+    topologyPhaseDetailScale: params.topologyPhaseDetailScale,
+    topologyPhaseDriftIntensity: params.topologyPhaseDriftIntensity,
+    topologyPhaseDurationMs: params.topologyPhaseDurationMs,
+    topologyEventClasses
+  };
+}
+
+function continuityControlsMatch(
+  requested: HillPhaseContinuityControls,
+  effective: HillPhaseContinuityControls,
+  requestedWorldScale: number
+): boolean {
+  const requestedComparable = {
+    ...requested,
+    topologyPhaseRadius: requested.topologyPhaseRadius * requestedWorldScale
+  };
+  return JSON.stringify(requestedComparable) === JSON.stringify(effective);
+}
+
+function rangeEvidence(range: { min: number; max: number }): HillPhaseContinuityRangeEvidence {
+  return { min: range.min, max: range.max };
 }
 
 export function formatHillPhaseContinuityDelta(delta: HillPhaseContinuityDelta): string {

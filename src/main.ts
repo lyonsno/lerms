@@ -391,7 +391,6 @@ function render(timestampMs: number): void {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const motionTimestampMs = timestampMs * viewState.motionSpeed;
-  const motion = Math.sin(motionTimestampMs * 0.00008) * 0.18;
   const ditchPhaseTimeMs =
     params.ditchPhaseIntensity > 0
       ? (params.ditchPhaseTimeMs + motionTimestampMs * 0.42) % params.ditchPhaseDurationMs
@@ -408,8 +407,7 @@ function render(timestampMs: number): void {
     ...params,
     ditchPhaseTimeMs,
     trailPhaseTimeMs,
-    topologyPhaseTimeMs,
-    crownZ: defaultHillOfHillsParams.crownZ + motion
+    topologyPhaseTimeMs
   });
 
   ctx.fillStyle = '#06100d';
@@ -2753,7 +2751,14 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): Hil
   const timestamp = Date.now();
   const filename = `hill-of-hills-phase-strip-${frameCount}-${timestamp}.png`;
   const reportFilename = `hill-of-hills-phase-strip-${frameCount}-${timestamp}.continuity.json`;
-  const report = createHillPhaseContinuityReport(schedule, frameTerrains);
+  const report = createHillPhaseContinuityReport(schedule, frameTerrains, {
+    requestedParams: params,
+    requireExactControls: true,
+    requestedSource: {
+      route: previewSourceOptions.route,
+      configId: previewSourceOptions.configId
+    }
+  });
   const anchor = document.createElement('a');
   anchor.href = stripCanvas.toDataURL('image/png');
   anchor.download = filename;
