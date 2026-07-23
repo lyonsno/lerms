@@ -1712,4 +1712,83 @@ assert(
   'switching comparison modes explicitly invalidates every sample rather than depending on incidental support dirtiness'
 );
 
+const wholeFieldBaseParams = applyHillDiagnosticParamPreset(
+  {
+    ...defaultHillOfHillsParams,
+    seed: 63127,
+    topologyPhaseSeed: 88741,
+    gridResolutionX: 24,
+    gridResolutionZ: 30
+  },
+  'whole-field-topology'
+);
+const wholeFieldClock = wholeFieldBaseParams.topologyPhaseDurationMs * 0.28;
+const inheritedPossibility = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  topologyPossibilityMode: 'inherited',
+  topologyPhaseTimeMs: wholeFieldClock
+});
+const reauthoredPossibility = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  topologyPossibilityMode: 'reauthored',
+  topologyPhaseTimeMs: wholeFieldClock
+});
+assert(defaultHillOfHillsParams.topologyPossibilityMode === 'inherited', 'legacy scenes inherit topology possibility from their terrain');
+assert(inheritedPossibility.witness.topologyPossibilityMode === 'inherited', 'inherited witness names its topology possibility posture');
+assert(reauthoredPossibility.witness.topologyPossibilityMode === 'reauthored', 'reauthored witness names its topology possibility posture');
+assert(
+  inheritedPossibility.witness.topologyPossibilityRange.max === 0,
+  'inherited posture does not claim proposal-authored support'
+);
+assert(
+  reauthoredPossibility.witness.topologyPossibilityRange.max > 0.2,
+  'reauthored posture exposes material whole-field proposal affinity'
+);
+assert(
+  reauthoredPossibility.witness.topologyPossibilityChecksum !== inheritedPossibility.witness.topologyPossibilityChecksum &&
+    reauthoredPossibility.witness.topologyEventCandidateChecksum !== inheritedPossibility.witness.topologyEventCandidateChecksum,
+  'reauthored posture changes both proposal evidence and the candidate field'
+);
+const inheritedCenters = inheritedPossibility.witness.topologyEventDebug.map((event) => event.center);
+const proposalBornEvent = reauthoredPossibility.witness.topologyEventDebug.find(
+  (event) =>
+    event.eligibility.possibility > 0.2 &&
+    inheritedCenters.every((center) => Math.hypot(event.center[0] - center[0], event.center[2] - center[2]) > wholeFieldBaseParams.topologyPhaseRadius)
+);
+assert(
+  proposalBornEvent,
+  'reauthored posture admits a coherent topology support outside every support inherited from the same initial terrain'
+);
+
+const topologyPostureCache = createHillOfHillsLayerTileCache();
+const inheritedPostureTime = wholeFieldBaseParams.topologyPhaseDurationMs * 0.42;
+const inheritedPostureFrame = createHillOfHillsTerrainWithCache(topologyPostureCache, {
+  ...wholeFieldBaseParams,
+  topologyPossibilityMode: 'inherited',
+  topologyPhaseTimeMs: inheritedPostureTime
+});
+const reauthoredPostureFrame = createHillOfHillsTerrainWithCache(topologyPostureCache, {
+  ...wholeFieldBaseParams,
+  topologyPossibilityMode: 'reauthored',
+  topologyPhaseTimeMs: inheritedPostureTime + 16
+});
+const inheritedPostureById = new Map(inheritedPostureFrame.samples.map((terrainSample) => [terrainSample.id, terrainSample]));
+const postureSwitchDeformationDelta = reauthoredPostureFrame.samples.reduce((maximum, terrainSample) => {
+  const before = inheritedPostureById.get(terrainSample.id);
+  return Math.max(
+    maximum,
+    Math.abs(
+      terrainSample.phaseInfluence.topologyDeformation - (before?.phaseInfluence.topologyDeformation ?? 0)
+    )
+  );
+}, 0);
+assert(
+  reauthoredPostureFrame.witness.topologyDynamicsIntegrationOriginMs === inheritedPostureTime,
+  'changing topology possibility posture advances the existing persistent field instead of replaying from origin'
+);
+assert(
+  inheritedPostureFrame.witness.topologyDeformationRange.max > 0.01 && postureSwitchDeformationDelta < 0.04,
+  'topology possibility posture can change without erasing or discontinuously replacing accumulated deformation'
+);
+
 console.log('hill of hills terrain ok');

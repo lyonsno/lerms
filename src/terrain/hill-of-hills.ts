@@ -39,6 +39,7 @@ export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 
 export type HillOfHillsTopologyPhaseKind = (typeof HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS)[number];
 export type HillOfHillsTopologyGesturePreset = (typeof HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS)[number];
 export type HillOfHillsTopologyDynamicsMode = 'direct_synthesis' | 'persistent_pressure';
+export type HillOfHillsTopologyPossibilityMode = 'inherited' | 'reauthored';
 export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming' | 'trail_forming' | 'topology_morphing' | 'mixed_forming';
 export type HillOfHillsPhaseKind = 'ditch_forming' | 'trail_forming' | HillOfHillsTopologyPhaseKind;
 export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
@@ -219,6 +220,7 @@ export interface HillOfHillsProxyMaterial {
 
 export interface HillOfHillsTopologyEventEligibility {
   score: number;
+  possibility: number;
   hill: number;
   valley: number;
   ridge: number;
@@ -321,6 +323,9 @@ export interface HillOfHillsPhaseState {
   topologyEventCandidateScoreRange: Range;
   selectedTopologyEventScoreRange: Range;
   topologyDynamicsMode: HillOfHillsTopologyDynamicsMode;
+  topologyPossibilityMode: HillOfHillsTopologyPossibilityMode;
+  topologyPossibilityChecksum: string;
+  topologyPossibilityRange: Range;
   persistentTopologyField?: PersistentTopologyField;
 }
 
@@ -435,6 +440,7 @@ export interface HillOfHillsTerrainParams {
   topologyPhaseTimeMs: number;
   topologyPhaseDurationMs: number;
   topologyDynamicsMode: HillOfHillsTopologyDynamicsMode;
+  topologyPossibilityMode: HillOfHillsTopologyPossibilityMode;
   topologyEventClasses: HillOfHillsTopologyEventClassConfigMap;
   gridResolutionX: number;
   gridResolutionZ: number;
@@ -574,6 +580,9 @@ export interface HillOfHillsWitness {
   sideDitchInfluenceRange: Range;
   topologyInfluenceRange: Range;
   topologyDynamicsMode: HillOfHillsTopologyDynamicsMode;
+  topologyPossibilityMode: HillOfHillsTopologyPossibilityMode;
+  topologyPossibilityChecksum: string;
+  topologyPossibilityRange: Range;
   topologyDynamicsChecksum: string;
   topologyDynamicsIntegrationOriginMs: number;
   topologyDeformationRange: Range;
@@ -695,6 +704,8 @@ interface TopologyMotionCandidateSummary {
   candidates: readonly TopologyMotionCandidate[];
   checksum: string;
   scoreRange: Range;
+  possibilityChecksum: string;
+  possibilityRange: Range;
 }
 
 interface GridHeightfield {
@@ -731,6 +742,8 @@ interface PersistentTopologySelection {
   candidates: readonly TopologyMotionCandidate[];
   candidateChecksum: string;
   candidateScoreRange: Range;
+  possibilityChecksum: string;
+  possibilityRange: Range;
 }
 
 interface DirtyRecomputeWitness {
@@ -982,6 +995,7 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   topologyPhaseTimeMs: 0,
   topologyPhaseDurationMs: 1800,
   topologyDynamicsMode: 'direct_synthesis',
+  topologyPossibilityMode: 'inherited',
   topologyEventClasses: defaultHillOfHillsTopologyEventClasses,
   gridResolutionX: 72,
   gridResolutionZ: 96,
@@ -1405,6 +1419,7 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     topologyPhaseTimeMs: Math.max(0, finiteOr(params.topologyPhaseTimeMs, 0)),
     topologyPhaseDurationMs: finiteAtLeast(params.topologyPhaseDurationMs, 240),
     topologyDynamicsMode: params.topologyDynamicsMode === 'persistent_pressure' ? 'persistent_pressure' : 'direct_synthesis',
+    topologyPossibilityMode: params.topologyPossibilityMode === 'reauthored' ? 'reauthored' : 'inherited',
     topologyEventClasses: normalizeTopologyEventClasses(params.topologyEventClasses),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
     gridResolutionZ: Math.max(8, Math.round(finiteOr(params.gridResolutionZ, 96))),
@@ -1609,7 +1624,7 @@ function createProceduralPhaseState(
 
   if (params.topologyPhaseIntensity > 0 && params.topologyPhaseLimit > 0) {
     if (!persistentTopologyField) {
-      topologyCandidateSummary = scoreTopologyMotionCandidates(params);
+      topologyCandidateSummary = scoreTopologyMotionCandidates(params, undefined, topologyTiming.epoch + 0.5);
     }
     const selectedForScoreRange: TopologyMotionCandidate[] = [];
     const topologyEpisodeById = new Map<string, HillOfHillsPhaseEpisode>();
@@ -1626,11 +1641,17 @@ function createProceduralPhaseState(
           topologyCandidateSummary = {
             candidates: persistentSelection.candidates,
             checksum: persistentSelection.candidateChecksum,
-            scoreRange: persistentSelection.candidateScoreRange
+            scoreRange: persistentSelection.candidateScoreRange,
+            possibilityChecksum: persistentSelection.possibilityChecksum,
+            possibilityRange: persistentSelection.possibilityRange
           };
         }
       } else {
-        const candidateSummary = scoreTopologyMotionCandidates(params, persistentTopologyField);
+        const candidateSummary = scoreTopologyMotionCandidates(
+          params,
+          persistentTopologyField,
+          topologySelectionPhaseCursor(window)
+        );
         const rng = mulberry32(params.topologyPhaseSeed + window.epoch * 104729 + params.seed * 31);
         selectedCandidates = selectTopologyMotionCandidates(
           params,
@@ -1744,7 +1765,8 @@ function createProceduralPhaseState(
       params.trailPhaseSeed,
       params.trailPhaseIntensity.toFixed(3),
       params.topologyPhaseSeed,
-      params.topologyPhaseIntensity.toFixed(3)
+      params.topologyPhaseIntensity.toFixed(3),
+      params.topologyPossibilityMode
     ].join(':');
     return {
       mode,
@@ -1766,7 +1788,10 @@ function createProceduralPhaseState(
       topologyEventCandidateChecksum: topologyCandidateSummary.checksum,
       topologyEventCandidateScoreRange: topologyCandidateSummary.scoreRange,
       selectedTopologyEventScoreRange,
-      topologyDynamicsMode: 'direct_synthesis'
+      topologyDynamicsMode: 'direct_synthesis',
+      topologyPossibilityMode: params.topologyPossibilityMode,
+      topologyPossibilityChecksum: topologyCandidateSummary.possibilityChecksum,
+      topologyPossibilityRange: topologyCandidateSummary.possibilityRange
     };
   }
 
@@ -1790,7 +1815,10 @@ function createProceduralPhaseState(
     topologyEventCandidateChecksum: topologyCandidateSummary.checksum,
     topologyEventCandidateScoreRange: topologyCandidateSummary.scoreRange,
     selectedTopologyEventScoreRange,
-    topologyDynamicsMode: 'direct_synthesis'
+    topologyDynamicsMode: 'direct_synthesis',
+    topologyPossibilityMode: params.topologyPossibilityMode,
+    topologyPossibilityChecksum: topologyCandidateSummary.possibilityChecksum,
+    topologyPossibilityRange: topologyCandidateSummary.possibilityRange
   };
 }
 
@@ -2147,12 +2175,14 @@ function selectDitchCandidates(
 
 function scoreTopologyMotionCandidates(
   params: HillOfHillsTerrainParams,
-  persistentTopologyField?: PersistentTopologyField
+  persistentTopologyField?: PersistentTopologyField,
+  phaseCursor = topologyPhaseCursor(params)
 ): TopologyMotionCandidateSummary {
   const phaseState = stablePhaseStateForTopologyScoring();
   const phaseInfluence = emptyPhaseInfluence();
   const candidates: TopologyMotionCandidate[] = [];
   const scoreRange = createRange();
+  const possibilityRange = createRange();
   const xCount = 21;
   const zCount = 31;
   const xExtent = Math.min(params.width * 0.46, params.channelRadius * 0.96);
@@ -2189,6 +2219,7 @@ function scoreTopologyMotionCandidates(
       const strata = clamp(slope * 0.34 + topology.ridgeStrength * 0.3 + (1 - topology.growthPotential) * 0.18 + activeInterior * 0.08, 0, 1);
       const hill = clamp(topology.growthPotential * 0.44 + topology.ridgeStrength * 0.36 + activeInterior * 0.16, 0, 1);
       const eligibilityBase: Omit<HillOfHillsTopologyEventEligibility, 'score'> = {
+        possibility: 0,
         hill,
         valley: topology.valleyStrength,
         ridge: topology.ridgeStrength,
@@ -2346,11 +2377,23 @@ function scoreTopologyMotionCandidates(
           falloff: 'shear_band'
         }
       );
+      const possibilityPressure = topologyDriftPressureAt(params, x, z, phaseCursor);
       const configuredEventOptions = eventOptions.map((option) => {
         const eventConfig = topologyEventClassConfig(params, option.kind);
+        const possibility =
+          params.topologyPossibilityMode === 'reauthored'
+            ? topologyDriftAffinityFor(option.kind, possibilityPressure)
+            : 0;
+        const proposalScore = possibility <= 0.0001 ? 0 : clamp(0.14 + possibility * 1.08, 0, 1);
+        const reauthoringStrength =
+          params.topologyPossibilityMode === 'reauthored' ? params.topologyPhaseDriftIntensity : 0;
+        const authoredScore = option.score * (1 - reauthoringStrength) + proposalScore * reauthoringStrength;
         return {
           ...option,
-          score: eventConfig.enabled ? clamp(option.score * eventConfig.appetite, 0, 1) : 0
+          possibility,
+          score: eventConfig.enabled
+            ? clamp(authoredScore * eventConfig.appetite, 0, 1)
+            : 0
         };
       });
       let selected = configuredEventOptions[0];
@@ -2369,6 +2412,7 @@ function scoreTopologyMotionCandidates(
       ]);
 
       includeInRange(scoreRange, score);
+      includeInRange(possibilityRange, selected.possibility);
       candidates.push({
         x,
         z,
@@ -2385,6 +2429,7 @@ function scoreTopologyMotionCandidates(
         growthPotential: topology.growthPotential,
         eligibility: {
           ...eligibilityBase,
+          possibility: selected.possibility,
           hill: clamp(eligibilityBase.hill * explorationWeight, 0, 1),
           score
         },
@@ -2400,7 +2445,19 @@ function scoreTopologyMotionCandidates(
   return {
     candidates,
     checksum: checksum(candidates.map((candidate) => topologyMotionCandidateSignature(candidate)).join('|')),
-    scoreRange: settledRange(scoreRange)
+    scoreRange: settledRange(scoreRange),
+    possibilityChecksum:
+      params.topologyPossibilityMode === 'reauthored'
+        ? checksum(
+            candidates
+              .map(
+                (candidate) =>
+                  `${roundId(candidate.x)}:${roundId(candidate.z)}:${candidate.topologyKind}:${candidate.eligibility.possibility.toFixed(3)}`
+              )
+              .join('|')
+          )
+        : 'inherited',
+    possibilityRange: settledRange(possibilityRange)
   };
 }
 
@@ -2454,7 +2511,16 @@ function topologyPhaseCursor(params: Pick<HillOfHillsTerrainParams, 'topologyPha
 function topologyDriftPressureAt(
   params: Pick<
     HillOfHillsTerrainParams,
-    'seed' | 'width' | 'length' | 'channelRadius' | 'topologyPhaseSeed' | 'topologyPhaseIntensity' | 'topologyPhaseDriftIntensity' | 'topologyPhaseTimeMs' | 'topologyPhaseDurationMs'
+    | 'seed'
+    | 'width'
+    | 'length'
+    | 'channelRadius'
+    | 'topologyPhaseSeed'
+    | 'topologyPhaseIntensity'
+    | 'topologyPhaseDriftIntensity'
+    | 'topologyPhaseTimeMs'
+    | 'topologyPhaseDurationMs'
+    | 'topologyPossibilityMode'
   >,
   x: number,
   z: number,
@@ -2474,7 +2540,10 @@ function topologyDriftPressureAt(
   }
 
   const tau = Math.PI * 2;
-  const seedPhase = params.seed * 0.0137 + params.topologyPhaseSeed * 0.0029;
+  const seedPhase =
+    params.topologyPossibilityMode === 'reauthored'
+      ? params.topologyPhaseSeed * 0.0173
+      : params.seed * 0.0137 + params.topologyPhaseSeed * 0.0029;
   const phase = phaseCursor * tau;
   const nx = x / Math.max(0.001, params.width * 0.46);
   const nz = z / Math.max(0.001, params.length * 0.46);
@@ -2562,6 +2631,7 @@ function topologyMotionCandidateSignature(candidate: TopologyMotionCandidate): s
     candidate.ridgeStrength.toFixed(3),
     candidate.growthPotential.toFixed(3),
     candidate.eligibility.score.toFixed(3),
+    candidate.eligibility.possibility.toFixed(3),
     candidate.eligibility.saddle.toFixed(3),
     candidate.eligibility.strata.toFixed(3)
   ].join(':');
@@ -2588,7 +2658,10 @@ function stablePhaseStateForTopologyScoring(): HillOfHillsPhaseState {
     topologyEventCandidateChecksum: 'none',
     topologyEventCandidateScoreRange: zeroRange(),
     selectedTopologyEventScoreRange: zeroRange(),
-    topologyDynamicsMode: 'direct_synthesis'
+    topologyDynamicsMode: 'direct_synthesis',
+    topologyPossibilityMode: 'inherited',
+    topologyPossibilityChecksum: 'inherited',
+    topologyPossibilityRange: zeroRange()
   };
 }
 
@@ -2619,7 +2692,9 @@ function emptyTopologyCandidateSummary(): TopologyMotionCandidateSummary {
   return {
     candidates: [],
     checksum: 'none',
-    scoreRange: zeroRange()
+    scoreRange: zeroRange(),
+    possibilityChecksum: 'inherited',
+    possibilityRange: zeroRange()
   };
 }
 
@@ -2866,10 +2941,12 @@ function createPersistentTopologySelection(
       selectionKey,
       candidates: [],
       candidateChecksum: 'none',
-      candidateScoreRange: zeroRange()
+      candidateScoreRange: zeroRange(),
+      possibilityChecksum: params.topologyPossibilityMode === 'reauthored' ? 'empty-reauthored' : 'inherited',
+      possibilityRange: zeroRange()
     };
   }
-  const candidateSummary = scoreTopologyMotionCandidates(params, field);
+  const candidateSummary = scoreTopologyMotionCandidates(params, field, epoch + 0.5);
   const rng = mulberry32(params.topologyPhaseSeed + epoch * 104729 + params.seed * 31);
   return {
     epoch,
@@ -2882,7 +2959,9 @@ function createPersistentTopologySelection(
       epoch + 0.5
     ),
     candidateChecksum: candidateSummary.checksum,
-    candidateScoreRange: candidateSummary.scoreRange
+    candidateScoreRange: candidateSummary.scoreRange,
+    possibilityChecksum: candidateSummary.possibilityChecksum,
+    possibilityRange: candidateSummary.possibilityRange
   };
 }
 
@@ -2916,6 +2995,7 @@ function persistentTopologySelectionKey(params: HillOfHillsTerrainParams): strin
       topologyPhaseSaddleBias: params.topologyPhaseSaddleBias,
       topologyPhaseDriftIntensity: params.topologyPhaseDriftIntensity,
       topologyPhaseDurationMs: params.topologyPhaseDurationMs,
+      topologyPossibilityMode: params.topologyPossibilityMode,
       topologyEventClasses: params.topologyEventClasses
     })
   );
@@ -4509,6 +4589,9 @@ function createWitness(
     sideDitchInfluenceRange,
     topologyInfluenceRange,
     topologyDynamicsMode: phaseState.topologyDynamicsMode,
+    topologyPossibilityMode: phaseState.topologyPossibilityMode,
+    topologyPossibilityChecksum: phaseState.topologyPossibilityChecksum,
+    topologyPossibilityRange: phaseState.topologyPossibilityRange,
     topologyDynamicsChecksum: checksumParts(samples.map((sample) => topologyDynamicsSignature(sample))),
     topologyDynamicsIntegrationOriginMs: phaseState.persistentTopologyField?.integrationOriginMs ?? 0,
     topologyDeformationRange: settledRange(topologyDeformationRange),

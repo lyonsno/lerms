@@ -154,6 +154,7 @@ export interface HillPhaseContinuityDynamicsEvidence {
 
 export interface HillPhaseContinuityControls {
   topologyDynamicsMode: HillOfHillsTerrainParams['topologyDynamicsMode'];
+  topologyPossibilityMode: HillOfHillsTerrainParams['topologyPossibilityMode'];
   topologyPhaseIntensity: number;
   topologyPhaseLimit: number;
   topologyPhaseRadius: number;
@@ -531,6 +532,7 @@ function continuityControls(params: HillOfHillsTerrainParams): HillPhaseContinui
   }
   return {
     topologyDynamicsMode: params.topologyDynamicsMode,
+    topologyPossibilityMode: params.topologyPossibilityMode,
     topologyPhaseIntensity: params.topologyPhaseIntensity,
     topologyPhaseLimit: params.topologyPhaseLimit,
     topologyPhaseRadius: params.topologyPhaseRadius,

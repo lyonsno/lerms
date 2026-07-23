@@ -18,6 +18,7 @@ import {
   type HillOfHillsTerrainParams,
   type HillOfHillsTopologyEventClassConfig,
   type HillOfHillsTopologyDynamicsMode,
+  type HillOfHillsTopologyPossibilityMode,
   type HillOfHillsTopologyPhaseKind,
 } from './terrain/hill-of-hills.js';
 import {
@@ -345,7 +346,7 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'topologyPhaseSaddleBias', label: 'Saddle bias', min: 0, max: 2, step: 0.05 },
   { key: 'topologyPhaseOverlap', label: 'Topology overlap', min: 0, max: 0.5, step: 0.01 },
   { key: 'topologyPhaseDetailScale', label: 'Topology detail', min: 0, max: 2, step: 0.05 },
-  { key: 'topologyPhaseDriftIntensity', label: 'Basin drift', min: 0, max: 1, step: 0.05 },
+  { key: 'topologyPhaseDriftIntensity', label: 'Field influence', min: 0, max: 1, step: 0.05 },
   { key: 'topologyPhaseTimeMs', label: 'Topology phase', min: 0, max: 2600, step: 40 },
   { key: 'topologyPhaseDurationMs', label: 'Topology cadence', min: 800, max: 5200, step: 80 }
 ];
@@ -1904,6 +1905,7 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `trail phase: ${witness.effectiveParams.trailPhaseTimeMs.toFixed(0)}ms clock ${witness.trailPhaseClock.toFixed(2)} progress ${witness.trailPhaseProgress.toFixed(2)}`,
     `topology phase: ${witness.effectiveParams.topologyPhaseTimeMs.toFixed(0)}ms clock ${witness.topologyPhaseClock.toFixed(2)} progress ${witness.topologyPhaseProgress.toFixed(2)}`,
     `dynamics: ${witness.topologyDynamicsMode} origin ${witness.topologyDynamicsIntegrationOriginMs.toFixed(0)}ms ${compactChecksum(witness.topologyDynamicsChecksum)}`,
+    `possibility: ${witness.topologyPossibilityMode} ${witness.topologyPossibilityRange.min.toFixed(2)}..${witness.topologyPossibilityRange.max.toFixed(2)} ${compactChecksum(witness.topologyPossibilityChecksum)}`,
     `dynamics range: deformation ${witness.topologyDeformationRange.min.toFixed(3)}..${witness.topologyDeformationRange.max.toFixed(3)} velocity ${witness.topologyVelocityRange.min.toFixed(3)}..${witness.topologyVelocityRange.max.toFixed(3)} force ${witness.topologyForceRange.min.toFixed(3)}..${witness.topologyForceRange.max.toFixed(3)} swell ${witness.hillSwellMembershipRange.min.toFixed(2)}..${witness.hillSwellMembershipRange.max.toFixed(2)} slump ${witness.hillSlumpMembershipRange.min.toFixed(2)}..${witness.hillSlumpMembershipRange.max.toFixed(2)}`,
     `phase checksum: ${witness.phaseChecksum} / influence ${witness.phaseInfluenceChecksum}`,
     `trail seed: ${witness.trailSeedMethod} / candidates ${witness.trailCandidateChecksum}`,
@@ -1955,6 +1957,7 @@ function createControls(): { element: HTMLElement } {
   const element = document.createElement('section');
   element.className = 'terrain-controls';
   appendTopologyDynamicsModeControl(element);
+  appendTopologyPossibilityModeControl(element);
 
   for (const spec of controlSpecs) {
     const row = document.createElement('label');
@@ -2270,6 +2273,46 @@ function appendTopologyDynamicsModeControl(parent: HTMLElement): void {
       params = {
         ...params,
         topologyDynamicsMode: mode.value
+      };
+      persistParamSettings();
+    });
+    text.textContent = mode.label;
+    label.append(input, text);
+    options.append(label);
+  }
+
+  fieldset.append(legend, options);
+  parent.append(fieldset);
+}
+
+function appendTopologyPossibilityModeControl(parent: HTMLElement): void {
+  const fieldset = document.createElement('div');
+  const legend = document.createElement('span');
+  const options = document.createElement('div');
+  fieldset.className = 'topology-dynamics-control';
+  fieldset.role = 'radiogroup';
+  fieldset.setAttribute('aria-label', 'Topology possibility');
+  legend.className = 'topology-dynamics-label';
+  legend.textContent = 'Topology possibility';
+  options.className = 'topology-dynamics-options';
+
+  const modeOptions: readonly { value: HillOfHillsTopologyPossibilityMode; label: string }[] = [
+    { value: 'inherited', label: 'Inherited' },
+    { value: 'reauthored', label: 'Re-authored' }
+  ];
+  for (const mode of modeOptions) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    const text = document.createElement('span');
+    input.type = 'radio';
+    input.name = 'topology-possibility-mode';
+    input.value = mode.value;
+    input.checked = params.topologyPossibilityMode === mode.value;
+    input.addEventListener('input', () => {
+      if (!input.checked) return;
+      params = {
+        ...params,
+        topologyPossibilityMode: mode.value
       };
       persistParamSettings();
     });

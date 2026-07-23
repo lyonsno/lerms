@@ -201,7 +201,10 @@ const terrain: HillOfHillsTerrain = {
     topologyEventCandidateChecksum: 'none',
     topologyEventCandidateScoreRange: { min: 0, max: 0 },
     selectedTopologyEventScoreRange: { min: 0, max: 0 },
-    topologyDynamicsMode: 'direct_synthesis'
+    topologyDynamicsMode: 'direct_synthesis',
+    topologyPossibilityMode: 'inherited',
+    topologyPossibilityChecksum: 'inherited',
+    topologyPossibilityRange: { min: 0, max: 0 }
   },
   samples: [terrainSample],
   witness: {
@@ -331,6 +334,9 @@ const terrain: HillOfHillsTerrain = {
     sideDitchInfluenceRange: { min: 0, max: 0 },
     topologyInfluenceRange: { min: 0, max: 0 },
     topologyDynamicsMode: 'direct_synthesis',
+    topologyPossibilityMode: 'inherited',
+    topologyPossibilityChecksum: 'inherited',
+    topologyPossibilityRange: { min: 0, max: 0 },
     topologyDynamicsChecksum: 'composer-dynamics-fixture-checksum',
     topologyDynamicsIntegrationOriginMs: 0,
     topologyDeformationRange: { min: 0, max: 0 },

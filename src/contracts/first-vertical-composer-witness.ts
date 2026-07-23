@@ -318,7 +318,10 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       topologyEventCandidateChecksum: 'none',
       topologyEventCandidateScoreRange: { min: 0, max: 0 },
       selectedTopologyEventScoreRange: { min: 0, max: 0 },
-      topologyDynamicsMode: 'direct_synthesis'
+      topologyDynamicsMode: 'direct_synthesis',
+      topologyPossibilityMode: 'inherited',
+      topologyPossibilityChecksum: 'inherited',
+      topologyPossibilityRange: { min: 0, max: 0 }
     },
     samples: [sample],
     witness: {
@@ -400,6 +403,9 @@ function buildTerrainFixture(timestampMs: number): HillOfHillsTerrain {
       sideDitchInfluenceRange: { min: 0, max: 0 },
       topologyInfluenceRange: { min: 0, max: 0 },
       topologyDynamicsMode: 'direct_synthesis',
+      topologyPossibilityMode: 'inherited',
+      topologyPossibilityChecksum: 'inherited',
+      topologyPossibilityRange: { min: 0, max: 0 },
       topologyDynamicsChecksum: 'inline-terrain-socket-dynamics-fixture-checksum',
       topologyDynamicsIntegrationOriginMs: 0,
       topologyDeformationRange: { min: 0, max: 0 },

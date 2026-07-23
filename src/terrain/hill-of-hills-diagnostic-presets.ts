@@ -8,7 +8,7 @@ import {
 import type { HillPreviewSettings } from './hill-of-hills-preview-settings.js';
 
 export const HILL_OF_HILLS_DIAGNOSTIC_PRESET_QUERY_KEY = 'hillPreset' as const;
-export const HILL_OF_HILLS_DIAGNOSTIC_PRESETS = ['continuity-hills'] as const;
+export const HILL_OF_HILLS_DIAGNOSTIC_PRESETS = ['continuity-hills', 'whole-field-topology'] as const;
 
 export type HillOfHillsDiagnosticPreset = (typeof HILL_OF_HILLS_DIAGNOSTIC_PRESETS)[number];
 
@@ -23,7 +23,7 @@ export function applyHillDiagnosticParamPreset(
   params: HillOfHillsTerrainParams,
   preset: HillOfHillsDiagnosticPreset | undefined
 ): HillOfHillsTerrainParams {
-  if (preset !== 'continuity-hills') {
+  if (!preset) {
     return params;
   }
 
@@ -34,8 +34,9 @@ export function applyHillDiagnosticParamPreset(
     trailPhaseIntensity: 0,
     trailPhaseLimit: 0,
     topologyDynamicsMode: 'persistent_pressure',
+    topologyPossibilityMode: preset === 'whole-field-topology' ? 'reauthored' : 'inherited',
     topologyPhaseIntensity: 0.58,
-    topologyPhaseLimit: 4,
+    topologyPhaseLimit: preset === 'whole-field-topology' ? 5 : 4,
     topologyPhaseRadius: 1.55,
     topologyPhaseHeightScale: 0.82,
     topologyPhaseBasinBias: 0,
@@ -45,6 +46,7 @@ export function applyHillDiagnosticParamPreset(
     topologyPhaseSaddleBias: 0,
     topologyPhaseOverlap: 0.28,
     topologyPhaseDetailScale: 0.75,
+    topologyPhaseDriftIntensity: preset === 'whole-field-topology' ? 0.92 : params.topologyPhaseDriftIntensity,
     topologyPhaseDurationMs: 2600,
     topologyEventClasses: continuityHillEventClasses(params.topologyEventClasses)
   };
@@ -54,7 +56,7 @@ export function applyHillDiagnosticPreviewPreset(
   settings: HillPreviewSettings,
   preset: HillOfHillsDiagnosticPreset | undefined
 ): HillPreviewSettings {
-  if (preset !== 'continuity-hills') {
+  if (!preset) {
     return settings;
   }
 

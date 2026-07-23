@@ -16,6 +16,10 @@ assert(
   hillDiagnosticPresetFromSearch('?hillPreset=continuity-hills') === 'continuity-hills',
   'query parser accepts continuity-hills preset'
 );
+assert(
+  hillDiagnosticPresetFromSearch('?hillPreset=whole-field-topology') === 'whole-field-topology',
+  'query parser accepts whole-field-topology preset'
+);
 assert(hillDiagnosticPresetFromSearch('?hillPreset=nonsense') === undefined, 'query parser rejects unknown presets');
 assert(hillDiagnosticPresetFromSearch('?foo=bar') === undefined, 'query parser ignores unrelated query state');
 
@@ -94,5 +98,18 @@ assert(previewPreset.overlays.topologyLineStrength < 1, 'continuity preset lower
 assert(previewPreset.overlays.topographicContourStrength > 0, 'continuity preset keeps topographic contour evidence');
 assert(previewPreset.overlays.pressureField === 'none', 'continuity preset disables pressure overlay confounders');
 assert(previewPreset.overlays.pressureOverlayStrength === 0, 'continuity preset zeros pressure overlay strength');
+
+const wholeFieldPreset = applyHillDiagnosticParamPreset(
+  {
+    ...defaultHillOfHillsParams,
+    topologyPossibilityMode: 'inherited',
+    topologyPhaseDriftIntensity: 0
+  },
+  'whole-field-topology'
+);
+assert(wholeFieldPreset.topologyDynamicsMode === 'persistent_pressure', 'whole-field preset exercises persistent world memory');
+assert(wholeFieldPreset.topologyPossibilityMode === 'reauthored', 'whole-field preset enables proposal-authored topology');
+assert(wholeFieldPreset.topologyPhaseDriftIntensity > 0.5, 'whole-field preset gives the coherent proposal field material authority');
+assert(wholeFieldPreset.topologyPhaseLimit >= 4, 'whole-field preset exposes several simultaneous topology proposals');
 
 console.log('hill of hills diagnostic preset contracts ok');
