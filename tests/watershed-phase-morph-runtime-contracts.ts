@@ -16,6 +16,7 @@ import {
   createHillOfHillsTerrainWithCache,
   defaultHillOfHillsParams
 } from '../src/terrain/hill-of-hills.js';
+import { applyHillDiagnosticParamPreset } from '../src/terrain/hill-of-hills-diagnostic-presets.js';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -63,45 +64,36 @@ if (loaded.ok === false) {
 assert(loaded.effective.packageVersion === '0.2.1', 'phase-morph exercise consumes exact package 0.2.1');
 
 const cache = createHillOfHillsLayerTileCache();
-const commonParams = {
-  ...defaultHillOfHillsParams,
-  gridResolutionX: 24,
-  gridResolutionZ: 30,
-  topologyDynamicsMode: 'direct_synthesis' as const,
-  ditchPhaseIntensity: 0,
-  ditchPhaseLimit: 0,
-  trailPhaseIntensity: 0,
-  trailPhaseLimit: 0,
-  topologyPhaseIntensity: 0.54,
-  topologyPhaseLimit: 3,
-  topologyPhaseDurationMs: 1_800
-};
+const commonParams = applyHillDiagnosticParamPreset(
+  defaultHillOfHillsParams,
+  'topology-contention' as never
+);
 const source = {
-  route: 'lerms/hill-of-hills/watershed-phase-morph-contract',
-  frameId: 'hill-watershed-phase-morph-sequence',
-  configId: 'continuity-hills-phase-morph-contract',
+  route: 'lerms/hill-of-hills/wet-border-phase-morph-recipe',
+  frameId: 'hill-topology-contention-phase-boundary-main-3a06670-v1',
+  configId: 'topology-contention-phase-boundary-v1',
   sampleAgeMs: 0
 };
 const terrainA = createHillOfHillsTerrainWithCache(
   cache,
   {
     ...commonParams,
-    topologyPhaseTimeMs: 1_760
+    topologyPhaseTimeMs: 5_148
   },
   {
     ...source,
-    timestampMs: 90_000
+    timestampMs: 100_000
   }
 );
 const terrainB = createHillOfHillsTerrainWithCache(
   cache,
   {
     ...commonParams,
-    topologyPhaseTimeMs: 1_920
+    topologyPhaseTimeMs: 5_252
   },
   {
     ...source,
-    timestampMs: 90_160
+    timestampMs: 100_104
   }
 );
 assert(
@@ -112,7 +104,7 @@ const bufferA = createHillOfHillsTerrainBuffer(terrainA);
 const bufferB = createHillOfHillsTerrainBuffer(terrainB);
 const adapterA = createHillFluidPackageAdapterFrame(bufferA, {
   frameId: 'hill-phase-morph-adapter-a',
-  generatedAtMs: 90_000,
+  generatedAtMs: 100_000,
   freshnessBudgetMs: 250,
   priorTerrainEpoch: terrainA.witness.terrainEpoch,
   physicalScale: {
@@ -123,33 +115,43 @@ const adapterA = createHillFluidPackageAdapterFrame(bufferA, {
 });
 const adapterB = createHillFluidPackageAdapterFrame(bufferB, {
   frameId: 'hill-phase-morph-adapter-b',
-  generatedAtMs: 90_160,
+  generatedAtMs: 100_104,
   freshnessBudgetMs: 250,
   priorTerrainEpoch: terrainA.witness.terrainEpoch,
   physicalScale: adapterA.physicalScale
 });
 const terrainFrameA = createKaminosTerrainFluidFrame(adapterA, {
-  producerRevision: 'f7571e987bb4cb205012798b68c7a711565fd8cd',
+  producerRevision: '3a0667007efaf8e28727e507c53a6c1fbfdbd036',
   requestedRoute: 'lerms/hill-of-hills/terrain-fluid-frame',
   requestedSourceId: bufferA.source.frameId,
-  motionSubstepEnvelopeSeconds: 0.16
+  motionSubstepEnvelopeSeconds: 0.104
 });
 const terrainFrameB = createKaminosTerrainFluidFrame(adapterB, {
-  producerRevision: 'f7571e987bb4cb205012798b68c7a711565fd8cd',
+  producerRevision: '3a0667007efaf8e28727e507c53a6c1fbfdbd036',
   requestedRoute: 'lerms/hill-of-hills/terrain-fluid-frame',
   requestedSourceId: bufferB.source.frameId,
-  motionSubstepEnvelopeSeconds: 0.16
+  motionSubstepEnvelopeSeconds: 0.104
 });
 
+assert(bufferA.sampleChecksum === 'e8ea1f0c', 'previous sample checksum matches landed Hill recipe');
+assert(bufferB.sampleChecksum === '1f7d3625', 'current sample checksum matches landed Hill recipe');
+assert(bufferA.topologyChecksum === 'caebb5e2', 'previous topology checksum matches landed Hill recipe');
+assert(bufferB.topologyChecksum === '8416fa5a', 'current topology checksum matches landed Hill recipe');
+assert(
+  bufferA.witness.supportFrame.supportFrameChecksum === '1abdd1f8',
+  'previous support checksum matches landed Hill recipe'
+);
+assert(
+  bufferB.witness.supportFrame.supportFrameChecksum === 'cef5f893',
+  'current support checksum matches landed Hill recipe'
+);
+assert(bufferB.witness.dirtyRegionChecksum === 'f5b60f25', 'dirty-region checksum matches landed Hill recipe');
+assert(bufferB.gridResolution.x === 72 && bufferB.gridResolution.z === 96, 'grid matches landed Hill recipe');
+assert(bufferB.sampleCount === 6_912, 'sample count matches landed Hill recipe');
 assert(terrainFrameA.terrainId === terrainFrameB.terrainId, 'terrain identity remains stable across Hill epochs');
 assert(terrainFrameA.transformId === terrainFrameB.transformId, 'chart transform remains stable across Hill epochs');
 assert(terrainFrameB.motionClass === 'phase_morph', 'next Hill frame preserves source phase-morph identity');
 assert(terrainFrameB.priorEpoch === terrainFrameA.currentEpoch, 'next Hill frame names the exact prior epoch');
-assert(bufferA.sampleChecksum !== bufferB.sampleChecksum, 'sequential Hill frames carry changing terrain samples');
-assert(
-  bufferA.witness.supportFrame.supportFrameChecksum !== bufferB.witness.supportFrame.supportFrameChecksum,
-  'sequential Hill frames carry changing support state'
-);
 assert(bufferB.witness.dirtySampleCount > 0, 'next Hill frame carries a nonempty dirty region');
 
 let maximumBedDisplacement = 0;
@@ -171,6 +173,11 @@ for (let index = 0; index < terrainFrameB.expectedSampleCount; index += 1) {
 }
 assert(maximumBedDisplacement > 0, 'sequential Hill frame changes bed height');
 assert(maximumSupportSpeed > 0, 'sequential Hill frame carries nonzero support velocity');
+assert(
+  maximumBedDisplacement === 0.021151423454284668,
+  'maximum bed displacement matches landed Hill recipe'
+);
+assert(maximumSupportSpeed === 0.26246118545532227, 'maximum support speed matches landed Hill recipe');
 
 const result = executeHillKaminosPhaseMorphExercise(
   loaded,
@@ -190,7 +197,7 @@ const result = executeHillKaminosPhaseMorphExercise(
     preRemapStepCount: 4,
     postRemapStepCount: 4,
     fluidDeltaSeconds: 0.012,
-    terrainDeltaSeconds: 0.16
+    terrainDeltaSeconds: 0.104
   }
 );
 
