@@ -112,6 +112,17 @@ assert(!('cameraZoom' in sanitized), 'terrain param settings ignore camera zoom'
 assert(!('panX' in sanitized), 'terrain param settings ignore camera pan');
 assert(sanitized.floorWidth === defaults.floorWidth, 'partial terrain settings retain default floor width');
 
+const phaseRecomposed = sanitizeHillOfHillsParamSettings(
+  {
+    topologyPossibilityMode: 'phase_recomposed'
+  },
+  defaults
+);
+assert(
+  phaseRecomposed.topologyPossibilityMode === 'phase_recomposed',
+  'terrain param settings accept the evolved-world topology possibility posture'
+);
+
 const clamped = sanitizeHillOfHillsParamSettings(
   {
     hillCount: 999,

@@ -39,7 +39,7 @@ export type TerrainFallbackStatus = 'none' | 'synthetic_fixture' | 'fallback' | 
 export type HillOfHillsTopologyPhaseKind = (typeof HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS)[number];
 export type HillOfHillsTopologyGesturePreset = (typeof HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS)[number];
 export type HillOfHillsTopologyDynamicsMode = 'direct_synthesis' | 'persistent_pressure';
-export type HillOfHillsTopologyPossibilityMode = 'inherited' | 'reauthored';
+export type HillOfHillsTopologyPossibilityMode = 'inherited' | 'reauthored' | 'phase_recomposed';
 export type HillOfHillsPhaseMode = 'stable' | 'ditch_forming' | 'trail_forming' | 'topology_morphing' | 'mixed_forming';
 export type HillOfHillsPhaseKind = 'ditch_forming' | 'trail_forming' | HillOfHillsTopologyPhaseKind;
 export type HillOfHillsPhaseInfluenceKind = 'none' | HillOfHillsPhaseKind;
@@ -1457,7 +1457,10 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     topologyPhaseTimeMs: Math.max(0, finiteOr(params.topologyPhaseTimeMs, 0)),
     topologyPhaseDurationMs: finiteAtLeast(params.topologyPhaseDurationMs, 240),
     topologyDynamicsMode: params.topologyDynamicsMode === 'persistent_pressure' ? 'persistent_pressure' : 'direct_synthesis',
-    topologyPossibilityMode: params.topologyPossibilityMode === 'reauthored' ? 'reauthored' : 'inherited',
+    topologyPossibilityMode:
+      params.topologyPossibilityMode === 'reauthored' || params.topologyPossibilityMode === 'phase_recomposed'
+        ? params.topologyPossibilityMode
+        : 'inherited',
     topologyEventClasses: normalizeTopologyEventClasses(params.topologyEventClasses),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
     gridResolutionZ: Math.max(8, Math.round(finiteOr(params.gridResolutionZ, 96))),
@@ -2211,6 +2214,26 @@ function selectDitchCandidates(
   return selected;
 }
 
+function topologyCandidateHeightAt(
+  params: HillOfHillsTerrainParams,
+  phaseState: HillOfHillsPhaseState,
+  persistentTopologyField: PersistentTopologyField | undefined,
+  x: number,
+  z: number
+): HeightParts {
+  const heightParts = heightAt(params, phaseState, x, z);
+  if (params.topologyPossibilityMode !== 'phase_recomposed' || !persistentTopologyField) {
+    return heightParts;
+  }
+
+  const dynamics = persistentTopologySampleAt(persistentTopologyField, params, x, z);
+  const heightScale = 0.8 + params.hillHeight * 0.22 + params.valleyHeight * 0.18;
+  return {
+    ...heightParts,
+    height: heightParts.height + dynamics.deformation / Math.max(0.001, heightScale)
+  };
+}
+
 function scoreTopologyMotionCandidates(
   params: HillOfHillsTerrainParams,
   persistentTopologyField?: PersistentTopologyField,
@@ -2233,13 +2256,13 @@ function scoreTopologyMotionCandidates(
     for (let xi = 0; xi < xCount; xi += 1) {
       const xT = xi / (xCount - 1);
       const x = -xExtent + xT * xExtent * 2;
-      const heightParts = heightAt(params, phaseState, x, z);
+      const heightParts = topologyCandidateHeightAt(params, phaseState, persistentTopologyField, x, z);
       const epsX = Math.max(0.02, params.width / (params.gridResolutionX * 2));
       const epsZ = Math.max(0.02, params.length / (params.gridResolutionZ * 2));
-      const heightLeft = heightAt(params, phaseState, x - epsX, z).height;
-      const heightRight = heightAt(params, phaseState, x + epsX, z).height;
-      const heightBack = heightAt(params, phaseState, x, z - epsZ).height;
-      const heightForward = heightAt(params, phaseState, x, z + epsZ).height;
+      const heightLeft = topologyCandidateHeightAt(params, phaseState, persistentTopologyField, x - epsX, z).height;
+      const heightRight = topologyCandidateHeightAt(params, phaseState, persistentTopologyField, x + epsX, z).height;
+      const heightBack = topologyCandidateHeightAt(params, phaseState, persistentTopologyField, x, z - epsZ).height;
+      const heightForward = topologyCandidateHeightAt(params, phaseState, persistentTopologyField, x, z + epsZ).height;
       const dx = (heightRight - heightLeft) / (epsX * 2);
       const dz = (heightForward - heightBack) / (epsZ * 2);
       const slope = Math.hypot(dx, dz);
@@ -2417,15 +2440,22 @@ function scoreTopologyMotionCandidates(
         }
       );
       const possibilityPressure = topologyDriftPressureAt(params, x, z, phaseCursor);
+      const phasePointPressure =
+        params.topologyPossibilityMode === 'phase_recomposed' && persistentTopologyField
+          ? topologyPhasePointPressureAt(persistentTopologyField, params, x, z)
+          : undefined;
       const configuredEventOptions = eventOptions.map((option) => {
         const eventConfig = topologyEventClassConfig(params, option.kind);
-        const possibility =
-          params.topologyPossibilityMode === 'reauthored'
-            ? topologyDriftAffinityFor(option.kind, possibilityPressure)
-            : 0;
+        const analyticPossibility =
+          params.topologyPossibilityMode === 'inherited'
+            ? 0
+            : topologyDriftAffinityFor(option.kind, possibilityPressure);
+        const possibility = phasePointPressure
+          ? topologyPhasePointAffinityFor(option.kind, analyticPossibility, phasePointPressure)
+          : analyticPossibility;
         const proposalScore = possibility <= 0.0001 ? 0 : clamp(0.14 + possibility * 1.08, 0, 1);
         const reauthoringStrength =
-          params.topologyPossibilityMode === 'reauthored' ? params.topologyPhaseDriftIntensity : 0;
+          params.topologyPossibilityMode === 'inherited' ? 0 : params.topologyPhaseDriftIntensity;
         const authoredScore = option.score * (1 - reauthoringStrength) + proposalScore * reauthoringStrength;
         return {
           ...option,
@@ -2435,7 +2465,7 @@ function scoreTopologyMotionCandidates(
             : 0
         };
       });
-      if (params.topologyPossibilityMode === 'reauthored') {
+      if (params.topologyPossibilityMode !== 'inherited') {
         const purePossibility = configuredEventOptions.reduce(
           (maximum, option) => Math.max(maximum, option.possibility),
           0
@@ -2499,8 +2529,12 @@ function scoreTopologyMotionCandidates(
     checksum: checksum(candidates.map((candidate) => topologyMotionCandidateSignature(candidate)).join('|')),
     scoreRange: settledRange(scoreRange),
     possibilityChecksum:
-      params.topologyPossibilityMode === 'reauthored'
-        ? checksum(possibilitySignatures.join('|'))
+      params.topologyPossibilityMode !== 'inherited'
+        ? checksum(
+            params.topologyPossibilityMode === 'phase_recomposed'
+              ? `phase_recomposed|${possibilitySignatures.join('|')}`
+              : possibilitySignatures.join('|')
+          )
         : 'inherited',
     possibilityRange: settledRange(possibilityRange)
   };
@@ -2540,7 +2574,7 @@ function selectTopologyMotionCandidates(
 }
 
 function topologyMotionSelectionSeed(params: HillOfHillsTerrainParams, epoch: number): number {
-  const inheritedTerrainSeed = params.topologyPossibilityMode === 'reauthored' ? 0 : params.seed * 31;
+  const inheritedTerrainSeed = params.topologyPossibilityMode === 'inherited' ? params.seed * 31 : 0;
   return params.topologyPhaseSeed + epoch * 104729 + inheritedTerrainSeed;
 }
 
@@ -2591,9 +2625,9 @@ function topologyDriftPressureAt(
 
   const tau = Math.PI * 2;
   const seedPhase =
-    params.topologyPossibilityMode === 'reauthored'
-      ? params.topologyPhaseSeed * 0.0173
-      : params.seed * 0.0137 + params.topologyPhaseSeed * 0.0029;
+    params.topologyPossibilityMode === 'inherited'
+      ? params.seed * 0.0137 + params.topologyPhaseSeed * 0.0029
+      : params.topologyPhaseSeed * 0.0173;
   const phase = phaseCursor * tau;
   const nx = x / Math.max(0.001, params.width * 0.46);
   const nz = z / Math.max(0.001, params.length * 0.46);
@@ -2649,6 +2683,168 @@ function topologyDriftAffinityFor(kind: HillOfHillsTopologyPhaseKind, pressure: 
     case 'strata_reveal':
       return clamp(pressure.strata * 0.56 + pressure.exposure * 0.32 + pressure.ridge * 0.08, 0, 1);
   }
+}
+
+type TopologyPhasePointPressure = Record<HillOfHillsTopologyPhaseKind, number>;
+
+function topologyPhasePointPressureAt(
+  field: PersistentTopologyField,
+  params: HillOfHillsTerrainParams,
+  x: number,
+  z: number
+): TopologyPhasePointPressure {
+  const center = persistentTopologySampleAt(field, params, x, z);
+  const left = persistentTopologySampleAt(field, params, x - field.dx, z);
+  const right = persistentTopologySampleAt(field, params, x + field.dx, z);
+  const back = persistentTopologySampleAt(field, params, x, z - field.dz);
+  const forward = persistentTopologySampleAt(field, params, x, z + field.dz);
+  const deformationDx = (right.deformation - left.deformation) / Math.max(0.001, field.dx * 2);
+  const deformationDz = (forward.deformation - back.deformation) / Math.max(0.001, field.dz * 2);
+  const deformationGradient = smoothstep(0.006, 0.18, Math.hypot(deformationDx, deformationDz));
+  const deformationLaplacian =
+    left.deformation + right.deformation + back.deformation + forward.deformation - center.deformation * 4;
+  const concave = smoothstep(0.002, 0.12, deformationLaplacian);
+  const convex = smoothstep(0.002, 0.12, -deformationLaplacian);
+  const raised = smoothstep(0.008, 0.22, center.deformation);
+  const lowered = smoothstep(0.008, 0.22, -center.deformation);
+  const rising = smoothstep(0.008, 0.42, center.velocity);
+  const falling = smoothstep(0.008, 0.42, -center.velocity);
+  const positiveForce = smoothstep(0.01, 0.72, center.force);
+  const negativeForce = smoothstep(0.01, 0.72, -center.force);
+  const grossForce = smoothstep(0.015, 1.1, center.grossForce);
+  const membershipBalance = 1 - Math.abs(center.hillMembership - center.slumpMembership);
+  const membershipMass = clamp(center.hillMembership + center.slumpMembership, 0, 1);
+  const activity = clamp(
+    Math.max(
+      raised,
+      lowered,
+      rising,
+      falling,
+      positiveForce,
+      negativeForce,
+      grossForce,
+      center.contention,
+      membershipMass
+    ),
+    0,
+    1
+  );
+  const calm = activity * (1 - smoothstep(0.02, 0.36, Math.abs(center.velocity)));
+  const availableForHill = activity * (1 - center.hillMembership);
+  const availableForSlump = activity * (1 - center.slumpMembership);
+
+  return {
+    hill_swell: clamp(
+      lowered * 0.32 +
+        center.slumpMembership * 0.24 +
+        falling * 0.14 +
+        concave * 0.16 +
+        availableForHill * 0.14,
+      0,
+      1
+    ),
+    hill_slump: clamp(
+      raised * 0.3 +
+        center.hillMembership * 0.24 +
+        rising * 0.14 +
+        convex * 0.16 +
+        availableForSlump * 0.12 +
+        center.contention * 0.04,
+      0,
+      1
+    ),
+    valley_deepen: clamp(
+      raised * 0.2 +
+        center.hillMembership * 0.16 +
+        deformationGradient * 0.2 +
+        convex * 0.18 +
+        center.contention * 0.16 +
+        positiveForce * 0.1,
+      0,
+      1
+    ),
+    valley_fill: clamp(
+      lowered * 0.26 +
+        center.slumpMembership * 0.18 +
+        concave * 0.18 +
+        calm * 0.18 +
+        negativeForce * 0.1 +
+        availableForHill * 0.1,
+      0,
+      1
+    ),
+    ridge_lift: clamp(
+      lowered * 0.2 +
+        concave * 0.26 +
+        deformationGradient * 0.18 +
+        availableForHill * 0.16 +
+        falling * 0.1 +
+        grossForce * 0.1,
+      0,
+      1
+    ),
+    ridge_shear: clamp(
+      deformationGradient * 0.34 +
+        center.contention * 0.28 +
+        grossForce * 0.18 +
+        convex * 0.1 +
+        Math.max(rising, falling) * 0.1,
+      0,
+      1
+    ),
+    saddle_pinch: clamp(
+      membershipBalance * membershipMass * 0.26 +
+        deformationGradient * 0.18 +
+        center.contention * 0.22 +
+        Math.min(raised + convex, lowered + concave) * 0.2 +
+        grossForce * 0.14,
+      0,
+      1
+    ),
+    saddle_pass: clamp(
+      center.contention * 0.26 +
+        deformationGradient * 0.22 +
+        membershipBalance * membershipMass * 0.18 +
+        calm * 0.16 +
+        grossForce * 0.1 +
+        availableForHill * 0.08,
+      0,
+      1
+    ),
+    basin_bloom: clamp(
+      lowered * 0.28 +
+        center.slumpMembership * 0.2 +
+        concave * 0.2 +
+        calm * 0.18 +
+        availableForHill * 0.14,
+      0,
+      1
+    ),
+    strata_reveal: clamp(
+      deformationGradient * 0.3 +
+        center.contention * 0.24 +
+        grossForce * 0.2 +
+        convex * 0.12 +
+        Math.max(positiveForce, negativeForce) * 0.14,
+      0,
+      1
+    )
+  };
+}
+
+function topologyPhasePointAffinityFor(
+  kind: HillOfHillsTopologyPhaseKind,
+  analyticPossibility: number,
+  phasePointPressure: TopologyPhasePointPressure
+): number {
+  const currentWorldPossibility = phasePointPressure[kind];
+  return clamp(
+    analyticPossibility * 0.62 +
+      currentWorldPossibility * 0.72 +
+      analyticPossibility * currentWorldPossibility * 0.16,
+    0,
+    1
+  );
 }
 
 function scoreRangeForCandidates(candidates: readonly TrailSeedCandidate[]): Range {
@@ -3020,7 +3216,10 @@ function createPersistentTopologySelection(
       candidates: [],
       candidateChecksum: 'none',
       candidateScoreRange: zeroRange(),
-      possibilityChecksum: params.topologyPossibilityMode === 'reauthored' ? 'empty-reauthored' : 'inherited',
+      possibilityChecksum:
+        params.topologyPossibilityMode === 'inherited'
+          ? 'inherited'
+          : `empty-${params.topologyPossibilityMode}`,
       possibilityRange: zeroRange()
     };
   }

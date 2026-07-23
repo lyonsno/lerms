@@ -11,7 +11,8 @@ export const HILL_OF_HILLS_DIAGNOSTIC_PRESET_QUERY_KEY = 'hillPreset' as const;
 export const HILL_OF_HILLS_DIAGNOSTIC_PRESETS = [
   'continuity-hills',
   'whole-field-topology',
-  'topology-contention'
+  'topology-contention',
+  'phase-point-recomposition'
 ] as const;
 
 export type HillOfHillsDiagnosticPreset = (typeof HILL_OF_HILLS_DIAGNOSTIC_PRESETS)[number];
@@ -31,7 +32,8 @@ export function applyHillDiagnosticParamPreset(
     return params;
   }
 
-  const contention = preset === 'topology-contention';
+  const phaseRecomposed = preset === 'phase-point-recomposition';
+  const contention = preset === 'topology-contention' || phaseRecomposed;
   const wholeField = preset === 'whole-field-topology' || contention;
 
   return {
@@ -41,7 +43,7 @@ export function applyHillDiagnosticParamPreset(
     trailPhaseIntensity: 0,
     trailPhaseLimit: 0,
     topologyDynamicsMode: 'persistent_pressure',
-    topologyPossibilityMode: wholeField ? 'reauthored' : 'inherited',
+    topologyPossibilityMode: phaseRecomposed ? 'phase_recomposed' : wholeField ? 'reauthored' : 'inherited',
     topologyPhaseIntensity: contention ? 1 : 0.58,
     topologyPhaseLimit: contention ? 8 : wholeField ? 5 : 4,
     topologyPhaseRadius: contention ? 2.8 : 1.55,

@@ -1919,4 +1919,102 @@ assert(
   'topology possibility posture can change without erasing or discontinuously replacing accumulated deformation'
 );
 
+const phaseRecomposedParams: PersistentTopologyMotionParams = {
+  ...wholeFieldBaseParams,
+  topologyDynamicsMode: 'persistent_pressure',
+  topologyPossibilityMode: 'phase_recomposed',
+  topologyPhaseDurationMs: 800,
+  topologyPhaseDriftIntensity: 1,
+  topologyPhaseLimit: 5,
+  topologyPhaseOverlap: 0.28
+};
+const reauthoredPhasePointCache = createHillOfHillsLayerTileCache();
+const recomposedPhasePointCache = createHillOfHillsLayerTileCache();
+const phasePointTimes = Array.from(
+  { length: 8 },
+  (_, epoch) => (epoch + 0.28) * phaseRecomposedParams.topologyPhaseDurationMs
+);
+const reauthoredPhasePointFrames: HillOfHillsTerrain[] = [];
+const recomposedPhasePointFrames: HillOfHillsTerrain[] = [];
+
+for (const topologyPhaseTimeMs of phasePointTimes) {
+  reauthoredPhasePointFrames.push(
+    createHillOfHillsTerrainWithCache(reauthoredPhasePointCache, {
+      ...phaseRecomposedParams,
+      topologyPossibilityMode: 'reauthored',
+      topologyPhaseTimeMs
+    })
+  );
+  recomposedPhasePointFrames.push(
+    createHillOfHillsTerrainWithCache(recomposedPhasePointCache, {
+      ...phaseRecomposedParams,
+      topologyPhaseTimeMs
+    })
+  );
+}
+
+assert(
+  recomposedPhasePointFrames.every(
+    (terrain, index) =>
+      terrain.witness.topologyPossibilityMode === 'phase_recomposed' &&
+      terrain.witness.topologyDynamicsIntegrationOriginMs === (index === 0 ? 0 : phasePointTimes[index - 1]) &&
+      (terrain.witness.supportFrame.shockClassCounts.shock_reset ?? 0) === 0 &&
+      terrain.witness.supportFrame.supportClass === 'single_valued_heightfield' &&
+      terrain.witness.supportFrame.mappingMode === 'static_domain_to_world'
+  ),
+  'phase-point recomposition advances one persistent support field without replay or shock reset'
+);
+const recomposedPhasePointPossibilities = new Set(
+  recomposedPhasePointFrames.map((terrain) => terrain.witness.topologyPossibilityChecksum)
+);
+const phasePointSelectionSignature = (terrain: HillOfHillsTerrain): string =>
+  terrain.witness.topologyEventDebug
+    .map(
+      (event) =>
+        `${event.kind}:${event.center[0].toFixed(3)}:${event.center[2].toFixed(3)}:${event.eligibility.possibility.toFixed(3)}`
+    )
+    .join('|');
+const recomposedSelectionDivergenceCount = recomposedPhasePointFrames.reduce(
+  (count, terrain, index) =>
+    count +
+    Number(
+      phasePointSelectionSignature(terrain) !==
+        phasePointSelectionSignature(reauthoredPhasePointFrames[index])
+    ),
+  0
+);
+assert(
+  recomposedSelectionDivergenceCount >= 4,
+  `evolved-world authorship materially changes selected support versus the world-blind analytic control in at least half the epochs: ${recomposedSelectionDivergenceCount}`
+);
+assert(
+  recomposedPhasePointPossibilities.size >= 5,
+  `phase-point recomposition authors materially different possibility fields from the evolved world: ${[
+    ...recomposedPhasePointPossibilities
+  ].join(',')}`
+);
+const recomposedProposalBornEvent = recomposedPhasePointFrames
+  .flatMap((terrain) => terrain.witness.topologyEventDebug)
+  .find(
+    (event) =>
+      event.eligibility.possibility > 0.2 &&
+      inheritedCenters.every(
+        (center) =>
+          Math.hypot(event.center[0] - center[0], event.center[2] - center[2]) >
+          phaseRecomposedParams.topologyPhaseRadius
+      )
+  );
+assert(
+  recomposedProposalBornEvent,
+  'an evolved phase point admits coherent support in a region unavailable to the inherited initial support lattice'
+);
+assert(
+  recomposedPhasePointFrames.every(
+    (terrain) =>
+      terrain.witness.supportFrame.maxHeightDelta < 0.08 &&
+      terrain.witness.supportFrame.maxSurfaceSpeed < 1.2
+  ),
+  'phase-point recomposition changes admission without laundering a whole-world discontinuity into ordinary motion'
+);
+
 console.log('hill of hills terrain ok');

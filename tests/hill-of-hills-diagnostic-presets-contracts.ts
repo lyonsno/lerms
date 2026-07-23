@@ -24,6 +24,10 @@ assert(
   hillDiagnosticPresetFromSearch('?hillPreset=topology-contention') === 'topology-contention',
   'query parser accepts topology-contention preset'
 );
+assert(
+  hillDiagnosticPresetFromSearch('?hillPreset=phase-point-recomposition') === 'phase-point-recomposition',
+  'query parser accepts phase-point-recomposition preset'
+);
 assert(hillDiagnosticPresetFromSearch('?hillPreset=nonsense') === undefined, 'query parser rejects unknown presets');
 assert(hillDiagnosticPresetFromSearch('?foo=bar') === undefined, 'query parser ignores unrelated query state');
 
@@ -136,5 +140,24 @@ assert(contentionPreset.topologyEventClasses.valley_deepen.enabled, 'contention 
 assert(contentionPreset.topologyEventClasses.ridge_lift.enabled, 'contention preset enables ridge lifting');
 assert(!contentionPreset.topologyEventClasses.basin_bloom.enabled, 'contention preset keeps basin bloom disabled');
 assert(!contentionPreset.topologyEventClasses.saddle_pinch.enabled, 'contention preset keeps saddle pinching disabled');
+
+const phasePointPreset = applyHillDiagnosticParamPreset(
+  {
+    ...defaultHillOfHillsParams,
+    topologyDynamicsMode: 'direct_synthesis',
+    topologyPossibilityMode: 'inherited',
+    topologyPhaseDriftIntensity: 0
+  },
+  'phase-point-recomposition'
+);
+assert(phasePointPreset.topologyDynamicsMode === 'persistent_pressure', 'phase-point preset exercises persistent world memory');
+assert(
+  phasePointPreset.topologyPossibilityMode === 'phase_recomposed',
+  'phase-point preset authors possibility from the evolved world'
+);
+assert(phasePointPreset.topologyPhaseIntensity === 1, 'phase-point preset preserves the contention comparison intensity');
+assert(phasePointPreset.topologyPhaseLimit === 8, 'phase-point preset preserves the contention comparison support count');
+assert(phasePointPreset.topologyPhaseRadius === 2.8, 'phase-point preset preserves the contention comparison support radius');
+assert(phasePointPreset.topologyPhaseDurationMs === 5200, 'phase-point preset preserves the contention comparison cadence');
 
 console.log('hill of hills diagnostic preset contracts ok');

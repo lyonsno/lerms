@@ -2338,7 +2338,8 @@ function appendTopologyPossibilityModeControl(parent: HTMLElement): void {
 
   const modeOptions: readonly { value: HillOfHillsTopologyPossibilityMode; label: string }[] = [
     { value: 'inherited', label: 'Inherited' },
-    { value: 'reauthored', label: 'Re-authored' }
+    { value: 'reauthored', label: 'Re-authored' },
+    { value: 'phase_recomposed', label: 'Phase recomposed' }
   ];
   for (const mode of modeOptions) {
     const label = document.createElement('label');

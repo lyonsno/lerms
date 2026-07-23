@@ -84,7 +84,9 @@ export function sanitizeHillOfHillsParamSettings(input: unknown, defaults: HillO
       ? source.topologyDynamicsMode
       : defaults.topologyDynamicsMode;
   sanitized.topologyPossibilityMode =
-    source.topologyPossibilityMode === 'inherited' || source.topologyPossibilityMode === 'reauthored'
+    source.topologyPossibilityMode === 'inherited' ||
+    source.topologyPossibilityMode === 'reauthored' ||
+    source.topologyPossibilityMode === 'phase_recomposed'
       ? source.topologyPossibilityMode
       : defaults.topologyPossibilityMode;
   sanitized.topologyEventClasses = sanitizeTopologyEventClasses(source.topologyEventClasses, defaults.topologyEventClasses);
