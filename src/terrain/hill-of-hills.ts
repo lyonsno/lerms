@@ -1652,7 +1652,7 @@ function createProceduralPhaseState(
           persistentTopologyField,
           topologySelectionPhaseCursor(window)
         );
-        const rng = mulberry32(params.topologyPhaseSeed + window.epoch * 104729 + params.seed * 31);
+        const rng = mulberry32(topologyMotionSelectionSeed(params, window.epoch));
         selectedCandidates = selectTopologyMotionCandidates(
           params,
           candidateSummary.candidates,
@@ -2183,6 +2183,7 @@ function scoreTopologyMotionCandidates(
   const candidates: TopologyMotionCandidate[] = [];
   const scoreRange = createRange();
   const possibilityRange = createRange();
+  const possibilitySignatures: string[] = [];
   const xCount = 21;
   const zCount = 31;
   const xExtent = Math.min(params.width * 0.46, params.channelRadius * 0.96);
@@ -2396,6 +2397,20 @@ function scoreTopologyMotionCandidates(
             : 0
         };
       });
+      if (params.topologyPossibilityMode === 'reauthored') {
+        const purePossibility = configuredEventOptions.reduce(
+          (maximum, option) => Math.max(maximum, option.possibility),
+          0
+        );
+        includeInRange(possibilityRange, purePossibility);
+        possibilitySignatures.push(
+          [
+            roundId(x),
+            roundId(z),
+            ...configuredEventOptions.map((option) => `${option.kind}:${option.possibility.toFixed(3)}`)
+          ].join(':')
+        );
+      }
       let selected = configuredEventOptions[0];
       for (const option of configuredEventOptions) {
         if (option.score > selected.score) selected = option;
@@ -2412,7 +2427,6 @@ function scoreTopologyMotionCandidates(
       ]);
 
       includeInRange(scoreRange, score);
-      includeInRange(possibilityRange, selected.possibility);
       candidates.push({
         x,
         z,
@@ -2448,14 +2462,7 @@ function scoreTopologyMotionCandidates(
     scoreRange: settledRange(scoreRange),
     possibilityChecksum:
       params.topologyPossibilityMode === 'reauthored'
-        ? checksum(
-            candidates
-              .map(
-                (candidate) =>
-                  `${roundId(candidate.x)}:${roundId(candidate.z)}:${candidate.topologyKind}:${candidate.eligibility.possibility.toFixed(3)}`
-              )
-              .join('|')
-          )
+        ? checksum(possibilitySignatures.join('|'))
         : 'inherited',
     possibilityRange: settledRange(possibilityRange)
   };
@@ -2492,6 +2499,11 @@ function selectTopologyMotionCandidates(
   }
 
   return selected;
+}
+
+function topologyMotionSelectionSeed(params: HillOfHillsTerrainParams, epoch: number): number {
+  const inheritedTerrainSeed = params.topologyPossibilityMode === 'reauthored' ? 0 : params.seed * 31;
+  return params.topologyPhaseSeed + epoch * 104729 + inheritedTerrainSeed;
 }
 
 interface TopologyDriftPressure {
@@ -2947,7 +2959,7 @@ function createPersistentTopologySelection(
     };
   }
   const candidateSummary = scoreTopologyMotionCandidates(params, field, epoch + 0.5);
-  const rng = mulberry32(params.topologyPhaseSeed + epoch * 104729 + params.seed * 31);
+  const rng = mulberry32(topologyMotionSelectionSeed(params, epoch));
   return {
     epoch,
     selectionKey,

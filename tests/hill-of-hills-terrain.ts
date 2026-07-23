@@ -12,6 +12,7 @@ import {
   HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS,
   HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
   sampleHillOfHillsTerrain,
+  type HillOfHillsTerrain,
   type HillOfHillsTerrainParams
 } from '../src/terrain/hill-of-hills.js';
 import { applyHillDiagnosticParamPreset } from '../src/terrain/hill-of-hills-diagnostic-presets.js';
@@ -1758,6 +1759,50 @@ const proposalBornEvent = reauthoredPossibility.witness.topologyEventDebug.find(
 assert(
   proposalBornEvent,
   'reauthored posture admits a coherent topology support outside every support inherited from the same initial terrain'
+);
+
+const crossSeedProposalA = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  seed: 1,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseTimeMs: wholeFieldClock
+});
+const crossSeedProposalB = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  seed: 2,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseTimeMs: wholeFieldClock
+});
+assert(
+  crossSeedProposalA.witness.topologyPossibilityChecksum === crossSeedProposalB.witness.topologyPossibilityChecksum,
+  'whole-field possibility identity depends on topology phase identity rather than the initial terrain feature seed'
+);
+assert(
+  crossSeedProposalA.witness.topologyEventCandidateChecksum !== crossSeedProposalB.witness.topologyEventCandidateChecksum,
+  'terrain-aware event candidate identity stays distinct from the pure whole-field possibility field'
+);
+
+const pureProposalSelectionA = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  seed: 1,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseDriftIntensity: 1,
+  topologyPhaseTimeMs: wholeFieldClock
+});
+const pureProposalSelectionB = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  seed: 2,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseDriftIntensity: 1,
+  topologyPhaseTimeMs: wholeFieldClock
+});
+const proposalSelectionSignature = (terrain: HillOfHillsTerrain): string =>
+  terrain.witness.topologyEventDebug
+    .map((event) => `${event.kind}:${event.center[0].toFixed(3)}:${event.center[2].toFixed(3)}`)
+    .join('|');
+assert(
+  proposalSelectionSignature(pureProposalSelectionA) === proposalSelectionSignature(pureProposalSelectionB),
+  'pure reauthored selection jitter does not borrow the initial terrain feature seed'
 );
 
 const topologyPostureCache = createHillOfHillsLayerTileCache();
