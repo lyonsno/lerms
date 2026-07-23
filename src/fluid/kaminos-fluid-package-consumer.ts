@@ -5,13 +5,15 @@ export const KAMINOS_INSTALLED_PACKAGE_EVIDENCE_SCHEMA = 'lerms.kaminos-installe
 export type KaminosFluidPackageExecutionMode = 'live_hill' | 'contract_test';
 export type KaminosFluidPackageSourceAuthority = 'live_runtime' | 'synthetic_fixture' | 'fallback' | 'default' | 'invalid';
 export type KaminosFluidPackageFallbackStatus = 'none' | 'fallback' | 'default';
-export type KaminosFluidPackageCacheStatus = 'fresh' | 'stale' | 'unknown';
+export type KaminosFluidPackageInstallFreshness = 'fresh' | 'stale' | 'unknown';
 
 export interface KaminosFluidPackagePin {
   packageName: string;
   packageVersion: string;
+  dependencySpecifier: string;
   importSpecifier: string;
   integrity: string;
+  resolved: string;
   artifactRevision: string;
   runtimeRevision: string;
   cacheKey: string;
@@ -34,10 +36,8 @@ export interface KaminosFluidPackageDescriptor {
   schema: string;
   sourceAuthority: KaminosFluidPackageSourceAuthority;
   fallbackStatus: KaminosFluidPackageFallbackStatus;
-  cacheStatus: KaminosFluidPackageCacheStatus;
   packageName: string;
   packageVersion: string;
-  integrity: string;
   artifactRevision: string;
   runtimeRevision: string;
   cacheKey: string;
@@ -55,6 +55,8 @@ export interface KaminosInstalledPackageEvidence {
   integrity: string;
   resolved: string;
   lockfileVersion: number;
+  freshness: KaminosFluidPackageInstallFreshness;
+  verifiedAtMs: number;
 }
 
 export interface PackageJsonEvidenceInput {
@@ -76,7 +78,7 @@ export interface KaminosFluidPackageLoadSuccess {
   ok: true;
   requested: Readonly<KaminosFluidPackagePin>;
   effective: KaminosFluidPackageDescriptor;
-  runtimeFactory: (...args: never[]) => unknown;
+  runtimeFactory: (options: unknown) => unknown;
   module: Record<string, unknown>;
   rejections: readonly [];
 }
@@ -97,6 +99,24 @@ export interface KaminosFluidPackageLoadFailure {
 
 export type KaminosFluidPackageLoadResult = KaminosFluidPackageLoadSuccess | KaminosFluidPackageLoadFailure;
 export type KaminosFluidPackageImporter = (specifier: string) => Promise<unknown>;
+
+export const KAMINOS_FLUID_WEBGPU_PIN: Readonly<KaminosFluidPackagePin> = Object.freeze({
+  packageName: '@kaminos/fluid-webgpu',
+  packageVersion: '0.1.0',
+  dependencySpecifier: 'https://raw.githubusercontent.com/lyonsno/kaminos/b8abcdbe2c949b1723c8b3ade3d632740de7e1f3/artifacts/fluid/kaminos-fluid-webgpu-0.1.0.tgz',
+  importSpecifier: '@kaminos/fluid-webgpu',
+  integrity: 'sha512-8Y2LSlateWaOm1x2ulF8yYcKoqYHgbN3NyD2BNGTQyenSzELLsUdSG2dAsaEiN24InNtALeJSAeWGZagS0+RJw==',
+  resolved: 'https://raw.githubusercontent.com/lyonsno/kaminos/b8abcdbe2c949b1723c8b3ade3d632740de7e1f3/artifacts/fluid/kaminos-fluid-webgpu-0.1.0.tgz',
+  artifactRevision: '@kaminos/fluid-webgpu@0.1.0',
+  runtimeRevision: '3e3934f9e451823ae122c9fca5f4c04ec3e88694',
+  cacheKey: '@kaminos/fluid-webgpu@0.1.0:3e3934f9e451823ae122c9fca5f4c04ec3e88694',
+  descriptorSchema: 'kaminos.fluid.package-descriptor.v1',
+  descriptorExport: 'KAMINOS_FLUID_PACKAGE_DESCRIPTOR',
+  runtimeFactoryExport: 'createKaminosFluidRuntime',
+  runtimeRoute: 'kaminos/fluid/mapped-orthogonal-heightfield-hll-reference-v1',
+  representationRoute: 'kaminos/fluid/representation-frame',
+  outputRoute: 'kaminos/fluid/terrain-feedback'
+});
 
 export interface HillFluidAdapterEvidence {
   frameId: string;
@@ -148,9 +168,11 @@ export function createKaminosFluidPackageRequest(
     throw new Error(`Kaminos fluid consumer requires an exact package version, received ${JSON.stringify(pin.packageVersion)}`);
   }
   requireNonempty(pin.packageName, 'package name');
+  requireNonempty(pin.dependencySpecifier, 'dependency specifier');
   requireNonempty(pin.importSpecifier, 'import specifier');
   requireNonempty(pin.integrity, 'package integrity');
-  requireRevision(pin.artifactRevision, 'artifact revision');
+  requireNonempty(pin.resolved, 'resolved artifact URL');
+  requireNonempty(pin.artifactRevision, 'artifact revision');
   requireRevision(pin.runtimeRevision, 'runtime revision');
   requireNonempty(pin.cacheKey, 'cache key');
   requireNonempty(pin.descriptorSchema, 'descriptor schema');
@@ -179,7 +201,6 @@ export function validateKaminosFluidPackageDescriptor(
   rejectUnless(descriptor.schema === expected.descriptorSchema, 'reject-package-descriptor-schema', rejections);
   rejectUnless(descriptor.packageName === expected.packageName, 'reject-substituted-package', rejections);
   rejectUnless(descriptor.packageVersion === expected.packageVersion, 'reject-substituted-package-version', rejections);
-  rejectUnless(descriptor.integrity === expected.integrity, 'reject-package-integrity-mismatch', rejections);
   rejectUnless(descriptor.artifactRevision === expected.artifactRevision, 'reject-artifact-revision-mismatch', rejections);
   rejectUnless(descriptor.runtimeRevision === expected.runtimeRevision, 'reject-runtime-revision-mismatch', rejections);
   rejectUnless(descriptor.cacheKey === expected.cacheKey, 'reject-package-cache-key-mismatch', rejections);
@@ -187,11 +208,6 @@ export function validateKaminosFluidPackageDescriptor(
   rejectUnless(descriptor.representationRoutes.includes(expected.representationRoute), 'reject-missing-representation-route', rejections);
   rejectUnless(descriptor.outputRoutes.includes(expected.outputRoute), 'reject-missing-output-route', rejections);
 
-  if (descriptor.cacheStatus === 'stale') {
-    rejections.push('reject-stale-cached-package');
-  } else if (descriptor.cacheStatus !== 'fresh') {
-    rejections.push('reject-unverified-package-cache');
-  }
   if (descriptor.fallbackStatus === 'fallback') {
     rejections.push('reject-fallback-package-route');
   } else if (descriptor.fallbackStatus === 'default') {
@@ -295,7 +311,7 @@ export async function loadPinnedKaminosFluidPackage(
     ok: true,
     requested: request.requested,
     effective: descriptorValue,
-    runtimeFactory: runtimeFactory as (...args: never[]) => unknown,
+    runtimeFactory: runtimeFactory as (options: unknown) => unknown,
     module: imported,
     rejections: []
   };
@@ -304,15 +320,19 @@ export async function loadPinnedKaminosFluidPackage(
 export function createInstalledKaminosPackageEvidence(
   request: KaminosFluidPackageRequest,
   packageJson: PackageJsonEvidenceInput,
-  packageLock: PackageLockEvidenceInput
+  packageLock: PackageLockEvidenceInput,
+  install: {
+    freshness: KaminosFluidPackageInstallFreshness;
+    verifiedAtMs: number;
+  }
 ): KaminosInstalledPackageEvidence {
   const packageName = request.requested.packageName;
   const dependencySpecifier = packageJson.dependencies?.[packageName];
   if (!dependencySpecifier) {
     throw new Error(`requested Kaminos package ${packageName} is not declared in package.json dependencies`);
   }
-  if (dependencySpecifier !== request.requested.packageVersion) {
-    throw new Error(`package.json dependency for ${packageName} is not the exact requested version`);
+  if (dependencySpecifier !== request.requested.dependencySpecifier) {
+    throw new Error(`package.json dependency for ${packageName} is not the exact immutable dependency specifier`);
   }
 
   const rootDependencySpecifier = packageLock.packages?.['']?.dependencies?.[packageName];
@@ -335,6 +355,10 @@ export function createInstalledKaminosPackageEvidence(
   if (!lockEntry.resolved) {
     throw new Error(`installed Kaminos package ${packageName} has no resolved artifact identity`);
   }
+  if (lockEntry.resolved !== request.requested.resolved) {
+    throw new Error(`installed Kaminos package ${packageName} resolved URL does not match the exact request`);
+  }
+  requireFinite(install.verifiedAtMs, 'install verifiedAtMs');
 
   return {
     schema: KAMINOS_INSTALLED_PACKAGE_EVIDENCE_SCHEMA,
@@ -344,7 +368,9 @@ export function createInstalledKaminosPackageEvidence(
     packageVersion: lockEntry.version,
     integrity: lockEntry.integrity,
     resolved: lockEntry.resolved,
-    lockfileVersion: packageLock.lockfileVersion as number
+    lockfileVersion: packageLock.lockfileVersion as number,
+    freshness: install.freshness,
+    verifiedAtMs: install.verifiedAtMs
   };
 }
 
@@ -357,11 +383,13 @@ export function validateInstalledKaminosPackageEvidence(
   rejectUnless(evidence.schema === KAMINOS_INSTALLED_PACKAGE_EVIDENCE_SCHEMA, 'reject-installed-evidence-schema', rejections);
   rejectUnless(evidence.source === 'package.json+package-lock.json', 'reject-installed-evidence-source', rejections);
   rejectUnless(evidence.packageName === expected.packageName, 'reject-installed-package-substitution', rejections);
-  rejectUnless(evidence.dependencySpecifier === expected.packageVersion, 'reject-installed-dependency-specifier', rejections);
+  rejectUnless(evidence.dependencySpecifier === expected.dependencySpecifier, 'reject-installed-dependency-specifier', rejections);
   rejectUnless(evidence.packageVersion === expected.packageVersion, 'reject-installed-package-version', rejections);
   rejectUnless(evidence.integrity === expected.integrity, 'reject-installed-package-integrity', rejections);
-  rejectUnless(evidence.resolved.trim().length > 0, 'reject-installed-package-unresolved', rejections);
+  rejectUnless(evidence.resolved === expected.resolved, 'reject-installed-package-resolved-url', rejections);
   rejectUnless(Number.isInteger(evidence.lockfileVersion) && evidence.lockfileVersion > 0, 'reject-installed-lockfile-version', rejections);
+  rejectUnless(evidence.freshness === 'fresh', evidence.freshness === 'stale' ? 'reject-stale-installed-package' : 'reject-unverified-installed-package', rejections);
+  rejectUnless(Number.isFinite(evidence.verifiedAtMs), 'reject-installed-package-verification-time', rejections);
   return unique(rejections);
 }
 
@@ -428,10 +456,8 @@ function isPackageDescriptor(value: unknown): value is KaminosFluidPackageDescri
     typeof value.schema === 'string' &&
     isOneOf(value.sourceAuthority, ['live_runtime', 'synthetic_fixture', 'fallback', 'default', 'invalid']) &&
     isOneOf(value.fallbackStatus, ['none', 'fallback', 'default']) &&
-    isOneOf(value.cacheStatus, ['fresh', 'stale', 'unknown']) &&
     typeof value.packageName === 'string' &&
     typeof value.packageVersion === 'string' &&
-    typeof value.integrity === 'string' &&
     typeof value.artifactRevision === 'string' &&
     typeof value.runtimeRevision === 'string' &&
     typeof value.cacheKey === 'string' &&

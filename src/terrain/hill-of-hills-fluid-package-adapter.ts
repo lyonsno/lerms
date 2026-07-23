@@ -104,6 +104,60 @@ export interface HillFluidPackageBlockedReport {
   rejections: readonly string[];
 }
 
+export interface KaminosTerrainFluidFrame {
+  schema: 'kaminos.fluid.terrain-fluid-frame.v1';
+  route: {
+    requested: string;
+    effective: string;
+  };
+  producer: {
+    id: 'lerms/hill-of-hills';
+    revision: string;
+  };
+  source: {
+    requested: string;
+    effective: string;
+  };
+  worldMetersPerUnit: 1;
+  gravity: readonly [0, number, 0];
+  terrainId: string;
+  supportClass: 'heightfield';
+  transformId: string;
+  priorEpoch: number;
+  currentEpoch: number;
+  motionClass: 'stable' | 'phase_morph' | 'shock_reset';
+  shockId: string | null;
+  grid: {
+    width: number;
+    height: number;
+    spacing: readonly [number, number];
+    origin: readonly [number, number, number];
+  };
+  fields: {
+    bedHeight: Float64Array;
+    jacobian: Float64Array;
+    gradient: Float64Array;
+    tangentU: Float64Array;
+    tangentV: Float64Array;
+    normal: Float64Array;
+    supportVelocity: Float64Array;
+    valid: Uint8Array;
+  };
+  dirtyRegions: readonly {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    sourceChecksum: string;
+    dirtySampleCount: number;
+  }[];
+  minimumFilteredSupportScale: null;
+  motionSubstepEnvelope: null;
+  complete: true;
+  expectedSampleCount: number;
+  actualSampleCount: number;
+}
+
 export function createHillFluidPackageAdapterFrame(
   terrainBuffer: HillOfHillsTerrainBuffer,
   options: {
@@ -255,6 +309,129 @@ export function assertHillFluidPackageAdapterFrame(frame: HillFluidPackageAdapte
   }
 }
 
+export function createKaminosTerrainFluidFrame(
+  adapterFrame: HillFluidPackageAdapterFrame,
+  options: {
+    producerRevision: string;
+    requestedRoute: string;
+    requestedSourceId: string;
+  }
+): KaminosTerrainFluidFrame {
+  assertHillFluidPackageAdapterFrame(adapterFrame);
+  requireNonempty(options.producerRevision, 'Hill producer revision');
+  requireNonempty(options.requestedRoute, 'terrain frame route');
+  requireNonempty(options.requestedSourceId, 'terrain source id');
+  if (adapterFrame.physicalScale.metersPerWorldUnit !== 1) {
+    throw new Error('Kaminos mapped macro reference requires Hill coordinates normalized to one meter per world unit');
+  }
+  if (adapterFrame.physicalScale.secondsPerSimulationSecond !== 1) {
+    throw new Error('Kaminos mapped macro reference requires one simulation second per physical second');
+  }
+
+  const sampleCount = adapterFrame.terrain.sampleCount;
+  const bedHeight = new Float64Array(sampleCount);
+  const jacobian = new Float64Array(sampleCount);
+  const gradient = new Float64Array(sampleCount * 2);
+  const tangentU = new Float64Array(sampleCount * 3);
+  const tangentV = new Float64Array(sampleCount * 3);
+  const normal = new Float64Array(sampleCount * 3);
+  const supportVelocity = new Float64Array(sampleCount * 3);
+  const valid = new Uint8Array(sampleCount);
+  const supportVelocityMetricIndex = adapterFrame.channels.metricLayout.indexOf('surfaceVelocityY');
+
+  if (supportVelocityMetricIndex < 0) {
+    throw new Error('Hill package adapter is missing surfaceVelocityY for canonical support velocity');
+  }
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const vectorOffset = index * 3;
+    const sourceNormalY = adapterFrame.channels.normals[vectorOffset + 1];
+    if (!Number.isFinite(sourceNormalY) || Math.abs(sourceNormalY) <= 1e-8) {
+      throw new Error(`Hill sample ${index} has a degenerate heightfield normal`);
+    }
+
+    bedHeight[index] = adapterFrame.channels.positions[vectorOffset + 1];
+    jacobian[index] = 1;
+    gradient[index * 2] = -adapterFrame.channels.normals[vectorOffset] / sourceNormalY;
+    gradient[index * 2 + 1] = -adapterFrame.channels.normals[vectorOffset + 2] / sourceNormalY;
+
+    // The first Kaminos core uses a fixed orthogonal chart; slope remains in gradient/bed height.
+    tangentU[vectorOffset] = 1;
+    tangentV[vectorOffset + 2] = 1;
+    normal[vectorOffset + 1] = 1;
+    supportVelocity[vectorOffset + 1] =
+      adapterFrame.channels.metrics[index * adapterFrame.channels.metricLayout.length + supportVelocityMetricIndex];
+    valid[index] = 1;
+  }
+
+  const motionClass = canonicalMotionClass(adapterFrame);
+  const width = adapterFrame.terrain.gridResolution.x;
+  const height = adapterFrame.terrain.gridResolution.z;
+  const worldBounds = adapterFrame.terrain.worldBounds;
+  const spacingX = (worldBounds.x.max - worldBounds.x.min) / Math.max(1, width - 1);
+  const spacingZ = (worldBounds.z.max - worldBounds.z.min) / Math.max(1, height - 1);
+  requirePositive(spacingX, 'canonical terrain X spacing');
+  requirePositive(spacingZ, 'canonical terrain Z spacing');
+
+  return {
+    schema: 'kaminos.fluid.terrain-fluid-frame.v1',
+    route: {
+      requested: options.requestedRoute,
+      effective: options.requestedRoute
+    },
+    producer: {
+      id: 'lerms/hill-of-hills',
+      revision: options.producerRevision
+    },
+    source: {
+      requested: options.requestedSourceId,
+      effective: options.requestedSourceId
+    },
+    worldMetersPerUnit: 1,
+    gravity: [0, -adapterFrame.physicalScale.gravityMetersPerSecondSquared, 0],
+    terrainId: `hill-of-hills:${adapterFrame.terrain.sampleChecksum}`,
+    supportClass: 'heightfield',
+    transformId: `hill-support:${adapterFrame.terrain.supportFrameChecksum}`,
+    priorEpoch: adapterFrame.terrain.priorEpoch,
+    currentEpoch: adapterFrame.terrain.currentEpoch,
+    motionClass,
+    shockId: motionClass === 'shock_reset'
+      ? `hill-shock:${adapterFrame.terrain.supportFrameChecksum}`
+      : null,
+    grid: {
+      width,
+      height,
+      spacing: [spacingX, spacingZ],
+      origin: [worldBounds.x.min, 0, worldBounds.z.min]
+    },
+    fields: {
+      bedHeight,
+      jacobian,
+      gradient,
+      tangentU,
+      tangentV,
+      normal,
+      supportVelocity,
+      valid
+    },
+    dirtyRegions: adapterFrame.terrain.dirtySampleCount > 0
+      ? [{
+          x: 0,
+          y: 0,
+          width,
+          height,
+          sourceChecksum: adapterFrame.terrain.dirtyRegionChecksum,
+          dirtySampleCount: adapterFrame.terrain.dirtySampleCount
+        }]
+      : [],
+    minimumFilteredSupportScale: null,
+    motionSubstepEnvelope: null,
+    complete: true,
+    expectedSampleCount: sampleCount,
+    actualSampleCount: sampleCount
+  };
+}
+
 export function createBlockedHillFluidPackageReport(
   request: KaminosFluidPackageRequest,
   adapterFrame: HillFluidPackageAdapterFrame,
@@ -292,6 +469,18 @@ function assertPhysicalScale(scale: HillFluidPhysicalScale): void {
   requirePositive(scale.metersPerWorldUnit, 'meters per world unit');
   requirePositive(scale.secondsPerSimulationSecond, 'seconds per simulation second');
   requirePositive(scale.gravityMetersPerSecondSquared, 'gravity');
+}
+
+function canonicalMotionClass(
+  frame: HillFluidPackageAdapterFrame
+): KaminosTerrainFluidFrame['motionClass'] {
+  if ((frame.terrain.supportShockClassCounts.shock_reset ?? 0) > 0) {
+    return 'shock_reset';
+  }
+  if ((frame.terrain.supportMotionClassCounts.phase_morph ?? 0) > 0) {
+    return 'phase_morph';
+  }
+  return 'stable';
 }
 
 function requireNonempty(value: string, label: string): void {

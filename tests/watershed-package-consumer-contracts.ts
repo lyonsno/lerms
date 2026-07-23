@@ -45,8 +45,10 @@ const runtimeRevision = 'b'.repeat(40);
 const pin: KaminosFluidPackagePin = {
   packageName: '@kaminos/fluid-webgpu',
   packageVersion: '0.0.0-contract-fixture',
+  dependencySpecifier: 'https://packages.invalid/kaminos-fluid-webgpu-contract-fixture.tgz',
   importSpecifier: '@kaminos/fluid-webgpu',
   integrity: 'sha512-contract-fixture-only',
+  resolved: 'https://packages.invalid/kaminos-fluid-webgpu-contract-fixture.tgz',
   artifactRevision,
   runtimeRevision,
   cacheKey: `@kaminos/fluid-webgpu@0.0.0-contract-fixture:${artifactRevision}`,
@@ -68,7 +70,7 @@ const contractRequest = createKaminosFluidPackageRequest(pin, {
 });
 const packageJsonEvidence = {
   dependencies: {
-    [pin.packageName]: pin.packageVersion
+    [pin.packageName]: pin.dependencySpecifier
   }
 };
 const packageLockEvidence = {
@@ -76,17 +78,20 @@ const packageLockEvidence = {
   packages: {
     '': {
       dependencies: {
-        [pin.packageName]: pin.packageVersion
+        [pin.packageName]: pin.dependencySpecifier
       }
     },
     [`node_modules/${pin.packageName}`]: {
       version: pin.packageVersion,
       integrity: pin.integrity,
-      resolved: 'https://packages.invalid/kaminos-fluid-webgpu-contract-fixture.tgz'
+      resolved: pin.resolved
     }
   }
 };
-const installedEvidence = createInstalledKaminosPackageEvidence(liveRequest, packageJsonEvidence, packageLockEvidence);
+const installedEvidence = createInstalledKaminosPackageEvidence(liveRequest, packageJsonEvidence, packageLockEvidence, {
+  freshness: 'fresh',
+  verifiedAtMs: 44_020
+});
 
 assert(installedEvidence.packageName === pin.packageName, 'installed evidence reads the requested package from structured lock data');
 assert(installedEvidence.packageVersion === pin.packageVersion, 'installed evidence preserves exact locked version');
@@ -98,7 +103,12 @@ assert(
   'installed evidence rejects substituted lock integrity'
 );
 assertThrows(
-  () => createInstalledKaminosPackageEvidence(liveRequest, { dependencies: {} }, packageLockEvidence),
+  () => createInstalledKaminosPackageEvidence(
+    liveRequest,
+    { dependencies: {} },
+    packageLockEvidence,
+    { freshness: 'fresh', verifiedAtMs: 44_020 }
+  ),
   'not declared',
   'clean-checkout evidence rejects an absent package declaration'
 );
@@ -106,22 +116,28 @@ assertThrows(
   () => createInstalledKaminosPackageEvidence(
     liveRequest,
     { dependencies: { [pin.packageName]: '^0.0.0' } },
-    packageLockEvidence
+    packageLockEvidence,
+    { freshness: 'fresh', verifiedAtMs: 44_020 }
   ),
-  'not the exact requested version',
-  'clean-checkout evidence rejects a ranged dependency'
+  'not the exact immutable dependency specifier',
+  'clean-checkout evidence rejects a substituted dependency specifier'
 );
 assertThrows(
-  () => createInstalledKaminosPackageEvidence(liveRequest, packageJsonEvidence, {
-    ...packageLockEvidence,
-    packages: {
-      ...packageLockEvidence.packages,
-      [`node_modules/${pin.packageName}`]: {
-        ...packageLockEvidence.packages[`node_modules/${pin.packageName}`],
-        integrity: 'sha512-substituted'
+  () => createInstalledKaminosPackageEvidence(
+    liveRequest,
+    packageJsonEvidence,
+    {
+      ...packageLockEvidence,
+      packages: {
+        ...packageLockEvidence.packages,
+        [`node_modules/${pin.packageName}`]: {
+          ...packageLockEvidence.packages[`node_modules/${pin.packageName}`],
+          integrity: 'sha512-substituted'
+        }
       }
-    }
-  }),
+    },
+    { freshness: 'fresh', verifiedAtMs: 44_020 }
+  ),
   'integrity does not match',
   'clean-checkout evidence rejects substituted installed integrity'
 );
@@ -228,10 +244,8 @@ const syntheticDescriptor: KaminosFluidPackageDescriptor = {
   schema: pin.descriptorSchema,
   sourceAuthority: 'synthetic_fixture',
   fallbackStatus: 'none',
-  cacheStatus: 'fresh',
   packageName: pin.packageName,
   packageVersion: pin.packageVersion,
-  integrity: pin.integrity,
   artifactRevision: pin.artifactRevision,
   runtimeRevision: pin.runtimeRevision,
   cacheKey: pin.cacheKey,
@@ -256,11 +270,11 @@ assert(
   'descriptor validation rejects a substituted package'
 );
 assert(
-  validateKaminosFluidPackageDescriptor(contractRequest, {
-    ...syntheticDescriptor,
-    cacheStatus: 'stale'
-  }).includes('reject-stale-cached-package'),
-  'descriptor validation rejects stale cache state'
+  validateInstalledKaminosPackageEvidence(liveRequest, {
+    ...installedEvidence,
+    freshness: 'stale'
+  }).includes('reject-stale-installed-package'),
+  'install validation rejects stale package state'
 );
 assert(
   validateKaminosFluidPackageDescriptor(contractRequest, {

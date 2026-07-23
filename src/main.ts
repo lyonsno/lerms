@@ -92,6 +92,10 @@ import {
   type HillPhaseFilmstripFrame,
   type HillPhaseFilmstripFrameCount
 } from './terrain/hill-of-hills-phase-filmstrip.js';
+import {
+  createHillKaminosBrowserRuntime,
+  type HillKaminosBrowserRuntime
+} from './fluid/hill-kaminos-browser-runtime.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -218,6 +222,7 @@ function withoutPreviewDitchFormation(nextParams: HillOfHillsTerrainParams): Hil
 }
 
 const hillDiagnosticPreset = hillDiagnosticPresetFromSearch(window.location.search);
+const watershedFluidEnabled = new URLSearchParams(window.location.search).get('watershedFluid') === '1';
 let params: HillOfHillsTerrainParams = withoutPreviewDitchFormation({
   ...defaultPreviewParams,
   ...loadHillOfHillsParamSettings(safeParamSettingsStorage(), defaultPreviewParams)
@@ -240,6 +245,19 @@ let queuedTerrainParams: HillOfHillsTerrainParams | undefined;
 let latestWorkerDurationMs = 0;
 let latestWorkerError = 'none';
 let latestGrowthPlacementSummary = 'placement none';
+let hillKaminosRuntime: HillKaminosBrowserRuntime | undefined;
+let hillKaminosRuntimeStatus = watershedFluidEnabled ? 'loading' : 'disabled';
+
+if (watershedFluidEnabled) {
+  void createHillKaminosBrowserRuntime(terrainBuffer, {
+    producerRevision: 'f7571e987bb4cb205012798b68c7a711565fd8cd'
+  }).then((runtime) => {
+    hillKaminosRuntime = runtime;
+    hillKaminosRuntimeStatus = 'active';
+  }).catch((error: unknown) => {
+    hillKaminosRuntimeStatus = `failed: ${error instanceof Error ? error.message : String(error)}`;
+  });
+}
 
 try {
   workerTerrain = new Worker(new URL('./terrain/hill-of-hills.worker.ts', import.meta.url), { type: 'module' });
@@ -403,20 +421,27 @@ function render(timestampMs: number): void {
     params.topologyPhaseIntensity > 0
       ? params.topologyPhaseTimeMs + motionTimestampMs * 0.3
       : params.topologyPhaseTimeMs;
-  requestTerrain({
-    ...params,
-    ditchPhaseTimeMs,
-    trailPhaseTimeMs,
-    topologyPhaseTimeMs
-  });
+  if (!watershedFluidEnabled) {
+    requestTerrain({
+      ...params,
+      ditchPhaseTimeMs,
+      trailPhaseTimeMs,
+      topologyPhaseTimeMs
+    });
+  }
 
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
+  hillKaminosRuntime?.advance(timestampMs);
   drawTerrain(terrainBuffer, width, height);
+  if (hillKaminosRuntime) {
+    drawKaminosFluidFeedback(terrainBuffer, hillKaminosRuntime, width, height);
+  }
   if (previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
   drawWitness(terrainBuffer);
+  publishHillKaminosDebugState();
 
   window.requestAnimationFrame(render);
 }
@@ -529,6 +554,53 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
     }
     ctx.stroke();
   }
+}
+
+function drawKaminosFluidFeedback(
+  currentBuffer: HillOfHillsTerrainBuffer,
+  runtime: HillKaminosBrowserRuntime,
+  width: number,
+  height: number
+): void {
+  const depth = runtime.feedback.fields.depth;
+  const maximumDepth = runtime.witness.outwardWave.maximumDepth;
+  if (maximumDepth <= 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  for (let index = 0; index < depth.length; index += 1) {
+    if (depth[index] <= 1e-8) {
+      continue;
+    }
+    const intensity = Math.min(1, depth[index] / maximumDepth);
+    const wetness = runtime.feedback.fields.wetness[index];
+    const point = projectSample(
+      currentBuffer,
+      index,
+      width,
+      height,
+      0.045 + Math.min(0.22, depth[index] * 0.22)
+    );
+    const radius = 3.5 + intensity * 8 + wetness * 2.5;
+    ctx.fillStyle = `rgba(${24 + intensity * 30}, ${150 + intensity * 68}, ${196 + intensity * 54}, ${0.24 + intensity * 0.5})`;
+    ctx.beginPath();
+    ctx.ellipse(point.x, point.y, radius * 1.55, radius * 0.72, -0.16, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const depositIndex =
+    Math.floor(currentBuffer.gridResolution.z / 2) * currentBuffer.gridResolution.x +
+    Math.floor(currentBuffer.gridResolution.x / 2);
+  const center = projectSample(currentBuffer, depositIndex, width, height, 0.1);
+  const pulse = 10 + (runtime.witness.runtime.fluidEpoch % 12) * 1.8;
+  ctx.strokeStyle = 'rgba(166, 244, 255, 0.62)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.ellipse(center.x, center.y, pulse * 1.7, pulse * 0.62, -0.16, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawGrowthMeadowShaderSketch(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
@@ -1887,12 +1959,22 @@ function colorAt(buffer: HillOfHillsTerrainBuffer, index: number): readonly [num
 
 function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
   const witness = currentBuffer.witness;
+  const fluidWitness = hillKaminosRuntime?.witness;
   witnessPanel.textContent = [
     `Hill of Hills witness`,
     `${witness.sourceAuthority} / ${witness.route}`,
     `buffer: ${currentBuffer.schema} / ${currentBuffer.sampleSchema}`,
     `fallback: ${witness.fallbackStatus}`,
     `grid: ${witness.gridResolution.x} x ${witness.gridResolution.z} / samples: ${witness.sampleCount}`,
+    fluidWitness
+      ? `Kaminos: ${fluidWitness.package.effective.packageName}@${fluidWitness.package.effective.packageVersion} ${fluidWitness.package.effective.runtimeRevision.slice(0, 8)}`
+      : `Kaminos: ${hillKaminosRuntimeStatus}`,
+    fluidWitness
+      ? `fluid route: ${fluidWitness.runtime.route} epoch ${fluidWitness.runtime.fluidEpoch} receipt ${fluidWitness.receipt.transactionId}`
+      : `fluid route: pending`,
+    fluidWitness
+      ? `wave: cells ${fluidWitness.outwardWave.initialReachedCellCount}->${fluidWitness.outwardWave.reachedCellCount} radius ${fluidWitness.outwardWave.maximumRadiusCells.toFixed(2)} depth ${fluidWitness.outwardWave.maximumDepth.toFixed(3)}`
+      : `wave: pending`,
     `height: ${witness.heightRange.min.toFixed(2)} .. ${witness.heightRange.max.toFixed(2)}`,
     `checksum: ${witness.sampleChecksum}`,
     `topology: ${witness.topologyChecksum} / material: ${witness.proxyMaterialChecksum}`,
@@ -1923,6 +2005,18 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     latestGrowthPlacementSummary,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
+}
+
+function publishHillKaminosDebugState(): void {
+  const target = window as typeof window & {
+    __lermsHillKaminosDebugState?: unknown;
+  };
+  target.__lermsHillKaminosDebugState = hillKaminosRuntime
+    ? hillKaminosRuntime.witness
+    : {
+        schema: 'lerms.hill-of-hills.kaminos-browser-witness.v1',
+        status: hillKaminosRuntimeStatus
+      };
 }
 
 function pressureFieldWitnessSummary(witness: HillOfHillsTerrainBuffer['witness']): string {
