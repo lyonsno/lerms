@@ -107,6 +107,12 @@ import {
   createHillKaminosBrowserRuntime,
   type HillKaminosBrowserRuntime
 } from './fluid/hill-kaminos-browser-runtime.js';
+import {
+  HILL_KAMINOS_PHASE_MORPH_RECIPE,
+  assertHillKaminosPhaseMorphRecipePair,
+  createHillKaminosPhaseMorphRecipeBuffer,
+  createHillKaminosPhaseMorphRecipeParams
+} from './fluid/hill-kaminos-phase-morph-recipe.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -234,13 +240,25 @@ function withoutPreviewDitchFormation(nextParams: HillOfHillsTerrainParams): Hil
   };
 }
 
-const hillDiagnosticPreset = hillDiagnosticPresetFromSearch(window.location.search);
-const watershedFluidEnabled = new URLSearchParams(window.location.search).get('watershedFluid') === '1';
-let params: HillOfHillsTerrainParams = withoutPreviewDitchFormation({
-  ...defaultPreviewParams,
-  ...loadHillOfHillsParamSettings(safeParamSettingsStorage(), defaultPreviewParams)
-});
-params = applyHillDiagnosticParamPreset(params, hillDiagnosticPreset);
+const searchParams = new URLSearchParams(window.location.search);
+const watershedFluidEnabled = searchParams.get('watershedFluid') === '1';
+const hillDiagnosticPreset = watershedFluidEnabled
+  ? HILL_KAMINOS_PHASE_MORPH_RECIPE.preset
+  : hillDiagnosticPresetFromSearch(window.location.search);
+const requestedRemapStepValue = searchParams.get('watershedRemapStep');
+const requestedRemapStep = requestedRemapStepValue === null ? Number.NaN : Number(requestedRemapStepValue);
+const watershedRemapStep = Number.isInteger(requestedRemapStep)
+  ? Math.min(120, Math.max(12, requestedRemapStep))
+  : 36;
+let params: HillOfHillsTerrainParams = watershedFluidEnabled
+  ? createHillKaminosPhaseMorphRecipeParams('previous')
+  : applyHillDiagnosticParamPreset(
+      withoutPreviewDitchFormation({
+        ...defaultPreviewParams,
+        ...loadHillOfHillsParamSettings(safeParamSettingsStorage(), defaultPreviewParams)
+      }),
+      hillDiagnosticPreset
+    );
 const terrainCache = createHillOfHillsLayerTileCache();
 const previewSourceOptions = {
   route: 'hill-of-hills-terrain-preview-cache',
@@ -249,7 +267,9 @@ const previewSourceOptions = {
   timestampMs: 0,
   sampleAgeMs: 0
 };
-let terrainBuffer = createHillOfHillsTerrainBuffer(createHillOfHillsTerrainWithCache(terrainCache, params, previewSourceOptions));
+let terrainBuffer = watershedFluidEnabled
+  ? createHillKaminosPhaseMorphRecipeBuffer(terrainCache, 'previous')
+  : createHillOfHillsTerrainBuffer(createHillOfHillsTerrainWithCache(terrainCache, params, previewSourceOptions));
 let workerTerrain: Worker | undefined;
 let workerStatus = 'sync-fallback';
 let latestTerrainRequestId = 0;
@@ -263,10 +283,11 @@ let hillKaminosRuntimeStatus = watershedFluidEnabled ? 'loading' : 'disabled';
 
 if (watershedFluidEnabled) {
   void createHillKaminosBrowserRuntime(terrainBuffer, {
-    producerRevision: 'f7571e987bb4cb205012798b68c7a711565fd8cd'
+    producerRevision: HILL_KAMINOS_PHASE_MORPH_RECIPE.producerRevision,
+    motionSubstepEnvelopeSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.motionSubstepEnvelopeSeconds
   }).then((runtime) => {
     hillKaminosRuntime = runtime;
-    hillKaminosRuntimeStatus = 'active';
+    hillKaminosRuntimeStatus = 'active-pre-remap';
   }).catch((error: unknown) => {
     hillKaminosRuntimeStatus = `failed: ${error instanceof Error ? error.message : String(error)}`;
   });
@@ -446,6 +467,7 @@ function render(timestampMs: number): void {
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
   hillKaminosRuntime?.advance(timestampMs);
+  remapWatershedTerrainIfReady();
   drawTerrain(terrainBuffer, width, height);
   if (hillKaminosRuntime) {
     drawKaminosFluidFeedback(terrainBuffer, hillKaminosRuntime, width, height);
@@ -457,6 +479,34 @@ function render(timestampMs: number): void {
   publishHillKaminosDebugState();
 
   window.requestAnimationFrame(render);
+}
+
+function remapWatershedTerrainIfReady(): void {
+  if (
+    !watershedFluidEnabled ||
+    !hillKaminosRuntime ||
+    hillKaminosRuntimeStatus !== 'active-pre-remap' ||
+    hillKaminosRuntime.witness.stepCount < watershedRemapStep
+  ) {
+    return;
+  }
+
+  hillKaminosRuntimeStatus = 'remapping';
+  try {
+    const nextTerrainBuffer = createHillKaminosPhaseMorphRecipeBuffer(terrainCache, 'current');
+    assertHillKaminosPhaseMorphRecipePair(terrainBuffer, nextTerrainBuffer);
+    hillKaminosRuntime.remapTerrain(nextTerrainBuffer, {
+      producerRevision: HILL_KAMINOS_PHASE_MORPH_RECIPE.producerRevision,
+      deltaSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.sourceIntervalSeconds,
+      maximumBedDisplacement: HILL_KAMINOS_PHASE_MORPH_RECIPE.maximumBedDisplacement,
+      maximumSupportSpeed: HILL_KAMINOS_PHASE_MORPH_RECIPE.maximumSupportSpeed
+    });
+    terrainBuffer = nextTerrainBuffer;
+    params = createHillKaminosPhaseMorphRecipeParams('current');
+    hillKaminosRuntimeStatus = 'active-remapped';
+  } catch (error) {
+    hillKaminosRuntimeStatus = `failed-remap: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 function requestTerrain(nextParams: HillOfHillsTerrainParams): void {
@@ -614,16 +664,20 @@ function drawKaminosFluidFeedback(
     ctx.fill();
   }
 
-  const depositIndex =
-    Math.floor(currentBuffer.gridResolution.z / 2) * currentBuffer.gridResolution.x +
-    Math.floor(currentBuffer.gridResolution.x / 2);
-  const center = projectSample(currentBuffer, depositIndex, width, height, 0.1);
-  const pulse = 10 + (runtime.witness.runtime.fluidEpoch % 12) * 1.8;
-  ctx.strokeStyle = 'rgba(166, 244, 255, 0.62)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.ellipse(center.x, center.y, pulse * 1.7, pulse * 0.62, -0.16, 0, Math.PI * 2);
-  ctx.stroke();
+  const depositAge = Math.max(0, runtime.witness.runtime.fluidEpoch - runtime.witness.receipt.fluidEpoch);
+  const depositMarkerAlpha = Math.max(0, 1 - depositAge / 10);
+  if (depositMarkerAlpha > 0) {
+    const depositIndex =
+      Math.floor(currentBuffer.gridResolution.z / 2) * currentBuffer.gridResolution.x +
+      Math.floor(currentBuffer.gridResolution.x / 2);
+    const center = projectSample(currentBuffer, depositIndex, width, height, 0.1);
+    const radius = 10 + depositAge * 1.8;
+    ctx.strokeStyle = `rgba(166, 244, 255, ${0.62 * depositMarkerAlpha})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(center.x, center.y, radius * 1.7, radius * 0.62, -0.16, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -2007,9 +2061,13 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     fluidWitness
       ? `Kaminos: ${fluidWitness.package.effective.packageName}@${fluidWitness.package.effective.packageVersion} ${fluidWitness.package.effective.runtimeRevision.slice(0, 8)}`
       : `Kaminos: ${hillKaminosRuntimeStatus}`,
+    `Kaminos host: ${hillKaminosRuntimeStatus}`,
     fluidWitness
       ? `fluid route: ${fluidWitness.runtime.route} epoch ${fluidWitness.runtime.fluidEpoch} receipt ${fluidWitness.receipt.transactionId}`
       : `fluid route: pending`,
+    fluidWitness
+      ? `terrain remap: ${fluidWitness.remap.status} count ${fluidWitness.remap.count} ${fluidWitness.remap.receipt?.receiptId ?? 'pending'}`
+      : `terrain remap: pending`,
     fluidWitness
       ? `wave: cells ${fluidWitness.outwardWave.initialReachedCellCount}->${fluidWitness.outwardWave.reachedCellCount} radius ${fluidWitness.outwardWave.maximumRadiusCells.toFixed(2)} depth ${fluidWitness.outwardWave.maximumDepth.toFixed(3)}`
       : `wave: pending`,
@@ -2051,9 +2109,12 @@ function publishHillKaminosDebugState(): void {
     __lermsHillKaminosDebugState?: unknown;
   };
   target.__lermsHillKaminosDebugState = hillKaminosRuntime
-    ? hillKaminosRuntime.witness
+    ? {
+        ...hillKaminosRuntime.witness,
+        consumerStatus: hillKaminosRuntimeStatus
+      }
     : {
-        schema: 'lerms.hill-of-hills.kaminos-browser-witness.v1',
+        schema: 'lerms.hill-of-hills.kaminos-browser-witness.v2',
         status: hillKaminosRuntimeStatus
       };
 }

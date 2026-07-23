@@ -7,16 +7,17 @@ import {
 } from '../src/fluid/kaminos-fluid-package-consumer.js';
 import { executeHillKaminosPhaseMorphExercise } from '../src/fluid/hill-kaminos-runtime-exercise.js';
 import {
+  HILL_KAMINOS_PHASE_MORPH_RECIPE,
+  assertHillKaminosPhaseMorphRecipePair,
+  createHillKaminosPhaseMorphRecipeBuffer
+} from '../src/fluid/hill-kaminos-phase-morph-recipe.js';
+import {
   createHillFluidPackageAdapterFrame,
   createKaminosTerrainFluidFrame
 } from '../src/terrain/hill-of-hills-fluid-package-adapter.js';
 import {
-  createHillOfHillsLayerTileCache,
-  createHillOfHillsTerrainBuffer,
-  createHillOfHillsTerrainWithCache,
-  defaultHillOfHillsParams
+  createHillOfHillsLayerTileCache
 } from '../src/terrain/hill-of-hills.js';
-import { applyHillDiagnosticParamPreset } from '../src/terrain/hill-of-hills-diagnostic-presets.js';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -64,49 +65,14 @@ if (loaded.ok === false) {
 assert(loaded.effective.packageVersion === '0.2.1', 'phase-morph exercise consumes exact package 0.2.1');
 
 const cache = createHillOfHillsLayerTileCache();
-const commonParams = applyHillDiagnosticParamPreset(
-  defaultHillOfHillsParams,
-  'topology-contention'
-);
-const source = {
-  route: 'lerms/hill-of-hills/wet-border-phase-morph-recipe',
-  frameId: 'hill-topology-contention-phase-boundary-main-3a06670-v1',
-  configId: 'topology-contention-phase-boundary-v1',
-  sampleAgeMs: 0
-};
-const terrainA = createHillOfHillsTerrainWithCache(
-  cache,
-  {
-    ...commonParams,
-    topologyPhaseTimeMs: 5_148
-  },
-  {
-    ...source,
-    timestampMs: 100_000
-  }
-);
-const terrainB = createHillOfHillsTerrainWithCache(
-  cache,
-  {
-    ...commonParams,
-    topologyPhaseTimeMs: 5_252
-  },
-  {
-    ...source,
-    timestampMs: 100_104
-  }
-);
-assert(
-  terrainB.witness.terrainEpoch === terrainA.witness.terrainEpoch + 1,
-  'Hill A/B fixture crosses exactly one terrain epoch'
-);
-const bufferA = createHillOfHillsTerrainBuffer(terrainA);
-const bufferB = createHillOfHillsTerrainBuffer(terrainB);
+const bufferA = createHillKaminosPhaseMorphRecipeBuffer(cache, 'previous');
+const bufferB = createHillKaminosPhaseMorphRecipeBuffer(cache, 'current');
+assertHillKaminosPhaseMorphRecipePair(bufferA, bufferB);
 const adapterA = createHillFluidPackageAdapterFrame(bufferA, {
   frameId: 'hill-phase-morph-adapter-a',
   generatedAtMs: 100_000,
   freshnessBudgetMs: 250,
-  priorTerrainEpoch: terrainA.witness.terrainEpoch,
+  priorTerrainEpoch: bufferA.witness.terrainEpoch,
   physicalScale: {
     metersPerWorldUnit: 1,
     secondsPerSimulationSecond: 1,
@@ -117,20 +83,20 @@ const adapterB = createHillFluidPackageAdapterFrame(bufferB, {
   frameId: 'hill-phase-morph-adapter-b',
   generatedAtMs: 100_104,
   freshnessBudgetMs: 250,
-  priorTerrainEpoch: terrainA.witness.terrainEpoch,
+  priorTerrainEpoch: bufferA.witness.terrainEpoch,
   physicalScale: adapterA.physicalScale
 });
 const terrainFrameA = createKaminosTerrainFluidFrame(adapterA, {
-  producerRevision: '3a0667007efaf8e28727e507c53a6c1fbfdbd036',
+  producerRevision: HILL_KAMINOS_PHASE_MORPH_RECIPE.producerRevision,
   requestedRoute: 'lerms/hill-of-hills/terrain-fluid-frame',
   requestedSourceId: bufferA.source.frameId,
-  motionSubstepEnvelopeSeconds: 0.104
+  motionSubstepEnvelopeSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.motionSubstepEnvelopeSeconds
 });
 const terrainFrameB = createKaminosTerrainFluidFrame(adapterB, {
-  producerRevision: '3a0667007efaf8e28727e507c53a6c1fbfdbd036',
+  producerRevision: HILL_KAMINOS_PHASE_MORPH_RECIPE.producerRevision,
   requestedRoute: 'lerms/hill-of-hills/terrain-fluid-frame',
   requestedSourceId: bufferB.source.frameId,
-  motionSubstepEnvelopeSeconds: 0.104
+  motionSubstepEnvelopeSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.motionSubstepEnvelopeSeconds
 });
 
 assert(bufferA.sampleChecksum === 'e8ea1f0c', 'previous sample checksum matches landed Hill recipe');
@@ -197,7 +163,7 @@ const result = executeHillKaminosPhaseMorphExercise(
     preRemapStepCount: 4,
     postRemapStepCount: 4,
     fluidDeltaSeconds: 0.012,
-    terrainDeltaSeconds: 0.104
+    terrainDeltaSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.sourceIntervalSeconds
   }
 );
 

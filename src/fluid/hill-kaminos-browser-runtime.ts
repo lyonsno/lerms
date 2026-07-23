@@ -15,7 +15,8 @@ import {
   type KaminosFluidRepresentationFrame,
   type KaminosFluidTerrainFeedbackFrame,
   type KaminosMappedMacroRuntime,
-  type KaminosRuntimeIdentity
+  type KaminosRuntimeIdentity,
+  type KaminosTerrainRemapReceipt
 } from './hill-kaminos-runtime-exercise.js';
 import { installedKaminosFluidPackageModule } from './kaminos-fluid-webgpu-installed.js';
 import {
@@ -27,10 +28,19 @@ import {
 import type { HillOfHillsTerrainBuffer } from '../terrain/hill-of-hills.js';
 
 export const HILL_KAMINOS_BROWSER_WITNESS_SCHEMA =
-  'lerms.hill-of-hills.kaminos-browser-witness.v1' as const;
+  'lerms.hill-of-hills.kaminos-browser-witness.v2' as const;
 
 export interface HillKaminosBrowserRuntime {
   advance(timestampMs: number): void;
+  remapTerrain(
+    terrainBuffer: HillOfHillsTerrainBuffer,
+    options: {
+      producerRevision: string;
+      deltaSeconds: number;
+      maximumBedDisplacement: number;
+      maximumSupportSpeed: number;
+    }
+  ): KaminosTerrainRemapReceipt;
   readonly feedback: KaminosFluidTerrainFeedbackFrame;
   readonly representation: KaminosFluidRepresentationFrame;
   readonly witness: HillKaminosBrowserWitness;
@@ -39,6 +49,7 @@ export interface HillKaminosBrowserRuntime {
 export interface HillKaminosBrowserWitness {
   schema: typeof HILL_KAMINOS_BROWSER_WITNESS_SCHEMA;
   status: 'active';
+  sequenceStage: 'pre_remap' | 'post_remap';
   package: {
     requested: typeof KAMINOS_FLUID_WEBGPU_PIN;
     effective: KaminosFluidPackageDescriptor;
@@ -46,7 +57,16 @@ export interface HillKaminosBrowserWitness {
   };
   terrain: {
     adapterFrameId: string;
+    requestedRoute: string;
+    effectiveRoute: string;
+    producerId: string;
+    producerRevision: string;
+    terrainId: string;
+    transformId: string;
+    priorEpoch: number;
     sourceFrameId: string;
+    sourceRoute: string;
+    sourceConfigId?: string;
     requestedSourceId: string;
     effectiveSourceId: string;
     currentEpoch: number;
@@ -58,6 +78,12 @@ export interface HillKaminosBrowserWitness {
   };
   runtime: KaminosRuntimeIdentity;
   receipt: KaminosExchangeReceipt;
+  remap: {
+    status: 'pending' | 'committed';
+    count: number;
+    previousSampleChecksum: string | null;
+    receipt: KaminosTerrainRemapReceipt | null;
+  };
   output: {
     feedbackSchema: string;
     representationSchema: string;
@@ -86,6 +112,7 @@ export async function createHillKaminosBrowserRuntime(
   terrainBuffer: HillOfHillsTerrainBuffer,
   options: {
     producerRevision: string;
+    motionSubstepEnvelopeSeconds?: number;
   }
 ): Promise<HillKaminosBrowserRuntime> {
   const request = createKaminosFluidPackageRequest(KAMINOS_FLUID_WEBGPU_PIN, {
@@ -110,7 +137,7 @@ export async function createHillKaminosBrowserRuntime(
     throw new Error(`Kaminos package load failed before Hill output: ${loaded.error}`);
   }
 
-  const adapterFrame = createHillFluidPackageAdapterFrame(terrainBuffer, {
+  let adapterFrame = createHillFluidPackageAdapterFrame(terrainBuffer, {
     frameId: `hill-kaminos-browser:${terrainBuffer.sampleChecksum}`,
     generatedAtMs: terrainBuffer.source.timestampMs,
     freshnessBudgetMs: Math.max(1, terrainBuffer.source.sampleAgeMs),
@@ -121,10 +148,11 @@ export async function createHillKaminosBrowserRuntime(
       gravityMetersPerSecondSquared: 9.80665
     }
   });
-  const terrainFrame = createKaminosTerrainFluidFrame(adapterFrame, {
+  let terrainFrame = createKaminosTerrainFluidFrame(adapterFrame, {
     producerRevision: options.producerRevision,
     requestedRoute: 'lerms/hill-of-hills/terrain-fluid-frame',
-    requestedSourceId: terrainBuffer.source.frameId
+    requestedSourceId: terrainBuffer.source.frameId,
+    motionSubstepEnvelopeSeconds: options.motionSubstepEnvelopeSeconds
   });
   const runtime = loaded.runtimeFactory({
     terrainFrame,
@@ -168,6 +196,9 @@ export async function createHillKaminosBrowserRuntime(
   const initialReachedCellCount = countReachedCells(initialRepresentation.macro.mappedDepth);
   let stepCount = 0;
   let lastStepAtMs = 0;
+  let previousSampleChecksum: string | null = null;
+  let remapReceipt: KaminosTerrainRemapReceipt | null = null;
+  let remapCount = 0;
 
   const controller: HillKaminosBrowserRuntime = {
     advance(timestampMs: number): void {
@@ -199,6 +230,89 @@ export async function createHillKaminosBrowserRuntime(
         representation
       );
     },
+    remapTerrain(
+      nextTerrainBuffer: HillOfHillsTerrainBuffer,
+      remapOptions: {
+        producerRevision: string;
+        deltaSeconds: number;
+        maximumBedDisplacement: number;
+        maximumSupportSpeed: number;
+      }
+    ): KaminosTerrainRemapReceipt {
+      const nextAdapterFrame = createHillFluidPackageAdapterFrame(nextTerrainBuffer, {
+        frameId: `hill-kaminos-browser:${nextTerrainBuffer.sampleChecksum}`,
+        generatedAtMs: nextTerrainBuffer.source.timestampMs,
+        freshnessBudgetMs: Math.max(1, nextTerrainBuffer.source.sampleAgeMs),
+        priorTerrainEpoch: terrainFrame.currentEpoch,
+        physicalScale: adapterFrame.physicalScale
+      });
+      const nextTerrainFrame = createKaminosTerrainFluidFrame(nextAdapterFrame, {
+        producerRevision: remapOptions.producerRevision,
+        requestedRoute: terrainFrame.route.requested,
+        requestedSourceId: nextTerrainBuffer.source.frameId,
+        motionSubstepEnvelopeSeconds: remapOptions.deltaSeconds
+      });
+      const observedMotion = summarizeTerrainMotion(terrainFrame, nextTerrainFrame);
+      assertMotionBound(
+        observedMotion.maximumBedDisplacement,
+        remapOptions.maximumBedDisplacement,
+        'bed displacement'
+      );
+      assertMotionBound(
+        observedMotion.maximumSupportSpeed,
+        remapOptions.maximumSupportSpeed,
+        'support speed'
+      );
+
+      const previousTerrainFrame = terrainFrame;
+      const nextRemapReceipt = runtime.updateTerrain({
+        terrainFrame: nextTerrainFrame,
+        deltaSeconds: remapOptions.deltaSeconds,
+        maximumBedDisplacement: remapOptions.maximumBedDisplacement,
+        maximumSupportSpeed: remapOptions.maximumSupportSpeed,
+        fluidDensityKgM3: 997,
+        tolerance: 1e-9
+      });
+      assertRemapReceipt(
+        nextRemapReceipt,
+        previousTerrainFrame,
+        nextTerrainFrame,
+        receipt
+      );
+
+      previousSampleChecksum = adapterFrame.terrain.sampleChecksum;
+      adapterFrame = nextAdapterFrame;
+      terrainFrame = nextTerrainFrame;
+      remapReceipt = nextRemapReceipt;
+      remapCount += 1;
+      feedback = runtime.feedback({
+        requestedRoute: loaded.requested.outputRoute,
+        effectiveRoute: loaded.requested.outputRoute
+      });
+      representation = runtime.representation({
+        requestedRoute: loaded.requested.representationRoute,
+        effectiveRoute: loaded.requested.representationRoute
+      });
+      assertOutputEvidence(
+        request,
+        loaded.effective,
+        adapterFrame,
+        terrainFrame,
+        runtime.identity,
+        receipt,
+        feedback,
+        representation
+      );
+      if (
+        !feedback.conservationReceiptIds.includes(nextRemapReceipt.receiptId) ||
+        !representation.conservationReceiptIds.includes(nextRemapReceipt.receiptId) ||
+        !feedback.lineageIds.includes(receipt.lineageId) ||
+        !representation.lineageIds.includes(receipt.lineageId)
+      ) {
+        throw new Error('live Hill remap output lost receipt or deposit lineage identity');
+      }
+      return nextRemapReceipt;
+    },
     get feedback(): KaminosFluidTerrainFeedbackFrame {
       return feedback;
     },
@@ -215,6 +329,7 @@ export async function createHillKaminosBrowserRuntime(
       return {
         schema: HILL_KAMINOS_BROWSER_WITNESS_SCHEMA,
         status: 'active',
+        sequenceStage: remapReceipt ? 'post_remap' : 'pre_remap',
         package: {
           requested: KAMINOS_FLUID_WEBGPU_PIN,
           effective: loaded.effective,
@@ -222,7 +337,16 @@ export async function createHillKaminosBrowserRuntime(
         },
         terrain: {
           adapterFrameId: adapterFrame.frameId,
+          requestedRoute: terrainFrame.route.requested,
+          effectiveRoute: terrainFrame.route.effective,
+          producerId: terrainFrame.producer.id,
+          producerRevision: terrainFrame.producer.revision,
+          terrainId: terrainFrame.terrainId,
+          transformId: terrainFrame.transformId,
+          priorEpoch: terrainFrame.priorEpoch,
           sourceFrameId: adapterFrame.terrain.sourceFrameId,
+          sourceRoute: adapterFrame.terrain.sourceRoute,
+          sourceConfigId: adapterFrame.terrain.sourceConfigId,
           requestedSourceId: terrainFrame.source.requested,
           effectiveSourceId: terrainFrame.source.effective,
           currentEpoch: terrainFrame.currentEpoch,
@@ -234,6 +358,12 @@ export async function createHillKaminosBrowserRuntime(
         },
         runtime: runtime.identity,
         receipt,
+        remap: {
+          status: remapReceipt ? 'committed' : 'pending',
+          count: remapCount,
+          previousSampleChecksum,
+          receipt: remapReceipt
+        },
         output: {
           feedbackSchema: feedback.schema,
           representationSchema: representation.schema,
@@ -277,6 +407,74 @@ function assertRuntime(
     runtime.identity.terrainEpoch !== terrainFrame.currentEpoch
   ) {
     throw new Error('installed package substituted runtime route, revision, or Hill epoch');
+  }
+}
+
+function assertRemapReceipt(
+  remapReceipt: KaminosTerrainRemapReceipt,
+  previousTerrainFrame: KaminosTerrainFluidFrame,
+  currentTerrainFrame: KaminosTerrainFluidFrame,
+  depositReceipt: KaminosExchangeReceipt
+): void {
+  if (
+    remapReceipt.schema !== 'kaminos.fluid.terrain-remap-receipt.v1' ||
+    remapReceipt.state !== 'committed' ||
+    remapReceipt.mode !== 'phase_morph' ||
+    remapReceipt.previousTerrainEpoch !== previousTerrainFrame.currentEpoch ||
+    remapReceipt.terrainEpoch !== currentTerrainFrame.currentEpoch ||
+    remapReceipt.terrainId !== currentTerrainFrame.terrainId ||
+    remapReceipt.transformId !== currentTerrainFrame.transformId ||
+    !remapReceipt.predecessorReceiptIds.includes(depositReceipt.transactionId) ||
+    !remapReceipt.lineageIds.includes(depositReceipt.lineageId)
+  ) {
+    throw new Error('live Hill terrain update substituted remap receipt identity');
+  }
+  const residuals = [
+    remapReceipt.residual.volume,
+    ...remapReceipt.residual.momentum,
+    ...Object.values(remapReceipt.residual.materials)
+  ];
+  if (residuals.some((value) => !Number.isFinite(value) || Math.abs(value) > remapReceipt.tolerance)) {
+    throw new Error('live Hill terrain update returned a nonconservative remap receipt');
+  }
+}
+
+function summarizeTerrainMotion(
+  previousTerrainFrame: KaminosTerrainFluidFrame,
+  currentTerrainFrame: KaminosTerrainFluidFrame
+): {
+  maximumBedDisplacement: number;
+  maximumSupportSpeed: number;
+} {
+  let maximumBedDisplacement = 0;
+  let maximumSupportSpeed = 0;
+  for (let index = 0; index < currentTerrainFrame.expectedSampleCount; index += 1) {
+    maximumBedDisplacement = Math.max(
+      maximumBedDisplacement,
+      Math.abs(
+        currentTerrainFrame.fields.bedHeight[index] -
+          previousTerrainFrame.fields.bedHeight[index]
+      )
+    );
+    const offset = index * 3;
+    maximumSupportSpeed = Math.max(
+      maximumSupportSpeed,
+      Math.hypot(
+        currentTerrainFrame.fields.supportVelocity[offset],
+        currentTerrainFrame.fields.supportVelocity[offset + 1],
+        currentTerrainFrame.fields.supportVelocity[offset + 2]
+      )
+    );
+  }
+  return {
+    maximumBedDisplacement,
+    maximumSupportSpeed
+  };
+}
+
+function assertMotionBound(observed: number, maximum: number, label: string): void {
+  if (!Number.isFinite(maximum) || maximum < 0 || observed > maximum + 1e-12) {
+    throw new Error(`live Hill ${label} ${observed} exceeds source bound ${maximum}`);
   }
 }
 
