@@ -81,6 +81,12 @@ import {
   type HillPhaseFilmstripFrame,
   type HillPhaseFilmstripFrameCount
 } from './terrain/hill-of-hills-phase-filmstrip.js';
+import {
+  createTerrainFluidFrame,
+  runConservativeTerrainFluidStep,
+  type FluidTerrainFeedbackFrame,
+  type KaminosFluidRuntimeIdentity
+} from './terrain/hill-of-hills-fluid-consumer.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -162,6 +168,18 @@ const MATERIAL_FRAY_NEIGHBOR_OFFSETS: readonly (readonly [number, number])[] = [
   [3, -3],
   [-3, -3]
 ];
+const KAMINOS_RUNTIME_IDENTITY: KaminosFluidRuntimeIdentity = {
+  repo: 'kaminos',
+  branch: 'origin/main',
+  commit: 'ffc1bd973f890cf77f990e4d129da081764018e2',
+  packageName: 'kaminos',
+  solverIdentity: 'webgpu-pbf-linked-cell-fluid-v0',
+  solverRoute: 'webgpu-pbf-linked-cell-fluid-v0',
+  representationRoute: 'terrain-heightfield-conservative-water-v0',
+  rendererRoute: 'webgpu-screen-space-liquid-surface-v0',
+  sourcePath: 'finger-fluid-webgpu-core.js',
+  producerDiaulos: 'kaminos-big-papa-fluid-runtime'
+};
 const defaultPreviewParams: HillOfHillsTerrainParams = {
   ...defaultHillOfHillsParams,
   ditchPhaseIntensity: 0,
@@ -220,6 +238,8 @@ let queuedTerrainParams: HillOfHillsTerrainParams | undefined;
 let latestWorkerDurationMs = 0;
 let latestWorkerError = 'none';
 let latestGrowthPlacementSummary = 'placement none';
+let latestFluidFeedback: FluidTerrainFeedbackFrame | undefined;
+let fluidDynamicFrameIndex = 0;
 
 try {
   workerTerrain = new Worker(new URL('./terrain/hill-of-hills.worker.ts', import.meta.url), { type: 'module' });
@@ -392,11 +412,16 @@ function render(timestampMs: number): void {
 
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
+  latestFluidFeedback = createFluidFeedbackFrame(terrainBuffer, motionTimestampMs);
   drawTerrain(terrainBuffer, width, height);
+  if (latestFluidFeedback) {
+    drawFluidFeedback(terrainBuffer, latestFluidFeedback, width, height);
+  }
   if (previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
   drawWitness(terrainBuffer);
+  publishFluidTerrainDebugState(terrainBuffer, latestFluidFeedback);
 
   window.requestAnimationFrame(render);
 }
@@ -508,6 +533,72 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
     }
     ctx.stroke();
   }
+}
+
+function createFluidFeedbackFrame(currentBuffer: HillOfHillsTerrainBuffer, timestampMs: number): FluidTerrainFeedbackFrame {
+  const phase = (timestampMs * 0.00011) % 1;
+  const sourceX = Math.sin(timestampMs * 0.00047) * currentBuffer.params.floorWidth * 0.28;
+  const sourceZ = -currentBuffer.params.length * 0.34 + phase * currentBuffer.params.length * 0.68;
+  const frame = createTerrainFluidFrame(currentBuffer, {
+    frameId: `hill-fluid-browser-frame-${Math.floor(timestampMs)}`,
+    requestedRuntime: KAMINOS_RUNTIME_IDENTITY,
+    requestedRepresentationRoute: 'terrain-heightfield-conservative-water-v0',
+    requestedOutputRoute: 'lerms/hill-of-hills/fluid-terrain-feedback-frame',
+    generatedAtMs: timestampMs
+  });
+  fluidDynamicFrameIndex += 1;
+  return runConservativeTerrainFluidStep(frame, {
+    sourceWorld: [sourceX, currentBuffer.heightRange.max + 0.44, sourceZ],
+    sourceRate: 0.72 + Math.max(0, Math.sin(timestampMs * 0.0009)) * 0.18,
+    dtSeconds: 1 / 30,
+    damping: 0.986,
+    dynamicFrameIndex: fluidDynamicFrameIndex
+  });
+}
+
+function drawFluidFeedback(
+  currentBuffer: HillOfHillsTerrainBuffer,
+  feedback: FluidTerrainFeedbackFrame,
+  width: number,
+  height: number
+): void {
+  if (!feedback.witness.identityComplete || feedback.fluid.maxDepth <= 0) {
+    return;
+  }
+
+  const strideX = Math.max(1, Math.floor(currentBuffer.gridResolution.x / 58));
+  const strideZ = Math.max(1, Math.floor(currentBuffer.gridResolution.z / 74));
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+
+  for (let zi = currentBuffer.gridResolution.z - 1; zi >= 0; zi -= strideZ) {
+    for (let xi = 0; xi < currentBuffer.gridResolution.x; xi += strideX) {
+      const index = zi * currentBuffer.gridResolution.x + xi;
+      const depth = feedback.fluid.waterDepth[index];
+      if (depth <= feedback.fluid.maxDepth * 0.025) {
+        continue;
+      }
+      const wetness = feedback.fluid.wetness[index];
+      const intensity = Math.min(1, depth / Math.max(0.000001, feedback.fluid.maxDepth));
+      const offset = index * 3;
+      const point = project(
+        currentBuffer.positions[offset],
+        currentBuffer.positions[offset + 1] + 0.05 + Math.min(0.2, depth * 0.9),
+        currentBuffer.positions[offset + 2],
+        currentBuffer,
+        width,
+        height
+      );
+      const localMotion = Math.min(1, Math.hypot(feedback.fluid.momentumX[index], feedback.fluid.momentumZ[index]) * 28);
+      const radius = 1.4 + intensity * 5.8 + wetness * 2.6 + localMotion * 1.8;
+      ctx.fillStyle = `rgba(${32 + localMotion * 44}, ${136 + intensity * 70}, ${184 + intensity * 58}, ${0.16 + intensity * 0.36})`;
+      ctx.beginPath();
+      ctx.ellipse(point.x, point.y, radius * 1.45, radius * 0.72, -0.18 + localMotion * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
 }
 
 function drawGrowthMeadowShaderSketch(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
@@ -1793,12 +1884,19 @@ function colorAt(buffer: HillOfHillsTerrainBuffer, index: number): readonly [num
 
 function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
   const witness = currentBuffer.witness;
+  const fluid = latestFluidFeedback;
   witnessPanel.textContent = [
     `Hill of Hills witness`,
     `${witness.sourceAuthority} / ${witness.route}`,
     `buffer: ${currentBuffer.schema} / ${currentBuffer.sampleSchema}`,
     `fallback: ${witness.fallbackStatus}`,
     `grid: ${witness.gridResolution.x} x ${witness.gridResolution.z} / samples: ${witness.sampleCount}`,
+    fluid
+      ? `fluid: ${fluid.runtime.effective.commit.slice(0, 8)} ${fluid.representation.effectiveRoute} mass ${fluid.fluid.totalMass.toFixed(4)} wet ${fluid.fluid.wetSampleCount} frame ${fluid.witness.dynamicFrameIndex}`
+      : `fluid: pending`,
+    fluid
+      ? `fluid witness: identity ${fluid.witness.identityComplete ? 'complete' : 'incomplete'} dynamic ${fluid.witness.dynamic ? 'yes' : 'no'} output ${fluid.output.effectiveRoute}`
+      : `fluid witness: pending`,
     `height: ${witness.heightRange.min.toFixed(2)} .. ${witness.heightRange.max.toFixed(2)}`,
     `checksum: ${witness.sampleChecksum}`,
     `topology: ${witness.topologyChecksum} / material: ${witness.proxyMaterialChecksum}`,
@@ -1826,6 +1924,36 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     latestGrowthPlacementSummary,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
+}
+
+function publishFluidTerrainDebugState(currentBuffer: HillOfHillsTerrainBuffer, feedback: FluidTerrainFeedbackFrame | undefined): void {
+  (window as typeof window & { __lermsFluidTerrainDebugState?: unknown }).__lermsFluidTerrainDebugState = feedback
+    ? {
+        schema: 'lerms.hill-of-hills.fluid-browser-debug-state.v0',
+        terrain: {
+          sourceFrameId: feedback.terrain.sourceFrameId,
+          terrainEpoch: feedback.terrain.terrainEpoch,
+          topologyEpoch: feedback.terrain.topologyEpoch,
+          supportFrameChecksum: feedback.terrain.supportFrameChecksum,
+          sampleChecksum: feedback.terrain.sampleChecksum,
+          currentSampleChecksum: currentBuffer.sampleChecksum
+        },
+        runtime: feedback.runtime,
+        representation: feedback.representation,
+        output: feedback.output,
+        fluid: {
+          totalMass: feedback.fluid.totalMass,
+          maxDepth: feedback.fluid.maxDepth,
+          wetSampleCount: feedback.fluid.wetSampleCount,
+          dirtySampleCount: feedback.feedback.dirtySampleCount,
+          erosionPressureMax: feedback.feedback.erosionPressureMax
+        },
+        witness: feedback.witness
+      }
+    : {
+        schema: 'lerms.hill-of-hills.fluid-browser-debug-state.v0',
+        status: 'pending'
+      };
 }
 
 function activePreviewLayerSummary(): string {
