@@ -43,7 +43,7 @@ const packet = createLiveFingerFluidEmitterPacket({
 });
 
 assert(LIVE_FINGER_FLUID_ADAPTER_CONTRACT === 'hand-state-distal-axis-full-extension-emitters-v1', 'identifies the LERMS live adapter');
-assert(KAMINOS_FLUID_REVISION === 'b614cb1b8bcd6442aebe32ca1da46bf7c0aeb528', 'exposes the exact pinned Kaminos fluid revision');
+assert(KAMINOS_FLUID_REVISION === '71d09e78fbf16c9edecde3ea72a82ba17b656bf2', 'exposes the exact pinned Kaminos fluid revision');
 assert(FULL_EXTENSION_THRESHOLD === 0.86, 'retains the accepted full-extension gate');
 assert(packet.simulation_authority === 'live_simulation', 'fresh native frames carry live simulation authority');
 assert(packet.route_identity === 'native_wilor_mini_mlx_detector_sidecar_live', 'packet route identity preserves the effective native source');

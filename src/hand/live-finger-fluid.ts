@@ -1,7 +1,7 @@
 import type { ManoDisplayTransform } from './live-hand-contract.js';
 
 export const LIVE_FINGER_FLUID_ADAPTER_CONTRACT = 'hand-state-distal-axis-full-extension-emitters-v1' as const;
-export const KAMINOS_FLUID_REVISION = 'b614cb1b8bcd6442aebe32ca1da46bf7c0aeb528' as const;
+export const KAMINOS_FLUID_REVISION = '71d09e78fbf16c9edecde3ea72a82ba17b656bf2' as const;
 export const FULL_EXTENSION_THRESHOLD = 0.86 as const;
 export const LIVE_FLUID_CAMERA = Object.freeze({
   fovRadians: Math.PI / 3.15,

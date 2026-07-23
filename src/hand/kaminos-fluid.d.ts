@@ -1,6 +1,7 @@
 declare module 'kaminos/finger-fluid-webgpu-core.js' {
   export const KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT: number;
   export const KAMINOS_FINGER_FLUID_LIVE_INLET_CONTRACT: string;
+  export const KAMINOS_FINGER_FLUID_LIVE_INLET_RELEASE_CONTRACT: string;
 
   export function normalizeFingerFluidLiveInletPacket(packet: unknown): {
     sourceRoute: string;
@@ -17,6 +18,8 @@ declare module 'kaminos/finger-fluid-webgpu-core.js' {
       packetId: string;
       sourceRoute: string;
       activeInletCount: number;
+      expectedParticleReleaseRate: number;
+      expectedParticlesPerReferenceFrame: number;
       firstActivation: boolean;
     };
     getLiquidFireContactDescriptor(): {

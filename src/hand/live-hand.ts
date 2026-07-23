@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
-  KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT,
   KAMINOS_FINGER_FLUID_LIVE_INLET_CONTRACT,
+  KAMINOS_FINGER_FLUID_LIVE_INLET_RELEASE_CONTRACT,
   createWebGPUFingerFluidSolver,
   type FingerFluidSolver,
 } from 'kaminos/finger-fluid-webgpu-core.js';
@@ -46,6 +46,7 @@ const runtimeUrl = params.get('runtime_url') || 'http://127.0.0.1:8766';
 const fixtureMode = params.get('fixture') === '1';
 const captureIntervalMs = 50;
 const maxFrameAgeMs = 750;
+const LERMS_LIVE_FLUID_PARTICLE_COUNT = 2_400;
 
 function requiredElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -201,8 +202,12 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
   }
   const route = frame?.effectiveRoute || 'awaiting live effective route';
   const topology = frame ? `${frame.vertexCount}v / ${frame.faceCount}f` : 'awaiting MANO topology';
+  const fluidState = fluidSolver?.available ? fluidSolver.getDebugState() : null;
+  const effectiveParticleCount = typeof fluidState?.baseParticleCount === 'number'
+    ? fluidState.baseParticleCount
+    : null;
   const fluid = fluidSolver?.available
-    ? ` | fluid ${KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT}p @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
+    ? ` | fluid ${effectiveParticleCount ?? 'unverified'}p effective / ${LERMS_LIVE_FLUID_PARTICLE_COUNT}p requested @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
     : fluidError ? ' | fluid error' : ' | fluid pending';
   routeTruth.textContent = `${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fluid}`;
 }
@@ -269,6 +274,7 @@ async function ensureFluidSolver(): Promise<FingerFluidSolver> {
   if (!fluidInitialization) {
     fluidInitialization = createWebGPUFingerFluidSolver({
       canvas: fluidCanvas,
+      particleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
       truthScene: 'live_hand_inlets',
       rendererMode: 'screen_space_refraction',
       colorMode: 'chemistry',
@@ -808,8 +814,9 @@ Object.assign(window, {
     fluid: fluidSolver?.available ? {
       pinnedRevision: KAMINOS_FLUID_REVISION,
       inletContract: KAMINOS_FINGER_FLUID_LIVE_INLET_CONTRACT,
+      inletReleaseContract: KAMINOS_FINGER_FLUID_LIVE_INLET_RELEASE_CONTRACT,
       adapterContract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
-      defaultParticleCount: KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT,
+      requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
       submittedStepCount: fluidStepCount,
       submittedBatchCount: fluidSubmitCount,
       completedBatchCount: fluidCompletedSubmitCount,
@@ -854,7 +861,7 @@ if (fixtureMode) {
       if (fixture.schema !== 'hand-state.wilor-mano-surface-fixture.v0') throw new Error('recorded MANO fixture schema mismatch');
       await ensureFluidSolver();
       updateSurface(normalizeManoSurface(fixture.mano));
-      routeTruth.textContent = `recorded_wilor_mano_fixture | 778v / 1538f | visual-only | current fluid ${KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT}p inactive`;
+      routeTruth.textContent = `recorded_wilor_mano_fixture | 778v / 1538f | visual-only | current fluid ${LERMS_LIVE_FLUID_PARTICLE_COUNT}p requested, inactive`;
       setStatus('recorded WiLoR MANO surface', 'live');
       toggle.disabled = true;
     })
