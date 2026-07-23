@@ -22,13 +22,20 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   dtypeRoute: string;
   handedness: string;
   confidence: number;
+  keypoints3d: readonly (readonly [number, number, number])[];
   modelLatencyMs: number;
   captureToSidecarPublishMs: number;
   positions: Float32Array;
   indices: Uint32Array;
   vertexCount: typeof MANO_VERTEX_COUNT;
   faceCount: typeof MANO_FACE_COUNT;
+  manoTransform: ManoDisplayTransform;
   orientationContract: typeof MANO_DISPLAY_ORIENTATION;
+}
+
+export interface ManoDisplayTransform {
+  center: readonly [number, number, number];
+  scale: number;
 }
 
 export interface NormalizedManoSurface {
@@ -36,6 +43,7 @@ export interface NormalizedManoSurface {
   indices: Uint32Array;
   vertexCount: typeof MANO_VERTEX_COUNT;
   faceCount: typeof MANO_FACE_COUNT;
+  manoTransform: ManoDisplayTransform;
   orientationContract: typeof MANO_DISPLAY_ORIENTATION;
 }
 
@@ -137,6 +145,8 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   const frameIdentity = record(frame.frame, 'frame identity');
   const timing = record(frame.timing, 'frame timing');
   const hand = record(frame.hand, 'hand state');
+  const keypoints = hand.keypoints3d;
+  if (!Array.isArray(keypoints) || keypoints.length < 21) throw new Error('live hand state must contain 21 3D keypoints');
   const burstMode = text(diagnostics.burstMode, 'burstMode');
   if (burstMode !== 'monolithic' && burstMode !== 'chunked') throw new Error(`unsupported burstMode: ${burstMode}`);
   return {
@@ -154,6 +164,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     dtypeRoute: text(source.dtypeRoute, 'dtype route'),
     handedness: text(hand.handedness, 'handedness'),
     confidence: finiteNonNegative(hand.confidence, 'hand confidence'),
+    keypoints3d: keypoints.slice(0, 21).map((point, index) => vec3(point, `hand.keypoints3d[${index}]`)),
     modelLatencyMs: finiteNonNegative(timing.modelLatencyMs, 'modelLatencyMs'),
     captureToSidecarPublishMs: finiteNonNegative(timing.cameraFrameAgeMs, 'cameraFrameAgeMs'),
     ...surface,
@@ -187,6 +198,10 @@ export function normalizeManoSurface(value: unknown): NormalizedManoSurface {
   }
   if (radius < 1e-6) throw new Error('MANO surface radius is degenerate');
   const scale = 1.05 / radius;
+  const manoTransform: ManoDisplayTransform = {
+    center: [center[0], center[1], center[2]],
+    scale,
+  };
   const positions = new Float32Array(MANO_VERTEX_COUNT * 3);
   points.forEach((point, index) => {
     positions[index * 3] = (point[0] - center[0]) * scale;
@@ -209,6 +224,7 @@ export function normalizeManoSurface(value: unknown): NormalizedManoSurface {
     indices,
     vertexCount: MANO_VERTEX_COUNT,
     faceCount: MANO_FACE_COUNT,
+    manoTransform,
     orientationContract: MANO_DISPLAY_ORIENTATION,
   };
 }

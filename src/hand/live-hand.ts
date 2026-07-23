@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import {
+  KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT,
+  KAMINOS_FINGER_FLUID_LIVE_INLET_CONTRACT,
+  createWebGPUFingerFluidSolver,
+  type FingerFluidSolver,
+} from 'kaminos/finger-fluid-webgpu-core.js';
+import {
   LIVE_HAND_ROUTE,
   MANO_DISPLAY_ORIENTATION,
   assertLiveRuntimeHealth,
@@ -11,6 +17,12 @@ import {
   type NormalizedManoSurface,
   type RuntimeRouteTruth,
 } from './live-hand-contract.js';
+import {
+  LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
+  LIVE_FLUID_CAMERA,
+  createLiveFingerFluidEmitterPacket,
+  type LiveFingerFluidPacket,
+} from './live-finger-fluid.js';
 
 const params = new URLSearchParams(window.location.search);
 const runtimeUrl = params.get('runtime_url') || 'http://127.0.0.1:8766';
@@ -25,6 +37,7 @@ function requiredElement<T extends HTMLElement>(id: string): T {
 }
 
 const canvas = requiredElement<HTMLCanvasElement>('hand-canvas');
+const fluidCanvas = requiredElement<HTMLCanvasElement>('fluid-canvas');
 const video = requiredElement<HTMLVideoElement>('camera');
 const captureCanvas = requiredElement<HTMLCanvasElement>('capture-canvas');
 const captureContextValue = captureCanvas.getContext('2d', { alpha: false });
@@ -34,9 +47,9 @@ const toggle = requiredElement<HTMLButtonElement>('hand-toggle');
 const status = requiredElement<HTMLDivElement>('status');
 const routeTruth = requiredElement<HTMLDivElement>('route-truth');
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-renderer.setClearColor(0x040809, 1);
+renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.18;
@@ -82,6 +95,14 @@ let runtimeRoute: RuntimeRouteTruth | null = null;
 let targetPositions: Float32Array | null = null;
 let currentPositions: Float32Array | null = null;
 let topologySignature = '';
+let fluidSolver: FingerFluidSolver | null = null;
+let fluidInitialization: Promise<FingerFluidSolver> | null = null;
+let fluidError: string | null = null;
+let latestFluidPacket: LiveFingerFluidPacket | null = null;
+let fluidStepCount = 0;
+let combinedLastFrameAt = 0;
+const combinedFrameIntervalsMs: number[] = [];
+const combinedCpuSubmitMs: number[] = [];
 interface RuntimeLatencySample extends LiveHandLatencySample {
   schema: 'hand-state.viewer-latency-sample.v0';
   benchmarkSessionId: string;
@@ -119,7 +140,10 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
   }
   const route = frame?.effectiveRoute || 'awaiting live effective route';
   const topology = frame ? `${frame.vertexCount}v / ${frame.faceCount}f` : 'awaiting MANO topology';
-  routeTruth.textContent = `${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}`;
+  const fluid = fluidSolver?.available
+    ? ` | fluid ${KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT}p`
+    : fluidError ? ' | fluid error' : ' | fluid pending';
+  routeTruth.textContent = `${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fluid}`;
 }
 
 async function runtimeFetch(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
@@ -147,7 +171,51 @@ function updateSurface(surface: NormalizedManoSurface): void {
 
 function updateHandSurface(frame: NormalizedManoFrame): void {
   updateSurface(frame);
+  if (fluidSolver?.available) {
+    latestFluidPacket = createLiveFingerFluidEmitterPacket({
+      eventSequence: frame.eventSequence,
+      frameId: frame.frameId,
+      captureTimestampMs: frame.captureTimestampMs,
+      effectiveRoute: frame.effectiveRoute,
+      confidence: frame.confidence,
+      handedness: frame.handedness,
+      keypoints3d: frame.keypoints3d,
+      manoTransform: frame.manoTransform,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+    });
+    fluidSolver.setLiveInletPacket(latestFluidPacket);
+  }
   setRouteTruth(frame);
+}
+
+async function ensureFluidSolver(): Promise<FingerFluidSolver> {
+  if (fluidSolver) return fluidSolver;
+  if (!fluidInitialization) {
+    fluidInitialization = createWebGPUFingerFluidSolver({
+      canvas: fluidCanvas,
+      truthScene: 'live_hand_inlets',
+      rendererMode: 'screen_space_refraction',
+      colorMode: 'chemistry',
+      transparentBackground: false,
+    }).then(solver => {
+      if (!solver.available) throw new Error(solver.reason || 'Kaminos WebGPU fluid unavailable');
+      fluidSolver = solver;
+      fluidError = null;
+      solver.render({
+        width: window.innerWidth,
+        height: window.innerHeight,
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+        ...LIVE_FLUID_CAMERA,
+      });
+      setRouteTruth();
+      return solver;
+    }).catch(error => {
+      fluidInitialization = null;
+      fluidError = error instanceof Error ? error.message : String(error);
+      throw error;
+    });
+  }
+  return fluidInitialization;
 }
 
 function updateInterpolatedSurface(): boolean {
@@ -319,6 +387,8 @@ async function streamState(): Promise<void> {
 async function start(): Promise<void> {
   if (running) return;
   if (fixtureMode) throw new Error('recorded fixture mode is visual-only');
+  setStatus('initializing current Kaminos fluid');
+  await ensureFluidSolver();
   setStatus('verifying runtime');
   runtimeRoute = assertLiveRuntimeHealth(await runtimeFetch('/health'));
   setRouteTruth();
@@ -331,6 +401,10 @@ async function start(): Promise<void> {
   await video.play();
   await runtimeFetch('/sidecar/start', { method: 'POST' });
   resetBenchmark();
+  combinedFrameIntervalsMs.length = 0;
+  combinedCpuSubmitMs.length = 0;
+  combinedLastFrameAt = 0;
+  fluidStepCount = 0;
   lastStateSequence = 0;
   running = true;
   toggle.textContent = 'Stop Hand';
@@ -349,6 +423,15 @@ async function stop(): Promise<void> {
   stream?.getTracks().forEach(track => track.stop());
   stream = null;
   video.srcObject = null;
+  latestFluidPacket = null;
+  fluidSolver?.setLiveInletPacket({
+    packet_id: `lerms-hand-fluid-stopped-${Date.now()}`,
+    route_identity: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
+    source_route: LIVE_HAND_ROUTE,
+    simulation_authority: 'invalid',
+    authority: { simulation_safe: false, stale: true },
+    emitters: [],
+  });
   await flushLatencySamples();
   try {
     await runtimeFetch('/sidecar/stop', { method: 'POST' });
@@ -380,12 +463,35 @@ function resize(): void {
   camera.updateProjectionMatrix();
 }
 
+function distribution(values: readonly number[]): { p50: number; p90: number; p95: number; p99: number; max: number } | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const at = (probability: number) => sorted[Math.max(0, Math.ceil(sorted.length * probability) - 1)];
+  return { p50: at(0.5), p90: at(0.9), p95: at(0.95), p99: at(0.99), max: sorted.at(-1) as number };
+}
+
 function animate(now: number): void {
   requestAnimationFrame(animate);
+  if (!running && !fixtureMode) return;
+  const cpuStartedAt = performance.now();
   updateInterpolatedSurface();
   if (handMesh.visible && now - lastLiveAt > 1200 && running) handMaterial.emissive.setHex(0x101c1c);
   else handMaterial.emissive.setHex(0x000000);
+  if (running && fluidSolver?.available) {
+    const frameIntervalMs = combinedLastFrameAt > 0 ? now - combinedLastFrameAt : 0;
+    combinedLastFrameAt = now;
+    if (frameIntervalMs > 0) combinedFrameIntervalsMs.push(frameIntervalMs);
+    fluidSolver.step(Math.min(1 / 30, Math.max(1 / 240, frameIntervalMs > 0 ? frameIntervalMs / 1000 : 1 / 60)));
+    fluidSolver.render({
+      width: window.innerWidth,
+      height: window.innerHeight,
+      pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+      ...LIVE_FLUID_CAMERA,
+    });
+    fluidStepCount += 1;
+  }
   renderer.render(scene, camera);
+  if (running) combinedCpuSubmitMs.push(performance.now() - cpuStartedAt);
   if (pendingLatencySample) {
     const sample = pendingLatencySample;
     pendingLatencySample = null;
@@ -401,6 +507,7 @@ window.addEventListener('beforeunload', () => {
   stateAbortController?.abort();
   stream?.getTracks().forEach(track => track.stop());
   if (running) navigator.sendBeacon?.(`${runtimeUrl}/sidecar/stop`, new Blob([], { type: 'application/octet-stream' }));
+  fluidSolver?.destroy();
 });
 
 Object.assign(window, {
@@ -421,6 +528,16 @@ Object.assign(window, {
     benchmarkDroppedBeforeRender,
     benchmarkError: lastBenchmarkError,
     benchmark: latencySamples.length ? summarizeLiveHandLatency(latencySamples) : null,
+    fluid: fluidSolver?.available ? {
+      inletContract: KAMINOS_FINGER_FLUID_LIVE_INLET_CONTRACT,
+      adapterContract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
+      defaultParticleCount: KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT,
+      stepCount: fluidStepCount,
+      activeEmitterCount: latestFluidPacket?.emitters.filter(emitter => emitter.active).length || 0,
+      frameIntervalMs: distribution(combinedFrameIntervalsMs),
+      cpuSubmitMs: distribution(combinedCpuSubmitMs),
+      solver: fluidSolver.getDebugState(),
+    } : { available: false, error: fluidError },
   }),
 });
 
@@ -433,10 +550,11 @@ if (fixtureMode) {
       if (!response.ok) throw new Error(`recorded MANO fixture returned ${response.status}`);
       return response.json() as Promise<Record<string, unknown>>;
     })
-    .then(fixture => {
+    .then(async fixture => {
       if (fixture.schema !== 'hand-state.wilor-mano-surface-fixture.v0') throw new Error('recorded MANO fixture schema mismatch');
+      await ensureFluidSolver();
       updateSurface(normalizeManoSurface(fixture.mano));
-      routeTruth.textContent = 'recorded_wilor_mano_fixture | 778v / 1538f | visual-only';
+      routeTruth.textContent = `recorded_wilor_mano_fixture | 778v / 1538f | visual-only | current fluid ${KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT}p inactive`;
       setStatus('recorded WiLoR MANO surface', 'live');
       toggle.disabled = true;
     })

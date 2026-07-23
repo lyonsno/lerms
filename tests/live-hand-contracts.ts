@@ -62,7 +62,7 @@ const state = {
     },
     frame: { frameId: 'frame-42', captureTimestampMs: 1000 },
     timing: { modelLatencyMs: 61, cameraFrameAgeMs: 79 },
-    hand: { confidence: 0.95, handedness: 'right' },
+    hand: { confidence: 0.95, handedness: 'right', keypoints3d: Array.from({ length: 21 }, (_, index) => [index, index * 0.5, index * 0.1]) },
     mano: { available: true, vertexCount: 778, faceCount: 1538, vertices, faces },
     diagnostics: { burstMode: 'chunked', chunkSegments: 7, chunkYieldMs: 0.2 },
   },

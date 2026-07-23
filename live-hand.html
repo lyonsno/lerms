@@ -8,9 +8,12 @@
       * { box-sizing: border-box; }
       html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #040809; color: #d9eced; }
       body { font-family: "SF Mono", "Menlo", monospace; }
-      #hand-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      #fluid-canvas, #hand-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      #fluid-canvas { z-index: 0; }
+      #hand-canvas { z-index: 1; pointer-events: none; }
       #controls {
         position: absolute;
+        z-index: 2;
         top: 16px;
         right: 16px;
         width: min(360px, calc(100vw - 32px));
@@ -36,11 +39,12 @@
       #status[data-state="live"] { color: #83d7bc; }
       #status[data-state="error"] { color: #ef968b; }
       #route-truth { margin-top: 7px; color: #547879; font-size: 9px; line-height: 1.55; }
-      #receipt { position: absolute; left: 16px; bottom: 14px; color: #345354; font-size: 9px; }
+      #receipt { position: absolute; z-index: 2; left: 16px; bottom: 14px; color: #345354; font-size: 9px; }
       video, #capture-canvas { display: none; }
     </style>
   </head>
   <body>
+    <canvas id="fluid-canvas" aria-label="Current Kaminos WebGPU finger fluid"></canvas>
     <canvas id="hand-canvas" aria-label="Live WiLoR MANO hand surface"></canvas>
     <section id="controls" aria-label="Live hand controls">
       <button id="hand-toggle" type="button">Start Hand</button>
