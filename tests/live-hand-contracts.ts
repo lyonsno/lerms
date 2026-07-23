@@ -13,9 +13,10 @@ import {
 } from '../src/hand/live-hand-capture-contract.js';
 import {
   LIVE_HAND_FLUID_FRAME_INTERVAL_MS,
-  LIVE_HAND_FLUID_MAX_DEFERRAL_MS,
+  LIVE_HAND_FLUID_MAX_CATCH_UP_MS,
+  advanceFluidSimulationClock,
   decideLiveHandFrameWork,
-  initializeFluidDeferralClock,
+  initializeFluidSimulationClock,
   planLiveFluidSimulationCatchUp,
   shouldKeepHandPresentationPriority,
 } from '../src/hand/live-hand-frame-budget.js';
@@ -84,36 +85,51 @@ assertThrows(
   'nonblank JPEG',
 );
 
-assert(LIVE_HAND_FLUID_FRAME_INTERVAL_MS === 1000 / 30, 'fluid cadence is explicitly bounded to 30 Hz');
-assert(LIVE_HAND_FLUID_MAX_DEFERRAL_MS === 100, 'continuous hand motion cannot starve fluid beyond 100ms');
-assert(initializeFluidDeferralClock(0, 125) === 125, 'the first animation frame starts the fluid deferral clock');
-assert(initializeFluidDeferralClock(80, 125) === 80, 'an existing fluid submission clock is preserved');
+assert(LIVE_HAND_FLUID_FRAME_INTERVAL_MS === 1000 / 60, 'fluid simulation targets the 60 Hz interaction cadence');
+assert(LIVE_HAND_FLUID_MAX_CATCH_UP_MS === 50, 'recovery debt is bounded without becoming a normal scheduling interval');
+assert(initializeFluidSimulationClock(0, 125) === 125, 'the first animation frame starts the simulation clock');
+assert(initializeFluidSimulationClock(80, 125) === 80, 'an existing simulation clock is preserved');
 assert(
-  planLiveFluidSimulationCatchUp(100).stepCount === 3,
-  'a 100ms hand-priority deferral catches up three stable 30Hz simulation steps',
+  planLiveFluidSimulationCatchUp(50).stepCount === 3,
+  'a missed 50ms window catches up three stable 60Hz simulation steps',
 );
 assert(
-  planLiveFluidSimulationCatchUp(100).simulationAdvanceMs === 100,
+  planLiveFluidSimulationCatchUp(50).simulationAdvanceMs === 50,
   'the bounded catch-up advances approximately the elapsed wall time',
 );
 assert(
-  planLiveFluidSimulationCatchUp(34).stepCount === 1,
+  planLiveFluidSimulationCatchUp(17).stepCount === 1,
   'an ordinary fluid cadence advances one stable simulation step',
 );
 assert(
-  decideLiveHandFrameWork({
-    nowMs: 100,
-    previousFrameAtMs: 92,
-    lastFluidSubmitAtMs: 50,
-    handStatePending: true,
-  }).reason === 'hand_state_priority',
-  'a newly received hand state gets the next presentation frame without fluid queued ahead of it',
+  planLiveFluidSimulationCatchUp(25).stepCount === 1,
+  'an intermediate display interval cannot round 25ms up to 33ms of simulation',
+);
+assert(
+  planLiveFluidSimulationCatchUp(30).simulationAdvanceMs === LIVE_HAND_FLUID_FRAME_INTERVAL_MS,
+  'fractional simulation debt remains for a later frame instead of advancing ahead of wall time',
+);
+const firstIntermediatePlan = planLiveFluidSimulationCatchUp(25);
+const intermediateSimulationClock = advanceFluidSimulationClock(100, firstIntermediatePlan.simulationAdvanceMs);
+const secondIntermediatePlan = planLiveFluidSimulationCatchUp(150 - intermediateSimulationClock);
+assert(
+  firstIntermediatePlan.simulationAdvanceMs + secondIntermediatePlan.simulationAdvanceMs === 50,
+  'two 25ms presentation intervals conserve 50ms of fixed-step simulation time',
 );
 assert(
   decideLiveHandFrameWork({
     nowMs: 100,
     previousFrameAtMs: 92,
-    lastFluidSubmitAtMs: 80,
+    fluidSimulationClockAtMs: 50,
+    handStatePending: true,
+  }).reason === 'fluid_due',
+  'a due fluid frame is not starved by continuous hand interpolation',
+);
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 100,
+    previousFrameAtMs: 92,
+    fluidSimulationClockAtMs: 92,
     handStatePending: false,
   }).reason === 'cadence_wait',
   'fluid work does not follow a 120 Hz display cadence',
@@ -122,7 +138,7 @@ assert(
   decideLiveHandFrameWork({
     nowMs: 100,
     previousFrameAtMs: 10,
-    lastFluidSubmitAtMs: 0,
+    fluidSimulationClockAtMs: 0,
     handStatePending: false,
     fluidGpuBusy: false,
   }).reason === 'hitch_recovery',
@@ -132,7 +148,7 @@ assert(
   decideLiveHandFrameWork({
     nowMs: 100,
     previousFrameAtMs: 10,
-    lastFluidSubmitAtMs: 20,
+    fluidSimulationClockAtMs: 20,
     handStatePending: false,
     fluidGpuBusy: false,
   }).rebaseFluidClock,
@@ -142,7 +158,7 @@ assert(
   decideLiveHandFrameWork({
     nowMs: 100,
     previousFrameAtMs: 92,
-    lastFluidSubmitAtMs: 40,
+    fluidSimulationClockAtMs: 40,
     handStatePending: false,
     fluidGpuBusy: true,
   }).reason === 'gpu_backpressure',
@@ -152,17 +168,17 @@ assert(
   decideLiveHandFrameWork({
     nowMs: 100,
     previousFrameAtMs: 92,
-    lastFluidSubmitAtMs: 40,
+    fluidSimulationClockAtMs: 40,
     handStatePending: false,
     fluidGpuBusy: true,
-  }).rebaseFluidClock,
-  'GPU backpressure discards stale simulation debt instead of bursting it after the queue drains',
+  }).rebaseFluidClock === false,
+  'GPU backpressure blocks overlap without erasing ordinary simulation debt',
 );
 assert(
   decideLiveHandFrameWork({
     nowMs: 100,
     previousFrameAtMs: 92,
-    lastFluidSubmitAtMs: 60,
+    fluidSimulationClockAtMs: 60,
     handStatePending: false,
   }).runFluid,
   'fluid advances when its bounded cadence is due and interaction presentation is clear',
@@ -171,10 +187,10 @@ assert(
   decideLiveHandFrameWork({
     nowMs: 200,
     previousFrameAtMs: 192,
-    lastFluidSubmitAtMs: 90,
+    fluidSimulationClockAtMs: 90,
     handStatePending: true,
-  }).reason === 'fluid_liveness',
-  'continuous hand convergence grants fluid a bounded liveness submission',
+  }).reason === 'fluid_due',
+  'continuous hand convergence uses the ordinary due cadence rather than a 100ms liveness escape hatch',
 );
 assert(
   shouldKeepHandPresentationPriority({ handStatePending: true, interpolationUnsettled: true }),

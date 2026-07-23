@@ -26,8 +26,9 @@ import {
 } from './live-hand-capture-contract.js';
 import {
   LIVE_HAND_FLUID_PIXEL_RATIO_CAP,
+  advanceFluidSimulationClock,
   decideLiveHandFrameWork,
-  initializeFluidDeferralClock,
+  initializeFluidSimulationClock,
   planLiveFluidSimulationCatchUp,
   shouldKeepHandPresentationPriority,
   type LiveHandFrameWorkReason,
@@ -126,7 +127,8 @@ let fluidGpuBusy = false;
 let fluidGpuCompletionGeneration = 0;
 let fluidGpuCompletionError: string | null = null;
 let lastAnimationFrameAt = 0;
-let lastFluidSubmitAt = 0;
+let fluidSimulationClockAt = 0;
+let lastFluidWallSubmitAt = 0;
 let captureWorker: Worker | null = null;
 let captureWorkerError: string | null = null;
 const animationFrameIntervalsMs: number[] = [];
@@ -138,8 +140,6 @@ const fluidRenderCpuMs: number[] = [];
 const fluidGpuQueueDrainMs: number[] = [];
 const fluidFrameDecisionCounts: Record<LiveHandFrameWorkReason, number> = {
   fluid_due: 0,
-  fluid_liveness: 0,
-  hand_state_priority: 0,
   hitch_recovery: 0,
   gpu_backpressure: 0,
   cadence_wait: 0,
@@ -598,7 +598,8 @@ async function start(): Promise<void> {
   fluidSubmitIntervalsMs.length = 0;
   combinedCpuSubmitMs.length = 0;
   lastAnimationFrameAt = 0;
-  lastFluidSubmitAt = 0;
+  fluidSimulationClockAt = 0;
+  lastFluidWallSubmitAt = 0;
   handPresentationPending = false;
   fluidStepCount = 0;
   fluidSubmitCount = 0;
@@ -687,15 +688,15 @@ function animate(now: number): void {
   const cpuStartedAt = performance.now();
   const handStatePending = handPresentationPending;
   if (fluidClockStartedAt <= 0) fluidClockStartedAt = now;
-  lastFluidSubmitAt = initializeFluidDeferralClock(lastFluidSubmitAt, now);
+  fluidSimulationClockAt = initializeFluidSimulationClock(fluidSimulationClockAt, now);
   const frameDecision = decideLiveHandFrameWork({
     nowMs: now,
     previousFrameAtMs: lastAnimationFrameAt,
-    lastFluidSubmitAtMs: lastFluidSubmitAt,
+    fluidSimulationClockAtMs: fluidSimulationClockAt,
     handStatePending,
     fluidGpuBusy,
   });
-  if (frameDecision.rebaseFluidClock) lastFluidSubmitAt = now;
+  if (frameDecision.rebaseFluidClock) fluidSimulationClockAt = now;
   lastAnimationFrameAt = now;
   if (frameDecision.animationFrameIntervalMs > 0) {
     animationFrameIntervalsMs.push(frameDecision.animationFrameIntervalMs);
@@ -742,8 +743,12 @@ function animate(now: number): void {
       ...LIVE_FLUID_CAMERA,
     });
     fluidRenderCpuMs.push(performance.now() - fluidRenderStartedAt);
-    if (lastFluidSubmitAt > 0) fluidSubmitIntervalsMs.push(Math.max(0, now - lastFluidSubmitAt));
-    lastFluidSubmitAt = now;
+    if (lastFluidWallSubmitAt > 0) fluidSubmitIntervalsMs.push(Math.max(0, now - lastFluidWallSubmitAt));
+    lastFluidWallSubmitAt = now;
+    fluidSimulationClockAt = advanceFluidSimulationClock(
+      fluidSimulationClockAt,
+      catchUp.simulationAdvanceMs,
+    );
     fluidStepCount += catchUp.stepCount;
     fluidSubmitCount += 1;
     fluidSubmittedSimulationAdvanceMs += catchUp.simulationAdvanceMs;
