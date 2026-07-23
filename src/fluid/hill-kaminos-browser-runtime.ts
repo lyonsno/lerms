@@ -263,6 +263,7 @@ function assertRuntime(
 ): void {
   if (
     !runtime ||
+    typeof runtime.updateTerrain !== 'function' ||
     typeof runtime.step !== 'function' ||
     typeof runtime.depositLocal !== 'function' ||
     typeof runtime.feedback !== 'function' ||

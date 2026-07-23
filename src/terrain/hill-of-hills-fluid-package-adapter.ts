@@ -152,7 +152,7 @@ export interface KaminosTerrainFluidFrame {
     dirtySampleCount: number;
   }[];
   minimumFilteredSupportScale: null;
-  motionSubstepEnvelope: null;
+  motionSubstepEnvelope: number | null;
   complete: true;
   expectedSampleCount: number;
   actualSampleCount: number;
@@ -315,6 +315,7 @@ export function createKaminosTerrainFluidFrame(
     producerRevision: string;
     requestedRoute: string;
     requestedSourceId: string;
+    motionSubstepEnvelopeSeconds?: number;
   }
 ): KaminosTerrainFluidFrame {
   assertHillFluidPackageAdapterFrame(adapterFrame);
@@ -365,6 +366,15 @@ export function createKaminosTerrainFluidFrame(
   }
 
   const motionClass = canonicalMotionClass(adapterFrame);
+  if (
+    motionClass === 'phase_morph' &&
+    adapterFrame.terrain.priorEpoch < adapterFrame.terrain.currentEpoch
+  ) {
+    requirePositive(
+      options.motionSubstepEnvelopeSeconds ?? 0,
+      'phase-morph motion substep envelope'
+    );
+  }
   const width = adapterFrame.terrain.gridResolution.x;
   const height = adapterFrame.terrain.gridResolution.z;
   const worldBounds = adapterFrame.terrain.worldBounds;
@@ -372,6 +382,9 @@ export function createKaminosTerrainFluidFrame(
   const spacingZ = (worldBounds.z.max - worldBounds.z.min) / Math.max(1, height - 1);
   requirePositive(spacingX, 'canonical terrain X spacing');
   requirePositive(spacingZ, 'canonical terrain Z spacing');
+
+  const stableSourceIdentity =
+    adapterFrame.terrain.sourceConfigId ?? adapterFrame.terrain.sourceRoute;
 
   return {
     schema: 'kaminos.fluid.terrain-fluid-frame.v1',
@@ -389,9 +402,15 @@ export function createKaminosTerrainFluidFrame(
     },
     worldMetersPerUnit: 1,
     gravity: [0, -adapterFrame.physicalScale.gravityMetersPerSecondSquared, 0],
-    terrainId: `hill-of-hills:${adapterFrame.terrain.sampleChecksum}`,
+    terrainId: `hill-of-hills:${stableSourceIdentity}`,
     supportClass: 'heightfield',
-    transformId: `hill-support:${adapterFrame.terrain.supportFrameChecksum}`,
+    transformId: [
+      'hill-heightfield',
+      stableSourceIdentity,
+      `${width}x${height}`,
+      `${worldBounds.x.min}:${worldBounds.x.max}`,
+      `${worldBounds.z.min}:${worldBounds.z.max}`
+    ].join(':'),
     priorEpoch: adapterFrame.terrain.priorEpoch,
     currentEpoch: adapterFrame.terrain.currentEpoch,
     motionClass,
@@ -425,7 +444,7 @@ export function createKaminosTerrainFluidFrame(
         }]
       : [],
     minimumFilteredSupportScale: null,
-    motionSubstepEnvelope: null,
+    motionSubstepEnvelope: options.motionSubstepEnvelopeSeconds ?? null,
     complete: true,
     expectedSampleCount: sampleCount,
     actualSampleCount: sampleCount

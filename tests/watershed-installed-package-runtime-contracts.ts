@@ -61,13 +61,13 @@ const loaded = await loadPinnedKaminosFluidPackage(
 if (loaded.ok === false) {
   throw new Error(`exact installed Kaminos package must load: ${loaded.error}`);
 }
-assert(loaded.effective.packageVersion === '0.1.0', 'effective package version is exact');
+assert(loaded.effective.packageVersion === '0.2.1', 'effective package version is exact');
 assert(
-  loaded.effective.artifactRevision === '@kaminos/fluid-webgpu@0.1.0',
+  loaded.effective.artifactRevision === '@kaminos/fluid-webgpu@0.2.1',
   'effective artifact revision is semantic package identity'
 );
 assert(
-  loaded.effective.runtimeRevision === '3e3934f9e451823ae122c9fca5f4c04ec3e88694',
+  loaded.effective.runtimeRevision === '95920668287205517bc2e22f4f224b0d7584f53e',
   'effective runtime revision is the numerical-core SHA'
 );
 
