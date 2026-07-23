@@ -17,6 +17,10 @@ export interface LiveHandFrameWorkDecision {
   fluidAgeMs: number;
 }
 
+export function initializeFluidDeferralClock(lastFluidSubmitAtMs: number, nowMs: number): number {
+  return lastFluidSubmitAtMs > 0 ? lastFluidSubmitAtMs : nowMs;
+}
+
 export function decideLiveHandFrameWork({
   nowMs,
   previousFrameAtMs,

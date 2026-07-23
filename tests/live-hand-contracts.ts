@@ -15,6 +15,7 @@ import {
   LIVE_HAND_FLUID_FRAME_INTERVAL_MS,
   LIVE_HAND_FLUID_MAX_DEFERRAL_MS,
   decideLiveHandFrameWork,
+  initializeFluidDeferralClock,
   shouldKeepHandPresentationPriority,
 } from '../src/hand/live-hand-frame-budget.js';
 
@@ -84,6 +85,8 @@ assertThrows(
 
 assert(LIVE_HAND_FLUID_FRAME_INTERVAL_MS === 1000 / 30, 'fluid cadence is explicitly bounded to 30 Hz');
 assert(LIVE_HAND_FLUID_MAX_DEFERRAL_MS === 100, 'continuous hand motion cannot starve fluid beyond 100ms');
+assert(initializeFluidDeferralClock(0, 125) === 125, 'the first animation frame starts the fluid deferral clock');
+assert(initializeFluidDeferralClock(80, 125) === 80, 'an existing fluid submission clock is preserved');
 assert(
   decideLiveHandFrameWork({
     nowMs: 100,

@@ -27,6 +27,7 @@ import {
 import {
   LIVE_HAND_FLUID_PIXEL_RATIO_CAP,
   decideLiveHandFrameWork,
+  initializeFluidDeferralClock,
   shouldKeepHandPresentationPriority,
   type LiveHandFrameWorkReason,
 } from './live-hand-frame-budget.js';
@@ -657,6 +658,7 @@ function animate(now: number): void {
   if (!running && !fixtureMode) return;
   const cpuStartedAt = performance.now();
   const handStatePending = handPresentationPending;
+  lastFluidSubmitAt = initializeFluidDeferralClock(lastFluidSubmitAt, now);
   const frameDecision = decideLiveHandFrameWork({
     nowMs: now,
     previousFrameAtMs: lastAnimationFrameAt,
