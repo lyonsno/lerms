@@ -148,12 +148,16 @@ export interface HillPhaseContinuityDynamicsEvidence {
   deformation: HillPhaseContinuityRangeEvidence;
   velocity: HillPhaseContinuityRangeEvidence;
   force: HillPhaseContinuityRangeEvidence;
+  grossForce: HillPhaseContinuityRangeEvidence;
+  opposedForce: HillPhaseContinuityRangeEvidence;
+  contention: HillPhaseContinuityRangeEvidence;
   hillSwellMembership: HillPhaseContinuityRangeEvidence;
   hillSlumpMembership: HillPhaseContinuityRangeEvidence;
 }
 
 export interface HillPhaseContinuityControls {
   topologyDynamicsMode: HillOfHillsTerrainParams['topologyDynamicsMode'];
+  topologyPossibilityMode: HillOfHillsTerrainParams['topologyPossibilityMode'];
   topologyPhaseIntensity: number;
   topologyPhaseLimit: number;
   topologyPhaseRadius: number;
@@ -448,6 +452,9 @@ export function createHillPhaseContinuityReport(
         deformation: rangeEvidence(terrain.witness.topologyDeformationRange),
         velocity: rangeEvidence(terrain.witness.topologyVelocityRange),
         force: rangeEvidence(terrain.witness.topologyForceRange),
+        grossForce: rangeEvidence(terrain.witness.topologyGrossForceRange),
+        opposedForce: rangeEvidence(terrain.witness.topologyOpposedForceRange),
+        contention: rangeEvidence(terrain.witness.topologyContentionRange),
         hillSwellMembership: rangeEvidence(terrain.witness.hillSwellMembershipRange),
         hillSlumpMembership: rangeEvidence(terrain.witness.hillSlumpMembershipRange)
       },
@@ -531,6 +538,7 @@ function continuityControls(params: HillOfHillsTerrainParams): HillPhaseContinui
   }
   return {
     topologyDynamicsMode: params.topologyDynamicsMode,
+    topologyPossibilityMode: params.topologyPossibilityMode,
     topologyPhaseIntensity: params.topologyPhaseIntensity,
     topologyPhaseLimit: params.topologyPhaseLimit,
     topologyPhaseRadius: params.topologyPhaseRadius,

@@ -2,6 +2,8 @@ import { HILL_OF_HILLS_PRESSURE_FIELD_KINDS, type HillOfHillsPressureFieldKind }
 
 export const HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY = 'lerms.hill-of-hills.preview-settings.v0' as const;
 
+export type HillPreviewMode = 'material' | 'neutral_geometry';
+
 export type HillPreviewLayerKey =
   | 'base'
   | 'transitions'
@@ -29,9 +31,20 @@ export interface HillPreviewOverlaySettings {
 }
 
 export interface HillPreviewSettings {
+  mode: HillPreviewMode;
   layers: HillPreviewLayerSettings;
   growthSkin: HillPreviewGrowthSkinSettings;
   overlays: HillPreviewOverlaySettings;
+}
+
+export interface HillPreviewVisualIdentity {
+  requestedMode: HillPreviewMode;
+  effectiveMode: HillPreviewMode;
+  effectiveLayers: readonly string[];
+  pressureOverlay: {
+    field: HillOfHillsPressureFieldKind;
+    strength: number;
+  } | null;
 }
 
 export interface HillPreviewSettingsStorage {
@@ -61,6 +74,16 @@ const DEFAULT_OVERLAY_SETTINGS: HillPreviewOverlaySettings = {
   pressureField: 'none',
   pressureOverlayStrength: 0.45
 };
+
+const HILL_PREVIEW_LAYER_KEYS: readonly HillPreviewLayerKey[] = [
+  'base',
+  'growthSkin',
+  'transitions',
+  'edgeDissolves',
+  'surfaceDetails',
+  'topologyOverlays',
+  'routeMarkers'
+];
 
 export const HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE = {
   min: 0,
@@ -94,9 +117,40 @@ export const HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE = {
 
 export function defaultHillPreviewSettings(): HillPreviewSettings {
   return {
+    mode: 'material',
     layers: { ...DEFAULT_LAYER_SETTINGS },
     growthSkin: { ...DEFAULT_GROWTH_SKIN_SETTINGS },
     overlays: { ...DEFAULT_OVERLAY_SETTINGS }
+  };
+}
+
+export function hillPreviewBasePassEnabled(settings: HillPreviewSettings): boolean {
+  return settings.mode === 'neutral_geometry' || settings.layers.base;
+}
+
+export function hillPreviewVisualIdentity(settings: HillPreviewSettings): HillPreviewVisualIdentity {
+  const pressureOverlay =
+    settings.mode === 'material' &&
+    settings.overlays.pressureField !== 'none' &&
+    settings.overlays.pressureOverlayStrength > 0
+      ? {
+          field: settings.overlays.pressureField,
+          strength: settings.overlays.pressureOverlayStrength
+        }
+      : null;
+  const effectiveLayers =
+    settings.mode === 'neutral_geometry'
+      ? ['neutral_geometry']
+      : [
+          ...HILL_PREVIEW_LAYER_KEYS.filter((key) => settings.layers[key]),
+          ...(pressureOverlay ? [`pressure:${pressureOverlay.field}`] : [])
+        ];
+
+  return {
+    requestedMode: settings.mode,
+    effectiveMode: settings.mode,
+    effectiveLayers,
+    pressureOverlay
   };
 }
 
@@ -136,6 +190,7 @@ export function sanitizeHillPreviewSettings(input: unknown): HillPreviewSettings
   const overlayInput = isPlainObject(input.overlays) ? input.overlays : {};
 
   return {
+    mode: previewModeOrDefault(input.mode, defaults.mode),
     layers: {
       base: booleanOrDefault(layersInput.base, defaults.layers.base),
       transitions: booleanOrDefault(layersInput.transitions, defaults.layers.transitions),
@@ -187,6 +242,10 @@ export function sanitizeHillPreviewSettings(input: unknown): HillPreviewSettings
       )
     }
   };
+}
+
+function previewModeOrDefault(value: unknown, fallback: HillPreviewMode): HillPreviewMode {
+  return value === 'material' || value === 'neutral_geometry' ? value : fallback;
 }
 
 function booleanOrDefault(value: unknown, fallback: boolean): boolean {

@@ -18,6 +18,7 @@ import {
   type HillOfHillsTerrainParams,
   type HillOfHillsTopologyEventClassConfig,
   type HillOfHillsTopologyDynamicsMode,
+  type HillOfHillsTopologyPossibilityMode,
   type HillOfHillsTopologyPhaseKind,
 } from './terrain/hill-of-hills.js';
 import {
@@ -30,6 +31,12 @@ import {
   type HillOverlayStrokeStyle
 } from './terrain/hill-of-hills-overlay-style.js';
 import { hillMaterialFrayColor } from './terrain/hill-of-hills-material-fray.js';
+import {
+  bilinearHillPreviewPoint,
+  hillTerrainCellColorPatches,
+  neutralHillGeometryColor,
+  type HillPreviewRgb
+} from './terrain/hill-of-hills-preview-shading.js';
 import {
   hillMaterialTransitionLawFor,
   type HillMaterialTransitionDescriptor
@@ -62,12 +69,16 @@ import {
   HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE,
   HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE,
   defaultHillPreviewSettings,
+  hillPreviewBasePassEnabled,
+  hillPreviewVisualIdentity,
   loadHillPreviewSettings,
   saveHillPreviewSettings,
   type HillPreviewLayerKey,
+  type HillPreviewMode,
   type HillPreviewPressureFieldSelection,
   type HillPreviewSettings,
-  type HillPreviewSettingsStorage
+  type HillPreviewSettingsStorage,
+  type HillPreviewVisualIdentity
 } from './terrain/hill-of-hills-preview-settings.js';
 import {
   loadHillOfHillsParamSettings,
@@ -146,7 +157,9 @@ interface HillPhaseFilmstripExportResult {
   filename: string;
   reportFilename: string;
   frameCount: number;
-  report: ReturnType<typeof createHillPhaseContinuityReport>;
+  report: ReturnType<typeof createHillPhaseContinuityReport> & {
+    visualIdentity: HillPreviewVisualIdentity;
+  };
 }
 const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
   'none',
@@ -363,7 +376,7 @@ const controlSpecs: readonly ControlSpec[] = [
   { key: 'topologyPhaseSaddleBias', label: 'Saddle bias', min: 0, max: 2, step: 0.05 },
   { key: 'topologyPhaseOverlap', label: 'Topology overlap', min: 0, max: 0.5, step: 0.01 },
   { key: 'topologyPhaseDetailScale', label: 'Topology detail', min: 0, max: 2, step: 0.05 },
-  { key: 'topologyPhaseDriftIntensity', label: 'Basin drift', min: 0, max: 1, step: 0.05 },
+  { key: 'topologyPhaseDriftIntensity', label: 'Field influence', min: 0, max: 1, step: 0.05 },
   { key: 'topologyPhaseTimeMs', label: 'Topology phase', min: 0, max: 2600, step: 40 },
   { key: 'topologyPhaseDurationMs', label: 'Topology cadence', min: 800, max: 5200, step: 80 }
 ];
@@ -437,7 +450,7 @@ function render(timestampMs: number): void {
   if (hillKaminosRuntime) {
     drawKaminosFluidFeedback(terrainBuffer, hillKaminosRuntime, width, height);
   }
-  if (previewSettings.layers.routeMarkers) {
+  if (previewSettings.mode !== 'neutral_geometry' && previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
   drawWitness(terrainBuffer);
@@ -491,7 +504,11 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
   const gridResolutionX = currentBuffer.gridResolution.x;
   const gridResolutionZ = currentBuffer.gridResolution.z;
 
-  if (previewSettings.layers.base) {
+  if (hillPreviewBasePassEnabled(previewSettings)) {
+    const baseColors = Array.from(
+      { length: gridResolutionX * gridResolutionZ },
+      (_, index) => previewBaseColorForBufferSample(currentBuffer, index)
+    );
     for (let zi = gridResolutionZ - 2; zi >= 0; zi -= 1) {
       for (let xi = 0; xi < gridResolutionX - 1; xi += 1) {
         const a = zi * gridResolutionX + xi;
@@ -502,28 +519,35 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
         const pb = projectSample(currentBuffer, b, width, height);
         const pc = projectSample(currentBuffer, c, width, height);
         const pd = projectSample(currentBuffer, d, width, height);
-        const averageHeight =
-          (metricAt(currentBuffer, a, 'height') +
-            metricAt(currentBuffer, b, 'height') +
-            metricAt(currentBuffer, c, 'height') +
-            metricAt(currentBuffer, d, 'height')) *
-          0.25;
-        const averageNormal: readonly [number, number, number] = [
-          (normalAt(currentBuffer, a, 0) + normalAt(currentBuffer, b, 0) + normalAt(currentBuffer, c, 0) + normalAt(currentBuffer, d, 0)) * 0.25,
-          (normalAt(currentBuffer, a, 1) + normalAt(currentBuffer, b, 1) + normalAt(currentBuffer, c, 1) + normalAt(currentBuffer, d, 1)) * 0.25,
-          (normalAt(currentBuffer, a, 2) + normalAt(currentBuffer, b, 2) + normalAt(currentBuffer, c, 2) + normalAt(currentBuffer, d, 2)) * 0.25
-        ];
+        const points = [pa, pb, pc, pd] as const;
+        const colors = [
+          baseColors[a],
+          baseColors[b],
+          baseColors[c],
+          baseColors[d]
+        ] as const;
 
-        ctx.beginPath();
-        ctx.moveTo(pa.x, pa.y);
-        ctx.lineTo(pb.x, pb.y);
-        ctx.lineTo(pc.x, pc.y);
-        ctx.lineTo(pd.x, pd.y);
-        ctx.closePath();
-        ctx.fillStyle = colorForBufferSample(currentBuffer, a, averageHeight, averageNormal, currentBuffer.heightRange);
-        ctx.fill();
+        for (const patch of hillTerrainCellColorPatches(colors)) {
+          const p00 = bilinearHillPreviewPoint(points, patch.u0, patch.v0);
+          const p10 = bilinearHillPreviewPoint(points, patch.u1, patch.v0);
+          const p11 = bilinearHillPreviewPoint(points, patch.u1, patch.v1);
+          const p01 = bilinearHillPreviewPoint(points, patch.u0, patch.v1);
+
+          ctx.beginPath();
+          ctx.moveTo(p00.x, p00.y);
+          ctx.lineTo(p10.x, p10.y);
+          ctx.lineTo(p11.x, p11.y);
+          ctx.lineTo(p01.x, p01.y);
+          ctx.closePath();
+          ctx.fillStyle = rgbStyle(patch.color);
+          ctx.fill();
+        }
       }
     }
+  }
+
+  if (previewSettings.mode === 'neutral_geometry') {
+    return;
   }
 
   if (previewSettings.layers.growthSkin) {
@@ -1847,14 +1871,25 @@ function projectSample(currentBuffer: HillOfHillsTerrainBuffer, index: number, w
   );
 }
 
-function colorForBufferSample(
+function previewBaseColorForBufferSample(
   buffer: HillOfHillsTerrainBuffer,
-  index: number,
-  heightValue: number,
-  normal: readonly [number, number, number],
-  range: { min: number; max: number }
-): string {
-  const t = (heightValue - range.min) / Math.max(0.001, range.max - range.min);
+  index: number
+): HillPreviewRgb {
+  const heightValue = metricAt(buffer, index, 'height');
+  const normal: readonly [number, number, number] = [
+    normalAt(buffer, index, 0),
+    normalAt(buffer, index, 1),
+    normalAt(buffer, index, 2)
+  ];
+  if (previewSettings.mode === 'neutral_geometry') {
+    return neutralHillGeometryColor({
+      height: heightValue,
+      heightRange: buffer.heightRange,
+      normal
+    });
+  }
+
+  const t = (heightValue - buffer.heightRange.min) / Math.max(0.001, buffer.heightRange.max - buffer.heightRange.min);
   const sideLight = normal[0] * -0.32 + normal[1] * 0.72 + normal[2] * -0.2;
   const phaseShadow = metricAt(buffer, index, 'sideDitchAmount') * 0.22 + metricAt(buffer, index, 'trailAmount') * 0.06;
   const wetShadow = metricAt(buffer, index, 'wetness') * 0.16 + metricAt(buffer, index, 'ditchPotential') * 0.1 + phaseShadow;
@@ -1875,8 +1910,11 @@ function colorForBufferSample(
     jitter: materialFrayJitter(buffer, index),
     materialContrast: neighbor.contrast
   });
-  const [r, g, b] = frayed.color;
-  return `rgb(${r}, ${g}, ${b})`;
+  return frayed.color;
+}
+
+function rgbStyle(color: HillPreviewRgb): string {
+  return `rgb(${Math.round(color[0])}, ${Math.round(color[1])}, ${Math.round(color[2])})`;
 }
 
 function shadeMaterialColor(color: readonly [number, number, number], light: number, lift: number): readonly [number, number, number] {
@@ -1986,7 +2024,8 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `trail phase: ${witness.effectiveParams.trailPhaseTimeMs.toFixed(0)}ms clock ${witness.trailPhaseClock.toFixed(2)} progress ${witness.trailPhaseProgress.toFixed(2)}`,
     `topology phase: ${witness.effectiveParams.topologyPhaseTimeMs.toFixed(0)}ms clock ${witness.topologyPhaseClock.toFixed(2)} progress ${witness.topologyPhaseProgress.toFixed(2)}`,
     `dynamics: ${witness.topologyDynamicsMode} origin ${witness.topologyDynamicsIntegrationOriginMs.toFixed(0)}ms ${compactChecksum(witness.topologyDynamicsChecksum)}`,
-    `dynamics range: deformation ${witness.topologyDeformationRange.min.toFixed(3)}..${witness.topologyDeformationRange.max.toFixed(3)} velocity ${witness.topologyVelocityRange.min.toFixed(3)}..${witness.topologyVelocityRange.max.toFixed(3)} force ${witness.topologyForceRange.min.toFixed(3)}..${witness.topologyForceRange.max.toFixed(3)} swell ${witness.hillSwellMembershipRange.min.toFixed(2)}..${witness.hillSwellMembershipRange.max.toFixed(2)} slump ${witness.hillSlumpMembershipRange.min.toFixed(2)}..${witness.hillSlumpMembershipRange.max.toFixed(2)}`,
+    `possibility: ${witness.topologyPossibilityMode} ${witness.topologyPossibilityRange.min.toFixed(2)}..${witness.topologyPossibilityRange.max.toFixed(2)} ${compactChecksum(witness.topologyPossibilityChecksum)}`,
+    `dynamics range: deformation ${witness.topologyDeformationRange.min.toFixed(3)}..${witness.topologyDeformationRange.max.toFixed(3)} velocity ${witness.topologyVelocityRange.min.toFixed(3)}..${witness.topologyVelocityRange.max.toFixed(3)} force ${witness.topologyForceRange.min.toFixed(3)}..${witness.topologyForceRange.max.toFixed(3)} gross ${witness.topologyGrossForceRange.min.toFixed(3)}..${witness.topologyGrossForceRange.max.toFixed(3)} opposed ${witness.topologyOpposedForceRange.min.toFixed(3)}..${witness.topologyOpposedForceRange.max.toFixed(3)} contention ${witness.topologyContentionRange.min.toFixed(2)}..${witness.topologyContentionRange.max.toFixed(2)} swell ${witness.hillSwellMembershipRange.min.toFixed(2)}..${witness.hillSwellMembershipRange.max.toFixed(2)} slump ${witness.hillSlumpMembershipRange.min.toFixed(2)}..${witness.hillSlumpMembershipRange.max.toFixed(2)}`,
     `phase checksum: ${witness.phaseChecksum} / influence ${witness.phaseInfluenceChecksum}`,
     `trail seed: ${witness.trailSeedMethod} / candidates ${witness.trailCandidateChecksum}`,
     `trail score: ${witness.trailCandidateScoreRange.min.toFixed(2)} .. ${witness.trailCandidateScoreRange.max.toFixed(2)} / selected ${witness.selectedTrailScoreRange.min.toFixed(2)} .. ${witness.selectedTrailScoreRange.max.toFixed(2)}`,
@@ -1998,7 +2037,7 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `worker error: ${latestWorkerError}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
-    `layers: ${activePreviewLayerSummary()}`,
+    `preview: ${previewSettings.mode} / ${activePreviewLayerSummary()}`,
     `growth skin: density ${previewSettings.growthSkin.density.toFixed(2)} opacity ${previewSettings.growthSkin.opacity.toFixed(2)}`,
     `overlays: lines ${previewSettings.overlays.topologyLineStrength.toFixed(2)} contours ${previewSettings.overlays.topographicContourStrength.toFixed(2)} spacing ${previewSettings.overlays.topographicContourSpacing.toFixed(2)} pressure ${previewSettings.overlays.pressureField} ${previewSettings.overlays.pressureOverlayStrength.toFixed(2)}`,
     `pressure: ${pressureFieldWitnessSummary(witness)}`,
@@ -2030,6 +2069,9 @@ function pressureFieldWitnessSummary(witness: HillOfHillsTerrainBuffer['witness'
 }
 
 function activePreviewLayerSummary(): string {
+  if (previewSettings.mode === 'neutral_geometry') {
+    return 'base geometry only';
+  }
   const labels: Record<HillPreviewLayerKey, string> = {
     base: 'base',
     transitions: 'trans',
@@ -2049,6 +2091,7 @@ function createControls(): { element: HTMLElement } {
   const element = document.createElement('section');
   element.className = 'terrain-controls';
   appendTopologyDynamicsModeControl(element);
+  appendTopologyPossibilityModeControl(element);
 
   for (const spec of controlSpecs) {
     const row = document.createElement('label');
@@ -2376,6 +2419,46 @@ function appendTopologyDynamicsModeControl(parent: HTMLElement): void {
   parent.append(fieldset);
 }
 
+function appendTopologyPossibilityModeControl(parent: HTMLElement): void {
+  const fieldset = document.createElement('div');
+  const legend = document.createElement('span');
+  const options = document.createElement('div');
+  fieldset.className = 'topology-dynamics-control';
+  fieldset.role = 'radiogroup';
+  fieldset.setAttribute('aria-label', 'Topology possibility');
+  legend.className = 'topology-dynamics-label';
+  legend.textContent = 'Topology possibility';
+  options.className = 'topology-dynamics-options';
+
+  const modeOptions: readonly { value: HillOfHillsTopologyPossibilityMode; label: string }[] = [
+    { value: 'inherited', label: 'Inherited' },
+    { value: 'reauthored', label: 'Re-authored' }
+  ];
+  for (const mode of modeOptions) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    const text = document.createElement('span');
+    input.type = 'radio';
+    input.name = 'topology-possibility-mode';
+    input.value = mode.value;
+    input.checked = params.topologyPossibilityMode === mode.value;
+    input.addEventListener('input', () => {
+      if (!input.checked) return;
+      params = {
+        ...params,
+        topologyPossibilityMode: mode.value
+      };
+      persistParamSettings();
+    });
+    text.textContent = mode.label;
+    label.append(input, text);
+    options.append(label);
+  }
+
+  fieldset.append(legend, options);
+  parent.append(fieldset);
+}
+
 function createTopologyEventClassCard(kind: HillOfHillsTopologyPhaseKind): HTMLElement {
   const card = document.createElement('div');
   const header = document.createElement('div');
@@ -2526,6 +2609,20 @@ function createPreviewDebugControls(): { element: HTMLElement; refresh: () => vo
   const title = document.createElement('h2');
   title.textContent = 'Preview layers';
   element.append(title);
+
+  const mode = createPreviewDebugSelect<HillPreviewMode>(
+    'View mode',
+    ['material', 'neutral_geometry'],
+    previewSettings.mode,
+    (value) => {
+      previewSettings = {
+        ...previewSettings,
+        mode: value
+      };
+      persistPreviewSettings();
+    }
+  );
+  element.append(mode.row);
 
   const checkboxes = new Map<HillPreviewLayerKey, HTMLInputElement>();
   for (const spec of previewLayerSpecs) {
@@ -2693,6 +2790,7 @@ function createPreviewDebugControls(): { element: HTMLElement; refresh: () => vo
   element.append(reset);
 
   function refresh(): void {
+    mode.setValue(previewSettings.mode);
     for (const spec of previewLayerSpecs) {
       const input = checkboxes.get(spec.key);
       if (input) input.checked = previewSettings.layers[spec.key];
@@ -2823,7 +2921,7 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): Hil
       renderCtx.fillStyle = '#06100d';
       renderCtx.fillRect(0, 0, viewport.width, viewport.height);
       drawTerrain(frameBuffer, viewport.width, viewport.height);
-      if (previewSettings.layers.routeMarkers) {
+      if (previewSettings.mode !== 'neutral_geometry' && previewSettings.layers.routeMarkers) {
         drawRouteMarkers(frameBuffer, viewport.width, viewport.height);
       }
 
@@ -2845,7 +2943,7 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): Hil
   const timestamp = Date.now();
   const filename = `hill-of-hills-phase-strip-${frameCount}-${timestamp}.png`;
   const reportFilename = `hill-of-hills-phase-strip-${frameCount}-${timestamp}.continuity.json`;
-  const report = createHillPhaseContinuityReport(schedule, frameTerrains, {
+  const continuityReport = createHillPhaseContinuityReport(schedule, frameTerrains, {
     requestedParams: params,
     requireExactControls: true,
     requestedSource: {
@@ -2853,6 +2951,10 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): Hil
       configId: previewSourceOptions.configId
     }
   });
+  const report: HillPhaseFilmstripExportResult['report'] = {
+    ...continuityReport,
+    visualIdentity: hillPreviewVisualIdentity(previewSettings)
+  };
   const anchor = document.createElement('a');
   anchor.href = stripCanvas.toDataURL('image/png');
   anchor.download = filename;
@@ -2930,7 +3032,11 @@ function drawPhaseFilmstripCaption(
     height - captionHeight + 5
   );
   targetCtx.fillStyle = 'rgba(244, 227, 176, 0.9)';
-  targetCtx.fillText(`active ${activeKinds} ph ${phaseHash} infl ${influenceHash} topo ${topologyHash}`, 8, height - captionHeight + 18);
+  targetCtx.fillText(
+    `view ${previewSettings.mode} active ${activeKinds} ph ${phaseHash} infl ${influenceHash} topo ${topologyHash}`,
+    8,
+    height - captionHeight + 18
+  );
   targetCtx.fillStyle = 'rgba(183, 224, 205, 0.88)';
   targetCtx.fillText(eventSummary, 8, height - captionHeight + 31);
   targetCtx.fillStyle = continuityDelta && continuityDelta.suspicions.length > 0 ? 'rgba(255, 199, 135, 0.94)' : 'rgba(183, 224, 205, 0.74)';

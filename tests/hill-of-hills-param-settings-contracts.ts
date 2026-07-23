@@ -46,6 +46,7 @@ const sanitized = sanitizeHillOfHillsParamSettings(
     valleyCount: 31,
     topologyPhaseIntensity: 0.68,
     topologyDynamicsMode: 'persistent_pressure',
+    topologyPossibilityMode: 'reauthored',
     topologyPhaseDurationMs: 4400,
     topologyPhaseHeightScale: 0.35,
     topologyPhaseBasinBias: 1.55,
@@ -88,6 +89,7 @@ assert(
   (sanitized as typeof sanitized & { topologyDynamicsMode?: string }).topologyDynamicsMode === 'persistent_pressure',
   'terrain param settings persist the topology dynamics route'
 );
+assert(sanitized.topologyPossibilityMode === 'reauthored', 'terrain param settings persist the topology possibility posture');
 assert(sanitized.topologyPhaseDurationMs === 4400, 'terrain param settings persist topology cadence');
 assert(sanitized.topologyPhaseHeightScale === 0.35, 'terrain param settings persist topology height scale');
 assert(sanitized.topologyPhaseBasinBias === 1.55, 'terrain param settings persist basin kind bias');
@@ -116,6 +118,7 @@ const clamped = sanitizeHillOfHillsParamSettings(
     valleyCount: -4,
     topologyPhaseIntensity: 4,
     topologyDynamicsMode: 'instant_teleportation',
+    topologyPossibilityMode: 'wishful_thinking',
     topologyPhaseDurationMs: 40,
     topologyPhaseHeightScale: 7,
     topologyPhaseBasinBias: -3,
@@ -145,6 +148,10 @@ assert(
   (clamped as typeof clamped & { topologyDynamicsMode?: string }).topologyDynamicsMode === defaults.topologyDynamicsMode,
   'invalid topology dynamics route falls back to the supplied default'
 );
+assert(
+  clamped.topologyPossibilityMode === defaults.topologyPossibilityMode,
+  'invalid topology possibility posture falls back to the supplied default'
+);
 assert(clamped.topologyPhaseDurationMs === 800, 'persisted topology cadence clamps to visible control min');
 assert(clamped.topologyPhaseHeightScale === 2, 'persisted topology height scale clamps to visible control max');
 assert(clamped.topologyPhaseBasinBias === 0, 'persisted basin bias clamps to min');
@@ -169,6 +176,7 @@ assert(rawSaved.includes('"topologyPhaseOverlap"'), 'save writes topology overla
 assert(rawSaved.includes('"topologyPhaseDetailScale"'), 'save writes topology detail scale');
 assert(rawSaved.includes('"topologyEventClasses"'), 'save writes topology event-class settings');
 assert(rawSaved.includes('"topologyDynamicsMode":"persistent_pressure"'), 'save writes the topology dynamics route');
+assert(rawSaved.includes('"topologyPossibilityMode":"reauthored"'), 'save writes the topology possibility posture');
 assert(rawSaved.includes('"surge"') && rawSaved.includes('"rupture"'), 'save writes topology gesture presets');
 assert(!rawSaved.includes('yaw') && !rawSaved.includes('camera'), 'save excludes camera settings');
 const loaded = loadHillOfHillsParamSettings(storage, defaults);
@@ -177,6 +185,7 @@ assert(
   (loaded as typeof loaded & { topologyDynamicsMode?: string }).topologyDynamicsMode === 'persistent_pressure',
   'load round-trips the topology dynamics route'
 );
+assert(loaded.topologyPossibilityMode === 'reauthored', 'load round-trips the topology possibility posture');
 assert(loaded.topologyPhaseDurationMs === 4400, 'load round-trips topology cadence');
 assert(loaded.topologyPhaseOverlap === 0.44, 'load round-trips topology overlap');
 assert(loaded.topologyPhaseDetailScale === 1.7, 'load round-trips topology detail scale');

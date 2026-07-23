@@ -16,6 +16,14 @@ assert(
   hillDiagnosticPresetFromSearch('?hillPreset=continuity-hills') === 'continuity-hills',
   'query parser accepts continuity-hills preset'
 );
+assert(
+  hillDiagnosticPresetFromSearch('?hillPreset=whole-field-topology') === 'whole-field-topology',
+  'query parser accepts whole-field-topology preset'
+);
+assert(
+  hillDiagnosticPresetFromSearch('?hillPreset=topology-contention') === 'topology-contention',
+  'query parser accepts topology-contention preset'
+);
 assert(hillDiagnosticPresetFromSearch('?hillPreset=nonsense') === undefined, 'query parser rejects unknown presets');
 assert(hillDiagnosticPresetFromSearch('?foo=bar') === undefined, 'query parser ignores unrelated query state');
 
@@ -94,5 +102,39 @@ assert(previewPreset.overlays.topologyLineStrength < 1, 'continuity preset lower
 assert(previewPreset.overlays.topographicContourStrength > 0, 'continuity preset keeps topographic contour evidence');
 assert(previewPreset.overlays.pressureField === 'none', 'continuity preset disables pressure overlay confounders');
 assert(previewPreset.overlays.pressureOverlayStrength === 0, 'continuity preset zeros pressure overlay strength');
+
+const wholeFieldPreset = applyHillDiagnosticParamPreset(
+  {
+    ...defaultHillOfHillsParams,
+    topologyPossibilityMode: 'inherited',
+    topologyPhaseDriftIntensity: 0
+  },
+  'whole-field-topology'
+);
+assert(wholeFieldPreset.topologyDynamicsMode === 'persistent_pressure', 'whole-field preset exercises persistent world memory');
+assert(wholeFieldPreset.topologyPossibilityMode === 'reauthored', 'whole-field preset enables proposal-authored topology');
+assert(wholeFieldPreset.topologyPhaseDriftIntensity > 0.5, 'whole-field preset gives the coherent proposal field material authority');
+assert(wholeFieldPreset.topologyPhaseLimit >= 4, 'whole-field preset exposes several simultaneous topology proposals');
+
+const contentionPreset = applyHillDiagnosticParamPreset(
+  {
+    ...defaultHillOfHillsParams,
+    topologyPossibilityMode: 'inherited',
+    topologyPhaseDriftIntensity: 0
+  },
+  'topology-contention'
+);
+assert(contentionPreset.topologyDynamicsMode === 'persistent_pressure', 'contention preset exercises persistent world memory');
+assert(contentionPreset.topologyPossibilityMode === 'reauthored', 'contention preset uses whole-field proposal authorship');
+assert(contentionPreset.topologyPhaseIntensity === 1, 'contention preset preserves the accepted topology intensity');
+assert(contentionPreset.topologyPhaseLimit === 8, 'contention preset admits the accepted eight simultaneous supports');
+assert(contentionPreset.topologyPhaseRadius === 2.8, 'contention preset preserves the accepted broad support radius');
+assert(contentionPreset.topologyPhaseDurationMs === 5200, 'contention preset preserves the accepted episode duration');
+assert(contentionPreset.topologyEventClasses.hill_swell.enabled, 'contention preset enables hill swell');
+assert(contentionPreset.topologyEventClasses.hill_slump.enabled, 'contention preset enables hill slump');
+assert(contentionPreset.topologyEventClasses.valley_deepen.enabled, 'contention preset enables valley deepening');
+assert(contentionPreset.topologyEventClasses.ridge_lift.enabled, 'contention preset enables ridge lifting');
+assert(!contentionPreset.topologyEventClasses.basin_bloom.enabled, 'contention preset keeps basin bloom disabled');
+assert(!contentionPreset.topologyEventClasses.saddle_pinch.enabled, 'contention preset keeps saddle pinching disabled');
 
 console.log('hill of hills diagnostic preset contracts ok');

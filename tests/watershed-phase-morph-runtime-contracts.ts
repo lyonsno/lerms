@@ -66,7 +66,7 @@ assert(loaded.effective.packageVersion === '0.2.1', 'phase-morph exercise consum
 const cache = createHillOfHillsLayerTileCache();
 const commonParams = applyHillDiagnosticParamPreset(
   defaultHillOfHillsParams,
-  'topology-contention' as never
+  'topology-contention'
 );
 const source = {
   route: 'lerms/hill-of-hills/wet-border-phase-morph-recipe',

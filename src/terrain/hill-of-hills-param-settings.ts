@@ -5,6 +5,7 @@ import {
   type HillOfHillsTopologyEventClassConfig,
   type HillOfHillsTopologyEventClassConfigMap,
   type HillOfHillsTopologyDynamicsMode,
+  type HillOfHillsTopologyPossibilityMode,
   type HillOfHillsTopologyGesturePreset
 } from './hill-of-hills.js';
 
@@ -64,6 +65,7 @@ export type HillOfHillsPersistedParamKey = keyof typeof HILL_OF_HILLS_PERSISTED_
 
 export type HillOfHillsPersistedParamSettings = Pick<HillOfHillsTerrainParams, HillOfHillsPersistedParamKey> & {
   topologyDynamicsMode: HillOfHillsTopologyDynamicsMode;
+  topologyPossibilityMode: HillOfHillsTopologyPossibilityMode;
   topologyEventClasses: HillOfHillsTopologyEventClassConfigMap;
 };
 
@@ -81,6 +83,10 @@ export function sanitizeHillOfHillsParamSettings(input: unknown, defaults: HillO
     source.topologyDynamicsMode === 'direct_synthesis' || source.topologyDynamicsMode === 'persistent_pressure'
       ? source.topologyDynamicsMode
       : defaults.topologyDynamicsMode;
+  sanitized.topologyPossibilityMode =
+    source.topologyPossibilityMode === 'inherited' || source.topologyPossibilityMode === 'reauthored'
+      ? source.topologyPossibilityMode
+      : defaults.topologyPossibilityMode;
   sanitized.topologyEventClasses = sanitizeTopologyEventClasses(source.topologyEventClasses, defaults.topologyEventClasses);
 
   return sanitized;

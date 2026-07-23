@@ -12,6 +12,7 @@ import {
   HILL_OF_HILLS_TOPOLOGY_GESTURE_PRESETS,
   HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS,
   sampleHillOfHillsTerrain,
+  type HillOfHillsTerrain,
   type HillOfHillsTerrainParams
 } from '../src/terrain/hill-of-hills.js';
 import { applyHillDiagnosticParamPreset } from '../src/terrain/hill-of-hills-diagnostic-presets.js';
@@ -1511,6 +1512,89 @@ assert(
     liveSignedContinuityTerrain.witness.hillSlumpMembershipRange.max > 0.01,
   'continuity-hills live preset exercises positive swell and negative slump world memory in one deterministic frame'
 );
+
+const persistentSingleEventTerrain = (kind: (typeof topologyEventKinds)[number]) =>
+  createHillOfHillsTerrain({
+    ...persistentSignedParams,
+    topologyPossibilityMode: 'reauthored',
+    topologyPhaseRadius: 2.8,
+    topologyPhaseTimeMs: persistentSignedParams.topologyPhaseDurationMs * 0.46,
+    topologyPhaseHillBias: kind === 'hill_swell' || kind === 'hill_slump' ? 2 : 0,
+    topologyPhaseValleyBias: kind === 'valley_deepen' || kind === 'valley_fill' ? 2 : 0,
+    topologyPhaseRidgeBias: kind === 'ridge_lift' || kind === 'ridge_shear' || kind === 'strata_reveal' ? 2 : 0,
+    topologyPhaseSaddleBias: kind === 'saddle_pinch' || kind === 'saddle_pass' ? 2 : 0,
+    topologyPhaseBasinBias: kind === 'basin_bloom' ? 2 : 0,
+    topologyEventClasses: Object.fromEntries(
+      topologyEventKinds.map((candidateKind) => [
+        candidateKind,
+        {
+          ...persistentSignedEventClasses[candidateKind],
+          enabled: candidateKind === kind,
+          appetite: candidateKind === kind ? 1.4 : 0,
+          force: candidateKind === kind ? 1.2 : 0,
+          gesture: 'breath',
+          phaseOffset: 0.04,
+          spread: 1.12
+        }
+      ])
+    ) as HillOfHillsTerrainParams['topologyEventClasses']
+  });
+const persistentValleyDeepen = persistentSingleEventTerrain('valley_deepen');
+const persistentRidgeLift = persistentSingleEventTerrain('ridge_lift');
+const persistentHeightScale =
+  0.8 + persistentValleyDeepen.params.hillHeight * 0.22 + persistentValleyDeepen.params.valleyHeight * 0.18;
+const persistentDirectBypassDelta = (terrain: HillOfHillsTerrain) =>
+  terrain.samples.reduce(
+    (maximum, terrainSample) =>
+      Math.max(
+        maximum,
+        Math.abs(
+          terrainSample.phaseInfluence.topologyHeightDelta -
+            terrainSample.phaseInfluence.topologyDeformation / persistentHeightScale
+        )
+      ),
+    0
+  );
+assert(
+  persistentValleyDeepen.witness.topologyForceRange.min < -0.01 &&
+    persistentDirectBypassDelta(persistentValleyDeepen) < 0.0001,
+  `persistent valley-deepen reaches world memory as negative force without a direct-synthesis height bypass; force ${persistentValleyDeepen.witness.topologyForceRange.min}..${persistentValleyDeepen.witness.topologyForceRange.max}, bypass ${persistentDirectBypassDelta(persistentValleyDeepen)}`
+);
+assert(
+  persistentRidgeLift.witness.topologyForceRange.max > 0.01 &&
+    persistentDirectBypassDelta(persistentRidgeLift) < 0.0001,
+  'persistent ridge-lift reaches world memory as positive force without a direct-synthesis height bypass'
+);
+
+const persistentContestedTerrain = createHillOfHillsTerrain({
+  ...liveSignedContinuityParams,
+  topologyPhaseRadius: 4,
+  topologyPhaseOverlap: 0.5,
+  topologyPhaseTimeMs: liveSignedContinuityParams.topologyPhaseDurationMs * 0.25
+});
+const persistentContentionWitness = persistentContestedTerrain.witness as typeof persistentContestedTerrain.witness & {
+  topologyGrossForceRange?: { min: number; max: number };
+  topologyOpposedForceRange?: { min: number; max: number };
+  topologyContentionRange?: { min: number; max: number };
+};
+const persistentContentionCell = persistentContestedTerrain.samples.find(
+  (terrainSample) =>
+    terrainSample.phaseInfluence.topologyOpposedForce > 0.01 &&
+    terrainSample.phaseInfluence.topologyGrossForce >
+      Math.abs(terrainSample.phaseInfluence.topologyForce) + 0.005
+);
+assert(
+  (persistentContestedTerrain.witness.activePhaseKinds.hill_swell ?? 0) > 0 &&
+    (persistentContestedTerrain.witness.activePhaseKinds.hill_slump ?? 0) > 0,
+  'contention fixture contains simultaneous signed terrain programs'
+);
+assert(
+  Boolean(persistentContentionCell) &&
+    (persistentContentionWitness.topologyGrossForceRange?.max ?? 0) > 0.01 &&
+    (persistentContentionWitness.topologyOpposedForceRange?.max ?? 0) > 0.01 &&
+    (persistentContentionWitness.topologyContentionRange?.max ?? 0) > 0.01,
+  `persistent topology exposes gross, opposed, and normalized contention instead of hiding cancellation in net force; net ${persistentContestedTerrain.witness.topologyForceRange.min}..${persistentContestedTerrain.witness.topologyForceRange.max}, gross ${persistentContentionWitness.topologyGrossForceRange?.max}, opposed ${persistentContentionWitness.topologyOpposedForceRange?.max}, contention ${persistentContentionWitness.topologyContentionRange?.max}`
+);
 assert(
   maxDynamics(persistentTail, 'topologyForce') < maxDynamics(persistentPeak, 'topologyForce'),
   'withdrawing a hill force lowers force during the gesture tail'
@@ -1710,6 +1794,129 @@ assert(
   directComparisonAfterPersistent.witness.cacheInvalidated &&
     directComparisonAfterPersistent.witness.cacheRecomputedSampleCount === directComparisonAfterPersistent.samples.length,
   'switching comparison modes explicitly invalidates every sample rather than depending on incidental support dirtiness'
+);
+
+const wholeFieldBaseParams = applyHillDiagnosticParamPreset(
+  {
+    ...defaultHillOfHillsParams,
+    seed: 63127,
+    topologyPhaseSeed: 88741,
+    gridResolutionX: 24,
+    gridResolutionZ: 30
+  },
+  'whole-field-topology'
+);
+const wholeFieldClock = wholeFieldBaseParams.topologyPhaseDurationMs * 0.28;
+const inheritedPossibility = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  topologyPossibilityMode: 'inherited',
+  topologyPhaseTimeMs: wholeFieldClock
+});
+const reauthoredPossibility = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  topologyPossibilityMode: 'reauthored',
+  topologyPhaseTimeMs: wholeFieldClock
+});
+assert(defaultHillOfHillsParams.topologyPossibilityMode === 'inherited', 'legacy scenes inherit topology possibility from their terrain');
+assert(inheritedPossibility.witness.topologyPossibilityMode === 'inherited', 'inherited witness names its topology possibility posture');
+assert(reauthoredPossibility.witness.topologyPossibilityMode === 'reauthored', 'reauthored witness names its topology possibility posture');
+assert(
+  inheritedPossibility.witness.topologyPossibilityRange.max === 0,
+  'inherited posture does not claim proposal-authored support'
+);
+assert(
+  reauthoredPossibility.witness.topologyPossibilityRange.max > 0.2,
+  'reauthored posture exposes material whole-field proposal affinity'
+);
+assert(
+  reauthoredPossibility.witness.topologyPossibilityChecksum !== inheritedPossibility.witness.topologyPossibilityChecksum &&
+    reauthoredPossibility.witness.topologyEventCandidateChecksum !== inheritedPossibility.witness.topologyEventCandidateChecksum,
+  'reauthored posture changes both proposal evidence and the candidate field'
+);
+const inheritedCenters = inheritedPossibility.witness.topologyEventDebug.map((event) => event.center);
+const proposalBornEvent = reauthoredPossibility.witness.topologyEventDebug.find(
+  (event) =>
+    event.eligibility.possibility > 0.2 &&
+    inheritedCenters.every((center) => Math.hypot(event.center[0] - center[0], event.center[2] - center[2]) > wholeFieldBaseParams.topologyPhaseRadius)
+);
+assert(
+  proposalBornEvent,
+  'reauthored posture admits a coherent topology support outside every support inherited from the same initial terrain'
+);
+
+const crossSeedProposalA = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  seed: 1,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseTimeMs: wholeFieldClock
+});
+const crossSeedProposalB = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  seed: 2,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseTimeMs: wholeFieldClock
+});
+assert(
+  crossSeedProposalA.witness.topologyPossibilityChecksum === crossSeedProposalB.witness.topologyPossibilityChecksum,
+  'whole-field possibility identity depends on topology phase identity rather than the initial terrain feature seed'
+);
+assert(
+  crossSeedProposalA.witness.topologyEventCandidateChecksum !== crossSeedProposalB.witness.topologyEventCandidateChecksum,
+  'terrain-aware event candidate identity stays distinct from the pure whole-field possibility field'
+);
+
+const pureProposalSelectionA = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  seed: 1,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseDriftIntensity: 1,
+  topologyPhaseTimeMs: wholeFieldClock
+});
+const pureProposalSelectionB = createHillOfHillsTerrain({
+  ...wholeFieldBaseParams,
+  seed: 2,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseDriftIntensity: 1,
+  topologyPhaseTimeMs: wholeFieldClock
+});
+const proposalSelectionSignature = (terrain: HillOfHillsTerrain): string =>
+  terrain.witness.topologyEventDebug
+    .map((event) => `${event.kind}:${event.center[0].toFixed(3)}:${event.center[2].toFixed(3)}`)
+    .join('|');
+assert(
+  proposalSelectionSignature(pureProposalSelectionA) === proposalSelectionSignature(pureProposalSelectionB),
+  'pure reauthored selection jitter does not borrow the initial terrain feature seed'
+);
+
+const topologyPostureCache = createHillOfHillsLayerTileCache();
+const inheritedPostureTime = wholeFieldBaseParams.topologyPhaseDurationMs * 0.42;
+const inheritedPostureFrame = createHillOfHillsTerrainWithCache(topologyPostureCache, {
+  ...wholeFieldBaseParams,
+  topologyPossibilityMode: 'inherited',
+  topologyPhaseTimeMs: inheritedPostureTime
+});
+const reauthoredPostureFrame = createHillOfHillsTerrainWithCache(topologyPostureCache, {
+  ...wholeFieldBaseParams,
+  topologyPossibilityMode: 'reauthored',
+  topologyPhaseTimeMs: inheritedPostureTime + 16
+});
+const inheritedPostureById = new Map(inheritedPostureFrame.samples.map((terrainSample) => [terrainSample.id, terrainSample]));
+const postureSwitchDeformationDelta = reauthoredPostureFrame.samples.reduce((maximum, terrainSample) => {
+  const before = inheritedPostureById.get(terrainSample.id);
+  return Math.max(
+    maximum,
+    Math.abs(
+      terrainSample.phaseInfluence.topologyDeformation - (before?.phaseInfluence.topologyDeformation ?? 0)
+    )
+  );
+}, 0);
+assert(
+  reauthoredPostureFrame.witness.topologyDynamicsIntegrationOriginMs === inheritedPostureTime,
+  'changing topology possibility posture advances the existing persistent field instead of replaying from origin'
+);
+assert(
+  inheritedPostureFrame.witness.topologyDeformationRange.max > 0.01 && postureSwitchDeformationDelta < 0.04,
+  'topology possibility posture can change without erasing or discontinuously replacing accumulated deformation'
 );
 
 console.log('hill of hills terrain ok');

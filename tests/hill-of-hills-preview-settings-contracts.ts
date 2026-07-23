@@ -2,6 +2,8 @@ import {
   HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE,
   HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY,
   defaultHillPreviewSettings,
+  hillPreviewBasePassEnabled,
+  hillPreviewVisualIdentity,
   loadHillPreviewSettings,
   saveHillPreviewSettings,
   sanitizeHillPreviewSettings,
@@ -28,6 +30,7 @@ function memoryStorage(initial: Record<string, string> = {}): HillPreviewSetting
 }
 
 const defaults = defaultHillPreviewSettings();
+assert(defaults.mode === 'material', 'material preview mode defaults on');
 assert(defaults.layers.base, 'base layer defaults on');
 assert(defaults.layers.transitions, 'transition layer defaults on');
 assert(defaults.layers.edgeDissolves, 'edge dissolve layer defaults on');
@@ -43,7 +46,47 @@ assert(defaults.overlays.topographicContourSpacing === 0.6, 'topographic contour
 assert(defaults.overlays.pressureField === 'none', 'pressure field overlay defaults off');
 assert(defaults.overlays.pressureOverlayStrength === 0.45, 'pressure field overlay strength defaults to a readable debug tint');
 
+const neutralWithoutMaterialBase: HillPreviewSettings = {
+  ...defaults,
+  mode: 'neutral_geometry',
+  layers: {
+    ...defaults.layers,
+    base: false
+  }
+};
+assert(
+  hillPreviewBasePassEnabled(neutralWithoutMaterialBase),
+  'neutral geometry renders its height/normal base even when the persisted material base toggle is off'
+);
+assert(
+  hillPreviewVisualIdentity(neutralWithoutMaterialBase).effectiveLayers.join(',') === 'neutral_geometry',
+  'neutral visual identity names the geometry pass that is actually forced on'
+);
+
+const pressureIdentity = hillPreviewVisualIdentity({
+  ...defaults,
+  overlays: {
+    ...defaults.overlays,
+    pressureField: 'erosion',
+    pressureOverlayStrength: 0.64
+  }
+});
+assert(
+  pressureIdentity.effectiveLayers.includes('pressure:erosion'),
+  'active pressure overlay is named as an effective visual layer'
+);
+assert(
+  pressureIdentity.pressureOverlay?.field === 'erosion' &&
+    pressureIdentity.pressureOverlay.strength === 0.64,
+  'pressure overlay mode and effective strength survive into visual identity'
+);
+assert(
+  hillPreviewVisualIdentity(defaults).pressureOverlay === null,
+  'inactive pressure overlay is explicitly absent from visual identity'
+);
+
 const partial = sanitizeHillPreviewSettings({
+  mode: 'neutral_geometry',
   layers: {
     transitions: false,
     growthSkin: false
@@ -60,6 +103,7 @@ const partial = sanitizeHillPreviewSettings({
     pressureOverlayStrength: 0.64
   }
 });
+assert(partial.mode === 'neutral_geometry', 'partial persisted payload applies neutral geometry witness mode');
 assert(partial.layers.base, 'partial persisted payload keeps unspecified layer defaults');
 assert(!partial.layers.transitions, 'partial persisted payload applies transition toggle');
 assert(!partial.layers.growthSkin, 'partial persisted payload applies growth skin toggle');
@@ -73,6 +117,7 @@ assert(partial.overlays.pressureField === 'erosion', 'partial persisted payload 
 assert(partial.overlays.pressureOverlayStrength === 0.64, 'partial persisted payload applies pressure overlay strength');
 
 const clamped = sanitizeHillPreviewSettings({
+  mode: 'semantic-mush',
   layers: {
     base: 'nope',
     topologyOverlays: 0
@@ -90,6 +135,7 @@ const clamped = sanitizeHillPreviewSettings({
   },
   unrelatedFutureKey: true
 });
+assert(clamped.mode === 'material', 'invalid preview mode falls back to material');
 assert(clamped.layers.base, 'invalid layer values fall back to defaults');
 assert(clamped.layers.topologyOverlays, 'numeric layer values do not masquerade as booleans');
 assert(clamped.growthSkin.density === 2.5, 'density clamps to max bound');
@@ -106,6 +152,7 @@ assert(
 const storage = memoryStorage();
 const saved: HillPreviewSettings = {
   ...defaults,
+  mode: 'neutral_geometry',
   layers: {
     ...defaults.layers,
     transitions: false,
@@ -127,6 +174,7 @@ saveHillPreviewSettings(storage, saved);
 const rawSaved = storage.getItem(HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY);
 assert(typeof rawSaved === 'string' && rawSaved.includes('"growthSkin"'), 'save writes the storage key payload');
 const loaded = loadHillPreviewSettings(storage);
+assert(loaded.mode === 'neutral_geometry', 'load round-trips neutral geometry witness mode');
 assert(!loaded.layers.transitions, 'load round-trips transition toggle');
 assert(!loaded.layers.growthSkin, 'load round-trips growth skin toggle');
 assert(loaded.growthSkin.density === 0.55, 'load round-trips density');

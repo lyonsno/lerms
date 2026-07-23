@@ -102,6 +102,9 @@ const terrainSample: HillOfHillsTerrainSample = {
     topologyDeformation: 0,
     topologyVelocity: 0,
     topologyForce: 0,
+    topologyGrossForce: 0,
+    topologyOpposedForce: 0,
+    topologyContention: 0,
     semanticMemberships: {}
   },
   support: {
@@ -201,7 +204,10 @@ const terrain: HillOfHillsTerrain = {
     topologyEventCandidateChecksum: 'none',
     topologyEventCandidateScoreRange: { min: 0, max: 0 },
     selectedTopologyEventScoreRange: { min: 0, max: 0 },
-    topologyDynamicsMode: 'direct_synthesis'
+    topologyDynamicsMode: 'direct_synthesis',
+    topologyPossibilityMode: 'inherited',
+    topologyPossibilityChecksum: 'inherited',
+    topologyPossibilityRange: { min: 0, max: 0 }
   },
   samples: [terrainSample],
   witness: {
@@ -331,11 +337,17 @@ const terrain: HillOfHillsTerrain = {
     sideDitchInfluenceRange: { min: 0, max: 0 },
     topologyInfluenceRange: { min: 0, max: 0 },
     topologyDynamicsMode: 'direct_synthesis',
+    topologyPossibilityMode: 'inherited',
+    topologyPossibilityChecksum: 'inherited',
+    topologyPossibilityRange: { min: 0, max: 0 },
     topologyDynamicsChecksum: 'composer-dynamics-fixture-checksum',
     topologyDynamicsIntegrationOriginMs: 0,
     topologyDeformationRange: { min: 0, max: 0 },
     topologyVelocityRange: { min: 0, max: 0 },
     topologyForceRange: { min: 0, max: 0 },
+    topologyGrossForceRange: { min: 0, max: 0 },
+    topologyOpposedForceRange: { min: 0, max: 0 },
+    topologyContentionRange: { min: 0, max: 0 },
     hillSwellMembershipRange: { min: 0, max: 0 },
     hillSlumpMembershipRange: { min: 0, max: 0 },
     phaseInfluenceKinds: { none: 1 },
