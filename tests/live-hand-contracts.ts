@@ -16,6 +16,7 @@ import {
   LIVE_HAND_FLUID_MAX_DEFERRAL_MS,
   decideLiveHandFrameWork,
   initializeFluidDeferralClock,
+  planLiveFluidSimulationCatchUp,
   shouldKeepHandPresentationPriority,
 } from '../src/hand/live-hand-frame-budget.js';
 
@@ -88,6 +89,18 @@ assert(LIVE_HAND_FLUID_MAX_DEFERRAL_MS === 100, 'continuous hand motion cannot s
 assert(initializeFluidDeferralClock(0, 125) === 125, 'the first animation frame starts the fluid deferral clock');
 assert(initializeFluidDeferralClock(80, 125) === 80, 'an existing fluid submission clock is preserved');
 assert(
+  planLiveFluidSimulationCatchUp(100).stepCount === 3,
+  'a 100ms hand-priority deferral catches up three stable 30Hz simulation steps',
+);
+assert(
+  planLiveFluidSimulationCatchUp(100).simulationAdvanceMs === 100,
+  'the bounded catch-up advances approximately the elapsed wall time',
+);
+assert(
+  planLiveFluidSimulationCatchUp(34).stepCount === 1,
+  'an ordinary fluid cadence advances one stable simulation step',
+);
+assert(
   decideLiveHandFrameWork({
     nowMs: 100,
     previousFrameAtMs: 92,
@@ -111,8 +124,39 @@ assert(
     previousFrameAtMs: 10,
     lastFluidSubmitAtMs: 0,
     handStatePending: false,
+    fluidGpuBusy: false,
   }).reason === 'hitch_recovery',
   'the first frame after a long hitch drains presentation work instead of immediately refilling the GPU queue',
+);
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 100,
+    previousFrameAtMs: 10,
+    lastFluidSubmitAtMs: 20,
+    handStatePending: false,
+    fluidGpuBusy: false,
+  }).rebaseFluidClock,
+  'hitch recovery discards stale simulation debt instead of bursting it on the next frame',
+);
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 100,
+    previousFrameAtMs: 92,
+    lastFluidSubmitAtMs: 40,
+    handStatePending: false,
+    fluidGpuBusy: true,
+  }).reason === 'gpu_backpressure',
+  'an incomplete fluid batch prevents another GPU submission',
+);
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 100,
+    previousFrameAtMs: 92,
+    lastFluidSubmitAtMs: 40,
+    handStatePending: false,
+    fluidGpuBusy: true,
+  }).rebaseFluidClock,
+  'GPU backpressure discards stale simulation debt instead of bursting it after the queue drains',
 );
 assert(
   decideLiveHandFrameWork({

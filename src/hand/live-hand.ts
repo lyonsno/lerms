@@ -28,6 +28,7 @@ import {
   LIVE_HAND_FLUID_PIXEL_RATIO_CAP,
   decideLiveHandFrameWork,
   initializeFluidDeferralClock,
+  planLiveFluidSimulationCatchUp,
   shouldKeepHandPresentationPriority,
   type LiveHandFrameWorkReason,
 } from './live-hand-frame-budget.js';
@@ -115,6 +116,14 @@ let fluidInitialization: Promise<FingerFluidSolver> | null = null;
 let fluidError: string | null = null;
 let latestFluidPacket: LiveFingerFluidPacket | null = null;
 let fluidStepCount = 0;
+let fluidSubmitCount = 0;
+let fluidCompletedSubmitCount = 0;
+let fluidSubmittedSimulationAdvanceMs = 0;
+let fluidCompletedSimulationAdvanceMs = 0;
+let fluidClockStartedAt = 0;
+let fluidGpuBusy = false;
+let fluidGpuCompletionGeneration = 0;
+let fluidGpuCompletionError: string | null = null;
 let lastAnimationFrameAt = 0;
 let lastFluidSubmitAt = 0;
 let captureWorker: Worker | null = null;
@@ -125,11 +134,13 @@ const combinedCpuSubmitMs: number[] = [];
 const handRenderCpuMs: number[] = [];
 const fluidStepCpuMs: number[] = [];
 const fluidRenderCpuMs: number[] = [];
+const fluidGpuQueueDrainMs: number[] = [];
 const fluidFrameDecisionCounts: Record<LiveHandFrameWorkReason, number> = {
   fluid_due: 0,
   fluid_liveness: 0,
   hand_state_priority: 0,
   hitch_recovery: 0,
+  gpu_backpressure: 0,
   cadence_wait: 0,
 };
 const captureAcquireMs: number[] = [];
@@ -584,9 +595,18 @@ async function start(): Promise<void> {
   lastFluidSubmitAt = 0;
   handPresentationPending = false;
   fluidStepCount = 0;
+  fluidSubmitCount = 0;
+  fluidCompletedSubmitCount = 0;
+  fluidSubmittedSimulationAdvanceMs = 0;
+  fluidCompletedSimulationAdvanceMs = 0;
+  fluidClockStartedAt = 0;
+  fluidGpuBusy = false;
+  fluidGpuCompletionGeneration += 1;
+  fluidGpuCompletionError = null;
   handRenderCpuMs.length = 0;
   fluidStepCpuMs.length = 0;
   fluidRenderCpuMs.length = 0;
+  fluidGpuQueueDrainMs.length = 0;
   for (const reason of Object.keys(fluidFrameDecisionCounts) as LiveHandFrameWorkReason[]) {
     fluidFrameDecisionCounts[reason] = 0;
   }
@@ -603,6 +623,8 @@ async function start(): Promise<void> {
 
 async function stop(): Promise<void> {
   running = false;
+  fluidGpuCompletionGeneration += 1;
+  fluidGpuBusy = false;
   captureRunGeneration += 1;
   if (captureTimer !== null) window.clearInterval(captureTimer);
   captureTimer = null;
@@ -658,13 +680,16 @@ function animate(now: number): void {
   if (!running && !fixtureMode) return;
   const cpuStartedAt = performance.now();
   const handStatePending = handPresentationPending;
+  if (fluidClockStartedAt <= 0) fluidClockStartedAt = now;
   lastFluidSubmitAt = initializeFluidDeferralClock(lastFluidSubmitAt, now);
   const frameDecision = decideLiveHandFrameWork({
     nowMs: now,
     previousFrameAtMs: lastAnimationFrameAt,
     lastFluidSubmitAtMs: lastFluidSubmitAt,
     handStatePending,
+    fluidGpuBusy,
   });
+  if (frameDecision.rebaseFluidClock) lastFluidSubmitAt = now;
   lastAnimationFrameAt = now;
   if (frameDecision.animationFrameIntervalMs > 0) {
     animationFrameIntervalsMs.push(frameDecision.animationFrameIntervalMs);
@@ -697,8 +722,11 @@ function animate(now: number): void {
     if (latestFluidPacket && !isLiveFingerFluidPacketFresh(latestFluidPacket)) {
       deactivateFluidInlets('hand_state_packet_expired');
     }
+    const catchUp = planLiveFluidSimulationCatchUp(frameDecision.fluidAgeMs);
     const fluidStepStartedAt = performance.now();
-    fluidSolver.step(1 / 30);
+    for (let step = 0; step < catchUp.stepCount; step += 1) {
+      fluidSolver.step(catchUp.stepSeconds);
+    }
     fluidStepCpuMs.push(performance.now() - fluidStepStartedAt);
     const fluidRenderStartedAt = performance.now();
     fluidSolver.render({
@@ -710,7 +738,25 @@ function animate(now: number): void {
     fluidRenderCpuMs.push(performance.now() - fluidRenderStartedAt);
     if (lastFluidSubmitAt > 0) fluidSubmitIntervalsMs.push(Math.max(0, now - lastFluidSubmitAt));
     lastFluidSubmitAt = now;
-    fluidStepCount += 1;
+    fluidStepCount += catchUp.stepCount;
+    fluidSubmitCount += 1;
+    fluidSubmittedSimulationAdvanceMs += catchUp.simulationAdvanceMs;
+    const completionGeneration = fluidGpuCompletionGeneration;
+    const submittedAt = performance.now();
+    const completedSimulationAdvanceTarget = fluidSubmittedSimulationAdvanceMs;
+    const completedSubmitCountTarget = fluidSubmitCount;
+    fluidGpuBusy = true;
+    void fluidSolver.getLiquidFireContactDescriptor().queue.onSubmittedWorkDone().then(() => {
+      if (completionGeneration !== fluidGpuCompletionGeneration) return;
+      fluidCompletedSimulationAdvanceMs = completedSimulationAdvanceTarget;
+      fluidCompletedSubmitCount = completedSubmitCountTarget;
+      fluidGpuQueueDrainMs.push(performance.now() - submittedAt);
+      fluidGpuBusy = false;
+    }).catch(error => {
+      if (completionGeneration !== fluidGpuCompletionGeneration) return;
+      fluidGpuCompletionError = error instanceof Error ? error.message : String(error);
+      fluidGpuBusy = false;
+    });
   }
   if (running) combinedCpuSubmitMs.push(performance.now() - cpuStartedAt);
 }
@@ -718,6 +764,8 @@ function animate(now: number): void {
 window.addEventListener('resize', resize);
 window.addEventListener('beforeunload', () => {
   running = false;
+  fluidGpuCompletionGeneration += 1;
+  fluidGpuBusy = false;
   captureRunGeneration += 1;
   capturePostAbortController?.abort();
   stateAbortController?.abort();
@@ -762,7 +810,23 @@ Object.assign(window, {
       inletContract: KAMINOS_FINGER_FLUID_LIVE_INLET_CONTRACT,
       adapterContract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
       defaultParticleCount: KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT,
-      stepCount: fluidStepCount,
+      submittedStepCount: fluidStepCount,
+      submittedBatchCount: fluidSubmitCount,
+      completedBatchCount: fluidCompletedSubmitCount,
+      submittedSimulationAdvanceMs: fluidSubmittedSimulationAdvanceMs,
+      completedSimulationAdvanceMs: fluidCompletedSimulationAdvanceMs,
+      wallElapsedMs: fluidClockStartedAt > 0 ? Math.max(0, performance.now() - fluidClockStartedAt) : 0,
+      submittedSimulationToWallTimeRatio: fluidClockStartedAt > 0
+        ? fluidSubmittedSimulationAdvanceMs / Math.max(1, performance.now() - fluidClockStartedAt)
+        : 0,
+      completedSimulationToWallTimeRatio: fluidClockStartedAt > 0
+        ? fluidCompletedSimulationAdvanceMs / Math.max(1, performance.now() - fluidClockStartedAt)
+        : 0,
+      submittedProgressAuthority: 'gpu_queue_submitted_not_completed',
+      completedProgressAuthority: 'gpu_queue_on_submitted_work_done',
+      gpuBatchPending: fluidGpuBusy,
+      gpuCompletionError: fluidGpuCompletionError,
+      gpuQueueDrainMs: distribution(fluidGpuQueueDrainMs),
       activeEmitterCount: latestFluidPacket?.emitters.filter(emitter => emitter.active).length || 0,
       animationFrameIntervalMs: distribution(animationFrameIntervalsMs),
       fluidSubmitIntervalMs: distribution(fluidSubmitIntervalsMs),

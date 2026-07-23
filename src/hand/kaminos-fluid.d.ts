@@ -19,6 +19,11 @@ declare module 'kaminos/finger-fluid-webgpu-core.js' {
       activeInletCount: number;
       firstActivation: boolean;
     };
+    getLiquidFireContactDescriptor(): {
+      queue: {
+        onSubmittedWorkDone(): Promise<void>;
+      };
+    };
     getDebugState(): Record<string, unknown>;
     destroy(): void;
   }
