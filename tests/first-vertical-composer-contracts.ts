@@ -102,6 +102,9 @@ const terrainSample: HillOfHillsTerrainSample = {
     topologyDeformation: 0,
     topologyVelocity: 0,
     topologyForce: 0,
+    topologyGrossForce: 0,
+    topologyOpposedForce: 0,
+    topologyContention: 0,
     semanticMemberships: {}
   },
   support: {
@@ -342,6 +345,9 @@ const terrain: HillOfHillsTerrain = {
     topologyDeformationRange: { min: 0, max: 0 },
     topologyVelocityRange: { min: 0, max: 0 },
     topologyForceRange: { min: 0, max: 0 },
+    topologyGrossForceRange: { min: 0, max: 0 },
+    topologyOpposedForceRange: { min: 0, max: 0 },
+    topologyContentionRange: { min: 0, max: 0 },
     hillSwellMembershipRange: { min: 0, max: 0 },
     hillSlumpMembershipRange: { min: 0, max: 0 },
     phaseInfluenceKinds: { none: 1 },

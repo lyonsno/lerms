@@ -8,7 +8,11 @@ import {
 import type { HillPreviewSettings } from './hill-of-hills-preview-settings.js';
 
 export const HILL_OF_HILLS_DIAGNOSTIC_PRESET_QUERY_KEY = 'hillPreset' as const;
-export const HILL_OF_HILLS_DIAGNOSTIC_PRESETS = ['continuity-hills', 'whole-field-topology'] as const;
+export const HILL_OF_HILLS_DIAGNOSTIC_PRESETS = [
+  'continuity-hills',
+  'whole-field-topology',
+  'topology-contention'
+] as const;
 
 export type HillOfHillsDiagnosticPreset = (typeof HILL_OF_HILLS_DIAGNOSTIC_PRESETS)[number];
 
@@ -27,6 +31,9 @@ export function applyHillDiagnosticParamPreset(
     return params;
   }
 
+  const contention = preset === 'topology-contention';
+  const wholeField = preset === 'whole-field-topology' || contention;
+
   return {
     ...params,
     ditchPhaseIntensity: 0,
@@ -34,21 +41,23 @@ export function applyHillDiagnosticParamPreset(
     trailPhaseIntensity: 0,
     trailPhaseLimit: 0,
     topologyDynamicsMode: 'persistent_pressure',
-    topologyPossibilityMode: preset === 'whole-field-topology' ? 'reauthored' : 'inherited',
-    topologyPhaseIntensity: 0.58,
-    topologyPhaseLimit: preset === 'whole-field-topology' ? 5 : 4,
-    topologyPhaseRadius: 1.55,
+    topologyPossibilityMode: wholeField ? 'reauthored' : 'inherited',
+    topologyPhaseIntensity: contention ? 1 : 0.58,
+    topologyPhaseLimit: contention ? 8 : wholeField ? 5 : 4,
+    topologyPhaseRadius: contention ? 2.8 : 1.55,
     topologyPhaseHeightScale: 0.82,
     topologyPhaseBasinBias: 0,
-    topologyPhaseValleyBias: 0,
+    topologyPhaseValleyBias: contention ? 1.05 : 0,
     topologyPhaseHillBias: 1.45,
     topologyPhaseRidgeBias: 0,
     topologyPhaseSaddleBias: 0,
-    topologyPhaseOverlap: 0.28,
-    topologyPhaseDetailScale: 0.75,
-    topologyPhaseDriftIntensity: preset === 'whole-field-topology' ? 0.92 : params.topologyPhaseDriftIntensity,
-    topologyPhaseDurationMs: 2600,
-    topologyEventClasses: continuityHillEventClasses(params.topologyEventClasses)
+    topologyPhaseOverlap: contention ? 0.5 : 0.28,
+    topologyPhaseDetailScale: contention ? 2 : 0.75,
+    topologyPhaseDriftIntensity: wholeField ? 0.92 : params.topologyPhaseDriftIntensity,
+    topologyPhaseDurationMs: contention ? 5200 : 2600,
+    topologyEventClasses: contention
+      ? contentionEventClasses(params.topologyEventClasses)
+      : continuityHillEventClasses(params.topologyEventClasses)
   };
 }
 
@@ -97,6 +106,52 @@ function continuityHillEventClasses(source: HillOfHillsTopologyEventClassConfigM
   }
 
   return next;
+}
+
+function contentionEventClasses(source: HillOfHillsTopologyEventClassConfigMap): HillOfHillsTopologyEventClassConfigMap {
+  const next = {} as HillOfHillsTopologyEventClassConfigMap;
+
+  for (const kind of HILL_OF_HILLS_TOPOLOGY_EVENT_KINDS) {
+    const eventClass = source[kind];
+    switch (kind) {
+      case 'hill_swell':
+        next[kind] = enabledContentionEventClass(eventClass, 1.15, 2, 'breath', 0.04, 1.18);
+        break;
+      case 'hill_slump':
+        next[kind] = enabledContentionEventClass(eventClass, 0.88, 0.72, 'creep', 0.38, 1.1);
+        break;
+      case 'valley_deepen':
+        next[kind] = enabledContentionEventClass(eventClass, 1.3, 1, 'surge', 0.12, 1.12);
+        break;
+      case 'ridge_lift':
+        next[kind] = enabledContentionEventClass(eventClass, 1.1, 1.15, 'breath', 0.22, 1);
+        break;
+      default:
+        next[kind] = disabledContinuityEventClass(eventClass);
+        break;
+    }
+  }
+
+  return next;
+}
+
+function enabledContentionEventClass(
+  eventClass: HillOfHillsTopologyEventClassConfig,
+  appetite: number,
+  force: number,
+  gesture: HillOfHillsTopologyEventClassConfig['gesture'],
+  phaseOffset: number,
+  spread: number
+): HillOfHillsTopologyEventClassConfig {
+  return {
+    ...eventClass,
+    enabled: true,
+    appetite,
+    force,
+    gesture,
+    phaseOffset,
+    spread
+  };
 }
 
 function hillContinuityEventClass(

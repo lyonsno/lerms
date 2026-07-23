@@ -1512,6 +1512,89 @@ assert(
     liveSignedContinuityTerrain.witness.hillSlumpMembershipRange.max > 0.01,
   'continuity-hills live preset exercises positive swell and negative slump world memory in one deterministic frame'
 );
+
+const persistentSingleEventTerrain = (kind: (typeof topologyEventKinds)[number]) =>
+  createHillOfHillsTerrain({
+    ...persistentSignedParams,
+    topologyPossibilityMode: 'reauthored',
+    topologyPhaseRadius: 2.8,
+    topologyPhaseTimeMs: persistentSignedParams.topologyPhaseDurationMs * 0.46,
+    topologyPhaseHillBias: kind === 'hill_swell' || kind === 'hill_slump' ? 2 : 0,
+    topologyPhaseValleyBias: kind === 'valley_deepen' || kind === 'valley_fill' ? 2 : 0,
+    topologyPhaseRidgeBias: kind === 'ridge_lift' || kind === 'ridge_shear' || kind === 'strata_reveal' ? 2 : 0,
+    topologyPhaseSaddleBias: kind === 'saddle_pinch' || kind === 'saddle_pass' ? 2 : 0,
+    topologyPhaseBasinBias: kind === 'basin_bloom' ? 2 : 0,
+    topologyEventClasses: Object.fromEntries(
+      topologyEventKinds.map((candidateKind) => [
+        candidateKind,
+        {
+          ...persistentSignedEventClasses[candidateKind],
+          enabled: candidateKind === kind,
+          appetite: candidateKind === kind ? 1.4 : 0,
+          force: candidateKind === kind ? 1.2 : 0,
+          gesture: 'breath',
+          phaseOffset: 0.04,
+          spread: 1.12
+        }
+      ])
+    ) as HillOfHillsTerrainParams['topologyEventClasses']
+  });
+const persistentValleyDeepen = persistentSingleEventTerrain('valley_deepen');
+const persistentRidgeLift = persistentSingleEventTerrain('ridge_lift');
+const persistentHeightScale =
+  0.8 + persistentValleyDeepen.params.hillHeight * 0.22 + persistentValleyDeepen.params.valleyHeight * 0.18;
+const persistentDirectBypassDelta = (terrain: HillOfHillsTerrain) =>
+  terrain.samples.reduce(
+    (maximum, terrainSample) =>
+      Math.max(
+        maximum,
+        Math.abs(
+          terrainSample.phaseInfluence.topologyHeightDelta -
+            terrainSample.phaseInfluence.topologyDeformation / persistentHeightScale
+        )
+      ),
+    0
+  );
+assert(
+  persistentValleyDeepen.witness.topologyForceRange.min < -0.01 &&
+    persistentDirectBypassDelta(persistentValleyDeepen) < 0.0001,
+  `persistent valley-deepen reaches world memory as negative force without a direct-synthesis height bypass; force ${persistentValleyDeepen.witness.topologyForceRange.min}..${persistentValleyDeepen.witness.topologyForceRange.max}, bypass ${persistentDirectBypassDelta(persistentValleyDeepen)}`
+);
+assert(
+  persistentRidgeLift.witness.topologyForceRange.max > 0.01 &&
+    persistentDirectBypassDelta(persistentRidgeLift) < 0.0001,
+  'persistent ridge-lift reaches world memory as positive force without a direct-synthesis height bypass'
+);
+
+const persistentContestedTerrain = createHillOfHillsTerrain({
+  ...liveSignedContinuityParams,
+  topologyPhaseRadius: 4,
+  topologyPhaseOverlap: 0.5,
+  topologyPhaseTimeMs: liveSignedContinuityParams.topologyPhaseDurationMs * 0.25
+});
+const persistentContentionWitness = persistentContestedTerrain.witness as typeof persistentContestedTerrain.witness & {
+  topologyGrossForceRange?: { min: number; max: number };
+  topologyOpposedForceRange?: { min: number; max: number };
+  topologyContentionRange?: { min: number; max: number };
+};
+const persistentContentionCell = persistentContestedTerrain.samples.find(
+  (terrainSample) =>
+    terrainSample.phaseInfluence.topologyOpposedForce > 0.01 &&
+    terrainSample.phaseInfluence.topologyGrossForce >
+      Math.abs(terrainSample.phaseInfluence.topologyForce) + 0.005
+);
+assert(
+  (persistentContestedTerrain.witness.activePhaseKinds.hill_swell ?? 0) > 0 &&
+    (persistentContestedTerrain.witness.activePhaseKinds.hill_slump ?? 0) > 0,
+  'contention fixture contains simultaneous signed terrain programs'
+);
+assert(
+  Boolean(persistentContentionCell) &&
+    (persistentContentionWitness.topologyGrossForceRange?.max ?? 0) > 0.01 &&
+    (persistentContentionWitness.topologyOpposedForceRange?.max ?? 0) > 0.01 &&
+    (persistentContentionWitness.topologyContentionRange?.max ?? 0) > 0.01,
+  `persistent topology exposes gross, opposed, and normalized contention instead of hiding cancellation in net force; net ${persistentContestedTerrain.witness.topologyForceRange.min}..${persistentContestedTerrain.witness.topologyForceRange.max}, gross ${persistentContentionWitness.topologyGrossForceRange?.max}, opposed ${persistentContentionWitness.topologyOpposedForceRange?.max}, contention ${persistentContentionWitness.topologyContentionRange?.max}`
+);
 assert(
   maxDynamics(persistentTail, 'topologyForce') < maxDynamics(persistentPeak, 'topologyForce'),
   'withdrawing a hill force lowers force during the gesture tail'
