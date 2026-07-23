@@ -103,6 +103,7 @@ export interface HillOfHillsProducerTrafficGrid {
 
 export interface HillOfHillsProducerTrafficField extends HillOfHillsProducerTrafficGrid {
   schema: typeof HILL_OF_HILLS_PRODUCER_TRAFFIC_FIELD_SCHEMA;
+  sourceLineageKey: string;
   values: readonly number[];
   admittedHistoryChecksums: readonly string[];
   admittedEpisodeIds: readonly string[];
@@ -283,11 +284,14 @@ export function validateHillOfHillsProducerContactHistory(
 }
 
 export function createEmptyHillOfHillsProducerTrafficField(
-  grid: HillOfHillsProducerTrafficGrid
+  grid: HillOfHillsProducerTrafficGrid,
+  sourceLineageKey = 'unbound'
 ): HillOfHillsProducerTrafficField {
   validateGrid(grid);
+  if (!sourceLineageKey.trim()) throw new Error('producer traffic source lineage key is required');
   const field: HillOfHillsProducerTrafficField = {
     schema: HILL_OF_HILLS_PRODUCER_TRAFFIC_FIELD_SCHEMA,
+    sourceLineageKey,
     ...grid,
     values: new Array(grid.xCount * grid.zCount).fill(0),
     admittedHistoryChecksums: [],
@@ -473,6 +477,9 @@ function validateTrafficField(field: HillOfHillsProducerTrafficField): void {
     throw new Error(`producer traffic field schema must be ${HILL_OF_HILLS_PRODUCER_TRAFFIC_FIELD_SCHEMA}`);
   }
   validateGrid(field);
+  if (!field.sourceLineageKey?.trim()) {
+    throw new Error('producer traffic field source lineage key is required');
+  }
   if (field.values.length !== field.xCount * field.zCount || field.values.some((value) => !Number.isFinite(value) || value < 0)) {
     throw new Error('producer traffic field values must match its grid and remain finite and nonnegative');
   }
@@ -504,6 +511,7 @@ function trafficFieldChecksum(field: HillOfHillsProducerTrafficField): string {
       field.xMax,
       field.zMin,
       field.zMax,
+      field.sourceLineageKey,
       field.admittedHistoryChecksums.join(','),
       ...field.values.map((value) => value.toFixed(8))
     ].join('|')

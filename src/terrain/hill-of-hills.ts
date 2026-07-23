@@ -530,6 +530,7 @@ export interface HillOfHillsLayerTileCache {
   topologyDynamicsKey?: string;
   persistentTopologyField?: PersistentTopologyField;
   producerTrafficField?: HillOfHillsProducerTrafficField;
+  producerTrafficSourceLineageKey?: string;
   lastSourceFrameId?: string;
   lastSampleChecksum?: string;
   lastTopologyChecksum?: string;
@@ -617,6 +618,7 @@ export interface HillOfHillsWitness {
   topologyPossibilityChecksum: string;
   topologyPossibilityRange: Range;
   producerTrafficFieldSchema: typeof HILL_OF_HILLS_PRODUCER_TRAFFIC_FIELD_SCHEMA;
+  producerTrafficSourceLineageKey: string;
   producerTrafficFieldChecksum: string;
   producerTrafficFieldRange: Range;
   producerTrafficAdmittedEpisodeCount: number;
@@ -1082,7 +1084,10 @@ export function createHillOfHillsLayerTileCache(): HillOfHillsLayerTileCache {
   };
 }
 
-function emptyProducerTrafficFieldFor(params: HillOfHillsTerrainParams): HillOfHillsProducerTrafficField {
+function emptyProducerTrafficFieldFor(
+  params: HillOfHillsTerrainParams,
+  sourceLineageKey = 'unbound'
+): HillOfHillsProducerTrafficField {
   return createEmptyHillOfHillsProducerTrafficField({
     xCount: Math.min(24, Math.max(8, params.gridResolutionX)),
     zCount: Math.min(32, Math.max(8, params.gridResolutionZ)),
@@ -1090,28 +1095,31 @@ function emptyProducerTrafficFieldFor(params: HillOfHillsTerrainParams): HillOfH
     xMax: params.width * 0.5,
     zMin: -params.length * 0.5,
     zMax: params.length * 0.5
-  });
+  }, sourceLineageKey);
 }
 
 function producerTrafficGridMatches(
   field: HillOfHillsProducerTrafficField,
-  params: HillOfHillsTerrainParams
+  params: HillOfHillsTerrainParams,
+  sourceLineageKey: string
 ): boolean {
-  const expected = emptyProducerTrafficFieldFor(params);
+  const expected = emptyProducerTrafficFieldFor(params, sourceLineageKey);
   return (
     field.xCount === expected.xCount &&
     field.zCount === expected.zCount &&
     field.xMin === expected.xMin &&
     field.xMax === expected.xMax &&
     field.zMin === expected.zMin &&
-    field.zMax === expected.zMax
+    field.zMax === expected.zMax &&
+    field.sourceLineageKey === sourceLineageKey
   );
 }
 
 function assertProducerContactHistoryTargetsPriorHill(
   cache: HillOfHillsLayerTileCache,
   history: HillOfHillsProducerContactHistory,
-  topologyDynamicsKey: string
+  topologyDynamicsKey: string,
+  currentSourceLineageKey: string
 ): void {
   if (!cache.lastSourceFrameId || !cache.lastSampleChecksum || !cache.lastTopologyChecksum) {
     throw new Error('producer contact history requires a witnessed prior Hill frame');
@@ -1126,6 +1134,9 @@ function assertProducerContactHistoryTargetsPriorHill(
   ) {
     throw new Error('producer contact history targets a different or stale Hill witness');
   }
+  if (cache.producerTrafficSourceLineageKey !== currentSourceLineageKey) {
+    throw new Error('producer contact history cannot cross the current Hill source lineage');
+  }
 }
 
 export function createHillOfHillsTerrainWithCache(
@@ -1137,15 +1148,33 @@ export function createHillOfHillsTerrainWithCache(
   const fallbackStatus = normalizeFallbackStatus(sourceOptions);
   const source = createTerrainSource(effectiveParams, sourceOptions, fallbackStatus);
   const topologyDynamicsKey = persistentTopologyTrajectoryKey(effectiveParams);
+  const stableLayerKey = stableLayerCacheKey(effectiveParams);
+  const producerTrafficSourceLineageKey = checksum(
+    JSON.stringify({
+      authority: source.authority,
+      route: source.route,
+      backend: source.backend ?? 'none',
+      explicitConfigId: sourceOptions.configId ?? 'implicit-config-family'
+    })
+  );
   if (sourceOptions.producerContactHistory) {
-    assertProducerContactHistoryTargetsPriorHill(cache, sourceOptions.producerContactHistory, topologyDynamicsKey);
+    assertProducerContactHistoryTargetsPriorHill(
+      cache,
+      sourceOptions.producerContactHistory,
+      topologyDynamicsKey,
+      producerTrafficSourceLineageKey
+    );
   }
   const reusableProducerTrafficField =
-    cache.topologyDynamicsKey === topologyDynamicsKey ? cache.producerTrafficField : undefined;
+    cache.topologyDynamicsKey === topologyDynamicsKey &&
+    cache.producerTrafficSourceLineageKey === producerTrafficSourceLineageKey
+      ? cache.producerTrafficField
+      : undefined;
   let producerTrafficField =
-    reusableProducerTrafficField && producerTrafficGridMatches(reusableProducerTrafficField, effectiveParams)
+    reusableProducerTrafficField &&
+    producerTrafficGridMatches(reusableProducerTrafficField, effectiveParams, producerTrafficSourceLineageKey)
       ? reusableProducerTrafficField
-      : emptyProducerTrafficFieldFor(effectiveParams);
+      : emptyProducerTrafficFieldFor(effectiveParams, producerTrafficSourceLineageKey);
   if (sourceOptions.producerContactHistory) {
     producerTrafficField = admitHillOfHillsProducerContactHistory(
       producerTrafficField,
@@ -1155,12 +1184,12 @@ export function createHillOfHillsTerrainWithCache(
   const reusablePersistentField =
     effectiveParams.topologyDynamicsMode === 'persistent_pressure' &&
     cache.topologyDynamicsKey === topologyDynamicsKey &&
+    cache.producerTrafficSourceLineageKey === producerTrafficSourceLineageKey &&
     cache.persistentTopologyField &&
     cache.persistentTopologyField.timeMs <= effectiveParams.topologyPhaseTimeMs
       ? cache.persistentTopologyField
       : undefined;
   const phaseState = createPhaseState(effectiveParams, reusablePersistentField, producerTrafficField);
-  const stableLayerKey = stableLayerCacheKey(effectiveParams);
   const stableLayerChecksum = checksum(stableLayerKey);
   const sourceKey = sourceCacheKey(source);
   const stableInvalidated =
@@ -1210,6 +1239,7 @@ export function createHillOfHillsTerrainWithCache(
   cache.topologyDynamicsKey = topologyDynamicsKey;
   cache.persistentTopologyField = phaseState.persistentTopologyField;
   cache.producerTrafficField = producerTrafficField;
+  cache.producerTrafficSourceLineageKey = producerTrafficSourceLineageKey;
   cache.stableHeightfield = stableHeightfield;
   cache.samples = samples;
   cache.previousDirtyTiles = dirtyRecomputeWitness(effectiveParams, phaseState).dirtyTiles;
@@ -5184,6 +5214,7 @@ function createWitness(
     topologyPossibilityChecksum: phaseState.topologyPossibilityChecksum,
     topologyPossibilityRange: phaseState.topologyPossibilityRange,
     producerTrafficFieldSchema: producerTrafficField.schema,
+    producerTrafficSourceLineageKey: producerTrafficField.sourceLineageKey,
     producerTrafficFieldChecksum: producerTrafficField.checksum,
     producerTrafficFieldRange: producerTrafficField.range,
     producerTrafficAdmittedEpisodeCount: producerTrafficField.admittedEpisodeCount,

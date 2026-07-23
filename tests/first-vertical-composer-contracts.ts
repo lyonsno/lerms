@@ -341,6 +341,7 @@ const terrain: HillOfHillsTerrain = {
     topologyPossibilityChecksum: 'inherited',
     topologyPossibilityRange: { min: 0, max: 0 },
     producerTrafficFieldSchema: 'lerms.hill-of-hills.producer-traffic-field.v0',
+    producerTrafficSourceLineageKey: 'unbound-fixture',
     producerTrafficFieldChecksum: 'empty-fixture',
     producerTrafficFieldRange: { min: 0, max: 0 },
     producerTrafficAdmittedEpisodeCount: 0,

@@ -283,4 +283,64 @@ assert.throws(
   'history from another Hill observation fails loud'
 );
 
+const crossLineageAdmissionCache = createHillOfHillsLayerTileCache();
+const sourceABefore = createHillOfHillsTerrainWithCache(crossLineageAdmissionCache, terrainParams, {
+  route: 'hill-of-hills/source-a',
+  frameId: 'hill-a-frame-0',
+  backend: 'deterministic-cpu-heightfield',
+  configId: 'hill-a'
+});
+const sourceAHistory = historyForPriorHill(-1.25, 'source-a-crossing', sourceABefore);
+assert.throws(
+  () =>
+    createHillOfHillsTerrainWithCache(
+      crossLineageAdmissionCache,
+      { ...terrainParams, topologyPhaseTimeMs: 120 },
+      {
+        route: 'hill-of-hills/source-b',
+        frameId: 'hill-b-frame-0',
+        backend: 'deterministic-cpu-heightfield',
+        configId: 'hill-b',
+        producerContactHistory: sourceAHistory
+      }
+    ),
+  /current Hill source lineage/,
+  'history targeting prior Hill A cannot be admitted while generating source B'
+);
+
+const sourceSwitchCache = createHillOfHillsLayerTileCache();
+const sourceSwitchBefore = createHillOfHillsTerrainWithCache(sourceSwitchCache, terrainParams, {
+  route: 'hill-of-hills/source-a',
+  frameId: 'hill-a-frame-0',
+  configId: 'hill-a'
+});
+const sourceSwitchHistory = historyForPriorHill(-1.25, 'source-switch-crossing', sourceSwitchBefore);
+const sourceSwitchAdmitted = createHillOfHillsTerrainWithCache(
+  sourceSwitchCache,
+  { ...terrainParams, topologyPhaseTimeMs: 120 },
+  {
+    route: 'hill-of-hills/source-a',
+    frameId: 'hill-a-frame-1',
+    configId: 'hill-a',
+    producerContactHistory: sourceSwitchHistory
+  }
+);
+assert.equal(sourceSwitchAdmitted.witness.producerTrafficAdmittedEpisodeCount, 1);
+const sourceBAfterSwitch = createHillOfHillsTerrainWithCache(
+  sourceSwitchCache,
+  { ...terrainParams, topologyPhaseTimeMs: 240 },
+  {
+    route: 'hill-of-hills/source-b',
+    frameId: 'hill-b-frame-0',
+    configId: 'hill-b'
+  }
+);
+assert.equal(sourceBAfterSwitch.witness.producerTrafficAdmittedEpisodeCount, 0);
+assert.equal(sourceBAfterSwitch.witness.producerTrafficFieldRange.max, 0);
+assert.notEqual(
+  sourceBAfterSwitch.witness.producerTrafficFieldChecksum,
+  sourceSwitchAdmitted.witness.producerTrafficFieldChecksum,
+  'a different current Hill lineage cannot inherit old-Hill traffic'
+);
+
 console.log('hill of hills producer contact history contracts ok');
