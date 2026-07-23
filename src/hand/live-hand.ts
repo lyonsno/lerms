@@ -18,9 +18,11 @@ import {
   type RuntimeRouteTruth,
 } from './live-hand-contract.js';
 import {
+  KAMINOS_FLUID_REVISION,
   LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
   LIVE_FLUID_CAMERA,
   createLiveFingerFluidEmitterPacket,
+  isLiveFingerFluidPacketFresh,
   type LiveFingerFluidPacket,
 } from './live-finger-fluid.js';
 
@@ -141,7 +143,7 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
   const route = frame?.effectiveRoute || 'awaiting live effective route';
   const topology = frame ? `${frame.vertexCount}v / ${frame.faceCount}f` : 'awaiting MANO topology';
   const fluid = fluidSolver?.available
-    ? ` | fluid ${KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT}p`
+    ? ` | fluid ${KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT}p @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
     : fluidError ? ' | fluid error' : ' | fluid pending';
   routeTruth.textContent = `${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fluid}`;
 }
@@ -186,6 +188,20 @@ function updateHandSurface(frame: NormalizedManoFrame): void {
     fluidSolver.setLiveInletPacket(latestFluidPacket);
   }
   setRouteTruth(frame);
+}
+
+function deactivateFluidInlets(reason: string): void {
+  latestFluidPacket = null;
+  fluidSolver?.setLiveInletPacket({
+    packet_id: `lerms-hand-fluid-invalid-${Date.now()}`,
+    route_identity: LIVE_HAND_ROUTE,
+    adapter_contract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
+    source_route: LIVE_HAND_ROUTE,
+    simulation_authority: 'invalid',
+    authority: { simulation_safe: false, stale: true, reason },
+    emitters: [],
+  });
+  setRouteTruth();
 }
 
 async function ensureFluidSolver(): Promise<FingerFluidSolver> {
@@ -358,6 +374,7 @@ function applyState(state: Record<string, unknown>): void {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('fresh live authority') || message.includes('MANO surface')) {
+      deactivateFluidInlets('invalid_or_stale_hand_state');
       setStatus(`waiting for live MANO | ${message}`);
       return;
     }
@@ -376,6 +393,7 @@ async function streamState(): Promise<void> {
       applyState(state);
     } catch (error) {
       if (!running || (error instanceof DOMException && error.name === 'AbortError')) return;
+      deactivateFluidInlets('hand_state_delivery_error');
       setStatus(error instanceof Error ? error.message : String(error), 'error');
       await new Promise(resolve => window.setTimeout(resolve, 100));
     } finally {
@@ -423,15 +441,7 @@ async function stop(): Promise<void> {
   stream?.getTracks().forEach(track => track.stop());
   stream = null;
   video.srcObject = null;
-  latestFluidPacket = null;
-  fluidSolver?.setLiveInletPacket({
-    packet_id: `lerms-hand-fluid-stopped-${Date.now()}`,
-    route_identity: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
-    source_route: LIVE_HAND_ROUTE,
-    simulation_authority: 'invalid',
-    authority: { simulation_safe: false, stale: true },
-    emitters: [],
-  });
+  deactivateFluidInlets('hand_control_stopped');
   await flushLatencySamples();
   try {
     await runtimeFetch('/sidecar/stop', { method: 'POST' });
@@ -478,6 +488,9 @@ function animate(now: number): void {
   if (handMesh.visible && now - lastLiveAt > 1200 && running) handMaterial.emissive.setHex(0x101c1c);
   else handMaterial.emissive.setHex(0x000000);
   if (running && fluidSolver?.available) {
+    if (latestFluidPacket && !isLiveFingerFluidPacketFresh(latestFluidPacket)) {
+      deactivateFluidInlets('hand_state_packet_expired');
+    }
     const frameIntervalMs = combinedLastFrameAt > 0 ? now - combinedLastFrameAt : 0;
     combinedLastFrameAt = now;
     if (frameIntervalMs > 0) combinedFrameIntervalsMs.push(frameIntervalMs);
@@ -520,7 +533,9 @@ Object.assign(window, {
     meshVisible: handMesh.visible,
     vertexCount: handGeometry.getAttribute('position')?.count || 0,
     faceCount: handGeometry.index ? handGeometry.index.count / 3 : 0,
-    effectiveRoute: fixtureMode ? 'recorded_wilor_mano_fixture' : LIVE_HAND_ROUTE,
+    effectiveRoute: fixtureMode
+      ? 'recorded_wilor_mano_fixture'
+      : latestFluidPacket?.source_route || null,
     runtimeRoute,
     eventSequence: lastStateSequence,
     deliveryMode: 'long_poll',
@@ -529,6 +544,7 @@ Object.assign(window, {
     benchmarkError: lastBenchmarkError,
     benchmark: latencySamples.length ? summarizeLiveHandLatency(latencySamples) : null,
     fluid: fluidSolver?.available ? {
+      pinnedRevision: KAMINOS_FLUID_REVISION,
       inletContract: KAMINOS_FINGER_FLUID_LIVE_INLET_CONTRACT,
       adapterContract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
       defaultParticleCount: KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT,

@@ -1,7 +1,9 @@
 import {
   FULL_EXTENSION_THRESHOLD,
+  KAMINOS_FLUID_REVISION,
   LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
   createLiveFingerFluidEmitterPacket,
+  isLiveFingerFluidPacketFresh,
 } from '../src/hand/live-finger-fluid.js';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -41,12 +43,17 @@ const packet = createLiveFingerFluidEmitterPacket({
 });
 
 assert(LIVE_FINGER_FLUID_ADAPTER_CONTRACT === 'hand-state-distal-axis-full-extension-emitters-v1', 'identifies the LERMS live adapter');
+assert(KAMINOS_FLUID_REVISION === 'b614cb1b8bcd6442aebe32ca1da46bf7c0aeb528', 'exposes the exact pinned Kaminos fluid revision');
 assert(FULL_EXTENSION_THRESHOLD === 0.86, 'retains the accepted full-extension gate');
 assert(packet.simulation_authority === 'live_simulation', 'fresh native frames carry live simulation authority');
+assert(packet.route_identity === 'native_wilor_mini_mlx_detector_sidecar_live', 'packet route identity preserves the effective native source');
+assert(packet.adapter_contract === LIVE_FINGER_FLUID_ADAPTER_CONTRACT, 'packet identifies the LERMS hand-to-fluid adapter separately');
 assert(packet.authority.simulation_safe === true && packet.authority.stale === false, 'fresh native frames pass the solver authority gate');
 assert(packet.emitters.length === 5, 'publishes one emitter per finger');
 assert(packet.emitters.every(emitter => emitter.active && emitter.emission_state === 'jet'), 'fully extended fingers emit jets');
 assert(Math.abs(packet.emitters[1].aim_world[1]) > 0.98, 'index jet follows its transformed distal-to-tip axis');
+assert(isLiveFingerFluidPacketFresh(packet, 1_040), 'a newly consumed packet remains live');
+assert(!isLiveFingerFluidPacketFresh(packet, 1_751), 'an accepted packet expires when no newer hand state arrives');
 
 const bent: [number, number, number][] = keypoints.map(point => [...point]);
 bent[8] = [-0.20, 0.22, 0];

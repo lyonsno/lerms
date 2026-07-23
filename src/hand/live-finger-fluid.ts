@@ -1,6 +1,7 @@
 import type { ManoDisplayTransform } from './live-hand-contract.js';
 
 export const LIVE_FINGER_FLUID_ADAPTER_CONTRACT = 'hand-state-distal-axis-full-extension-emitters-v1' as const;
+export const KAMINOS_FLUID_REVISION = 'b614cb1b8bcd6442aebe32ca1da46bf7c0aeb528' as const;
 export const FULL_EXTENSION_THRESHOLD = 0.86 as const;
 export const LIVE_FLUID_CAMERA = Object.freeze({
   fovRadians: Math.PI / 3.15,
@@ -54,7 +55,8 @@ export interface LiveFingerFluidEmitter {
 
 export interface LiveFingerFluidPacket {
   packet_id: string;
-  route_identity: typeof LIVE_FINGER_FLUID_ADAPTER_CONTRACT;
+  route_identity: string;
+  adapter_contract: typeof LIVE_FINGER_FLUID_ADAPTER_CONTRACT;
   source_route: string;
   source_frame_id: string;
   timestamp_ms: number;
@@ -62,6 +64,16 @@ export interface LiveFingerFluidPacket {
   simulation_authority: 'live_simulation' | 'invalid';
   authority: { simulation_safe: boolean; stale: boolean; reason: string | null };
   emitters: LiveFingerFluidEmitter[];
+}
+
+export function isLiveFingerFluidPacketFresh(
+  packet: LiveFingerFluidPacket,
+  nowMs = Date.now(),
+): boolean {
+  return packet.simulation_authority === 'live_simulation'
+    && packet.authority.simulation_safe
+    && !packet.authority.stale
+    && Math.max(0, nowMs - packet.timestamp_ms) <= MAX_LIVE_SAMPLE_AGE_MS;
 }
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
@@ -155,7 +167,8 @@ export function createLiveFingerFluidEmitterPacket(frame: LiveFingerFluidFrame):
   });
   return {
     packet_id: `lerms-hand-fluid-${frame.eventSequence}`,
-    route_identity: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
+    route_identity: frame.effectiveRoute,
+    adapter_contract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
     source_route: frame.effectiveRoute,
     source_frame_id: frame.frameId,
     timestamp_ms: frame.captureTimestampMs,
