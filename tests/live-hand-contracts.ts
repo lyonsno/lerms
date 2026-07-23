@@ -1,0 +1,124 @@
+import {
+  LIVE_HAND_ROUTE,
+  assertLiveRuntimeHealth,
+  normalizeLiveManoFrame,
+  normalizeManoSurface,
+  summarizeLiveHandLatency,
+} from '../src/hand/live-hand-contract.js';
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function assertThrows(fn: () => void, expectedMessage: string): void {
+  try {
+    fn();
+  } catch (error) {
+    assert(error instanceof Error, 'expected an Error');
+    assert(error.message.includes(expectedMessage), `expected "${error.message}" to include "${expectedMessage}"`);
+    return;
+  }
+  throw new Error(`expected function to throw "${expectedMessage}"`);
+}
+
+const vertices = Array.from({ length: 778 }, (_, index) => [
+  index === 0 ? -2 : index === 1 ? 2 : 0,
+  index === 2 ? -1 : index === 3 ? 1 : 0,
+  index === 4 ? -0.5 : index === 5 ? 0.5 : 0,
+]);
+const faces = Array.from({ length: 1538 }, (_, index) => [index % 778, (index + 1) % 778, (index + 2) % 778]);
+
+const health = {
+  runtimeOwner: 'hand-state-runtime',
+  sidecarRuntimeConfig: { burstMode: 'chunked', chunkSegments: 7, chunkYieldMs: 0.2 },
+};
+const healthTruth = assertLiveRuntimeHealth(health);
+assert(healthTruth.burstMode === 'chunked', 'preserves chunked route identity');
+assert(healthTruth.chunkSegments === 7, 'preserves effective chunk segment count');
+assert(healthTruth.chunkYieldMs === 0.2, 'preserves effective chunk yield');
+
+assertThrows(
+  () => assertLiveRuntimeHealth({ ...health, runtimeOwner: 'perceptasia' }),
+  'runtime owner',
+);
+
+const recordedSurface = normalizeManoSurface({ available: true, vertices, faces });
+assert(recordedSurface.vertexCount === 778 && recordedSurface.faceCount === 1538, 'recorded fixture uses the real topology contract');
+const objectVertices = vertices.map(([x, y, z]) => ({ x, y, z }));
+const objectSurface = normalizeManoSurface({ available: true, vertices: objectVertices, faces });
+assert(objectSurface.positions[0] < 0 && objectSurface.positions[3] > 0, 'accepts runtime object-form MANO vertices');
+
+const state = {
+  runtimeOwner: 'hand-state-runtime',
+  eventSequence: 42,
+  frame: {
+    authority: { sourceAuthority: 'live_simulation', freshness: 'fresh' },
+    source: {
+      requestedRoute: LIVE_HAND_ROUTE,
+      effectiveRoute: LIVE_HAND_ROUTE,
+      model: 'WiLoR-MLX+HandDetector-MLX',
+      deviceRoute: 'mlx',
+      dtypeRoute: 'float16',
+    },
+    frame: { frameId: 'frame-42', captureTimestampMs: 1000 },
+    timing: { modelLatencyMs: 61, cameraFrameAgeMs: 79 },
+    hand: { confidence: 0.95, handedness: 'right' },
+    mano: { available: true, vertexCount: 778, faceCount: 1538, vertices, faces },
+    diagnostics: { burstMode: 'chunked', chunkSegments: 7, chunkYieldMs: 0.2 },
+  },
+};
+
+const normalized = normalizeLiveManoFrame(state);
+assert(normalized.vertexCount === 778, 'accepts complete MANO vertex payload');
+assert(normalized.faceCount === 1538, 'accepts complete MANO topology');
+assert(normalized.positions[0] < 0 && normalized.positions[3] > 0, 'preserves display x instead of mirroring it');
+assert(normalized.positions[7] > normalized.positions[10], 'inverts camera y into display y');
+assert(normalized.burstMode === 'chunked' && normalized.chunkSegments === 7, 'carries chunk identity with the frame');
+
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...state,
+    frame: { ...state.frame, source: { ...state.frame.source, effectiveRoute: 'browser_mediapipe_fallback' } },
+  }),
+  'effective route',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...state,
+    frame: { ...state.frame, mano: { ...state.frame.mano, vertices: vertices.slice(0, 777), vertexCount: 777 } },
+  }),
+  '778 vertices',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...state,
+    frame: { ...state.frame, authority: { sourceAuthority: 'recorded_fixture', freshness: 'fresh' } },
+  }),
+  'live authority',
+);
+
+const sample = {
+  frameId: 'frame-42',
+  runtimeOwner: 'hand-state-runtime',
+  sourceAuthority: 'live_simulation',
+  effectiveRoute: LIVE_HAND_ROUTE,
+  manoVertexCount: 778,
+  manoFaceCount: 1538,
+  modelLatencyMs: 61,
+  captureToRenderCompleteMs: 92,
+};
+const summary = summarizeLiveHandLatency([
+  sample,
+  { ...sample, frameId: 'frame-43', modelLatencyMs: 63, captureToRenderCompleteMs: 97 },
+  { ...sample, frameId: 'frame-44', modelLatencyMs: 70, captureToRenderCompleteMs: 110 },
+]);
+assert(summary.sampleCount === 3, 'counts live samples');
+assert(summary.modelLatencyMs.p50 === 63, 'reports model p50');
+assert(summary.captureToRenderCompleteMs.p95 === 110, 'reports capture-to-render p95');
+
+assertThrows(
+  () => summarizeLiveHandLatency([{ ...sample, effectiveRoute: 'unknown' }]),
+  'effective route',
+);
+
+console.log('live hand contracts ok');
