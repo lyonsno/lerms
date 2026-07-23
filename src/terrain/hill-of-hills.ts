@@ -349,6 +349,20 @@ export interface HillOfHillsPhaseInfluence {
   episodeId?: string;
 }
 
+export function hillPhaseMembershipAmount(
+  influence: HillOfHillsPhaseInfluence,
+  ...kinds: readonly HillOfHillsTopologyPhaseKind[]
+): number {
+  let combined = 0;
+  for (const kind of kinds) {
+    const amount =
+      influence.semanticMemberships[kind] ??
+      (influence.kind === kind ? influence.topologyAmount : 0);
+    combined = 1 - (1 - combined) * (1 - clamp(amount, 0, 1));
+  }
+  return clamp(combined, 0, 1);
+}
+
 export interface HillOfHillsSupportSample {
   supportClass: HillOfHillsSupportClass;
   mappingMode: HillOfHillsSupportMappingMode;
@@ -3279,6 +3293,7 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
   let topologyAmount = 0;
   let topologyHeightDeltaSum = 0;
   let topologyWeight = 0;
+  const topologySemanticMemberships: Partial<Record<HillOfHillsTopologyPhaseKind, number>> = {};
 
   for (const episode of phaseState.activeEpisodes) {
     if (episode.kind === 'trail_forming') {
@@ -3297,6 +3312,10 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
     if (episode.kind !== 'ditch_forming') {
       const influence = topologyInfluenceAtEpisode(episode, x, z);
       if (influence.amount > 0) {
+        topologySemanticMemberships[episode.kind] =
+          1 -
+          (1 - (topologySemanticMemberships[episode.kind] ?? 0)) *
+            (1 - influence.amount);
         topologyAmount = 1 - (1 - topologyAmount) * (1 - influence.amount);
         if (phaseState.topologyDynamicsMode !== 'persistent_pressure') {
           topologyHeightDeltaSum += influence.heightDelta;
@@ -3333,7 +3352,9 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
   let topologyGrossForce = 0;
   let topologyOpposedForce = 0;
   let topologyContention = 0;
-  let semanticMemberships: Partial<Record<HillOfHillsTopologyPhaseKind, number>> = {};
+  let semanticMemberships: Partial<Record<HillOfHillsTopologyPhaseKind, number>> = {
+    ...topologySemanticMemberships
+  };
 
   if (phaseState.topologyDynamicsMode === 'persistent_pressure' && phaseState.persistentTopologyField && params) {
     const dynamics = persistentTopologySampleAt(phaseState.persistentTopologyField, params, x, z);
@@ -3344,8 +3365,9 @@ function phaseInfluenceAt(phaseState: HillOfHillsPhaseState, x: number, z: numbe
     topologyOpposedForce = dynamics.opposedForce;
     topologyContention = dynamics.contention;
     semanticMemberships = {
-      ...(dynamics.hillMembership > 0 ? { hill_swell: dynamics.hillMembership } : {}),
-      ...(dynamics.slumpMembership > 0 ? { hill_slump: dynamics.slumpMembership } : {})
+      ...semanticMemberships,
+      hill_swell: dynamics.hillMembership,
+      hill_slump: dynamics.slumpMembership
     };
     topologyAmount = 1 - (1 - topologyAmount) * (1 - Math.max(dynamics.hillMembership, dynamics.slumpMembership));
     const heightScale = 0.8 + params.hillHeight * 0.22 + params.valleyHeight * 0.18;
@@ -3746,34 +3768,53 @@ function surfaceDetailFor(
   );
   const seed = detailSeedFor(params.seed, x, z, proxyMaterial.kind);
   const jitter = seededUnit(seed);
-  const topologyDetailAmount = smoothstep(0.08, 0.32, phaseInfluence.topologyAmount * params.topologyPhaseDetailScale);
+  const growthPhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'hill_swell', 'basin_bloom') * params.topologyPhaseDetailScale
+  );
+  const valleyCutPhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'valley_deepen') * params.topologyPhaseDetailScale
+  );
+  const meadowPhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'valley_fill') * params.topologyPhaseDetailScale
+  );
+  const slopePhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'hill_slump', 'ridge_lift', 'ridge_shear', 'strata_reveal') *
+      params.topologyPhaseDetailScale
+  );
+  const saddlePhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'saddle_pass', 'saddle_pinch') * params.topologyPhaseDetailScale
+  );
   let kind: HillOfHillsSurfaceDetailKind = 'none';
   let density = 0;
 
   if (phaseInfluence.trailAmount > 0.24) {
     kind = 'trail-wear';
     density = clamp(0.34 + phaseInfluence.trailAmount * 0.58 + topology.routePressure * 0.16 + jitter * 0.08, 0, 1);
-  } else if (topologyDetailAmount > 0 && (phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'basin_bloom') && topology.growthPotential > 0.42) {
+  } else if (growthPhaseDetail > 0 && topology.growthPotential > 0.42) {
     kind = 'growth-bud';
-    density = clamp(0.18 + topologyDetailAmount * 0.58 + topology.growthPotential * 0.22 + jitter * 0.08, 0, 1);
-  } else if (topologyDetailAmount > 0 && phaseInfluence.kind === 'valley_deepen' && topology.ditchPotential > 0.48) {
+    density = clamp(0.18 + growthPhaseDetail * 0.58 + topology.growthPotential * 0.22 + jitter * 0.08, 0, 1);
+  } else if (valleyCutPhaseDetail > 0 && topology.ditchPotential > 0.48) {
     kind = 'damp-edge';
-    density = clamp(0.14 + topologyDetailAmount * 0.5 + topology.ditchPotential * 0.22 + jitter * 0.08, 0, 1);
-  } else if (topologyDetailAmount > 0 && phaseInfluence.kind === 'valley_fill') {
+    density = clamp(0.14 + valleyCutPhaseDetail * 0.5 + topology.ditchPotential * 0.22 + jitter * 0.08, 0, 1);
+  } else if (meadowPhaseDetail > 0) {
     kind = 'meadow-tuft';
-    density = clamp(0.12 + topologyDetailAmount * 0.44 + topology.growthPotential * 0.18 + jitter * 0.1, 0, 1);
-  } else if (
-    topologyDetailAmount > 0 &&
-    (phaseInfluence.kind === 'hill_slump' ||
-      phaseInfluence.kind === 'ridge_lift' ||
-      phaseInfluence.kind === 'ridge_shear' ||
-      phaseInfluence.kind === 'strata_reveal')
-  ) {
+    density = clamp(0.12 + meadowPhaseDetail * 0.44 + topology.growthPotential * 0.18 + jitter * 0.1, 0, 1);
+  } else if (slopePhaseDetail > 0) {
     kind = 'slope-striation';
-    density = clamp(0.14 + topologyDetailAmount * 0.5 + slope * 0.22 + topology.ridgeStrength * 0.14 + jitter * 0.08, 0, 1);
-  } else if (topologyDetailAmount > 0 && (phaseInfluence.kind === 'saddle_pass' || phaseInfluence.kind === 'saddle_pinch')) {
+    density = clamp(0.14 + slopePhaseDetail * 0.5 + slope * 0.22 + topology.ridgeStrength * 0.14 + jitter * 0.08, 0, 1);
+  } else if (saddlePhaseDetail > 0) {
     kind = 'trail-wear';
-    density = clamp(0.12 + topologyDetailAmount * 0.42 + topology.routePressure * 0.18 + jitter * 0.08, 0, 1);
+    density = clamp(0.12 + saddlePhaseDetail * 0.42 + topology.routePressure * 0.18 + jitter * 0.08, 0, 1);
   } else if (region === 'approach' && topology.routePressure > 0.68) {
     kind = 'trail-wear';
     density = clamp(0.16 + topology.routePressure * 0.28 + topology.valleyStrength * 0.08 + jitter * 0.1, 0, 1);
@@ -3833,35 +3874,61 @@ function materialEdgeFor(
   let kind: HillOfHillsMaterialEdgeKind = 'none';
   let anchor: HillOfHillsSurfaceAnchorKind = 'none';
   let strength = clamp(Math.max(blendEdge, topologyEdge) * 0.78, 0, 1);
-  const topologyDetailAmount = smoothstep(0.08, 0.32, phaseInfluence.topologyAmount * params.topologyPhaseDetailScale);
+  const growthPhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'hill_swell', 'basin_bloom') * params.topologyPhaseDetailScale
+  );
+  const slopePhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'saddle_pinch', 'ridge_lift', 'ridge_shear', 'strata_reveal') *
+      params.topologyPhaseDetailScale
+  );
+  const saddlePassPhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'saddle_pass') * params.topologyPhaseDetailScale
+  );
+  const valleyCutPhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'valley_deepen') * params.topologyPhaseDetailScale
+  );
+  const softGroundPhaseDetail = smoothstep(
+    0.04,
+    0.28,
+    hillPhaseMembershipAmount(phaseInfluence, 'valley_fill', 'hill_slump') * params.topologyPhaseDetailScale
+  );
 
   if (phaseInfluence.trailAmount > 0.2 || (region === 'approach' && topology.routePressure > 0.64)) {
     kind = 'route-wear';
     anchor = 'trail-accent';
     strength = clamp(Math.max(strength, 0.24 + topology.routePressure * 0.42 + phaseInfluence.trailAmount * 0.42), 0, 1);
-  } else if (topologyDetailAmount > 0 && (phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'basin_bloom')) {
+  } else if (growthPhaseDetail > 0) {
     kind = 'growth-cluster';
     anchor = 'growth-cluster';
-    strength = clamp(Math.max(strength, 0.18 + topologyDetailAmount * 0.48 + topology.growthPotential * 0.18 + slope * 0.12), 0, 1);
-  } else if (
-    topologyDetailAmount > 0 &&
-    (phaseInfluence.kind === 'saddle_pinch' ||
-      phaseInfluence.kind === 'saddle_pass' ||
-      phaseInfluence.kind === 'ridge_lift' ||
-      phaseInfluence.kind === 'ridge_shear' ||
-      phaseInfluence.kind === 'strata_reveal')
-  ) {
-    kind = phaseInfluence.kind === 'saddle_pass' ? 'route-wear' : 'slope-break';
-    anchor = phaseInfluence.kind === 'saddle_pass' ? 'trail-accent' : 'stone-scatter';
-    strength = clamp(Math.max(strength, 0.2 + topologyDetailAmount * 0.46 + slope * 0.18 + topology.ridgeStrength * 0.12), 0, 1);
-  } else if (topologyDetailAmount > 0 && phaseInfluence.kind === 'valley_deepen') {
+    strength = clamp(Math.max(strength, 0.18 + growthPhaseDetail * 0.48 + topology.growthPotential * 0.18 + slope * 0.12), 0, 1);
+  } else if (saddlePassPhaseDetail > Math.max(0.02, slopePhaseDetail)) {
+    kind = 'route-wear';
+    anchor = 'trail-accent';
+    strength = clamp(Math.max(strength, 0.2 + saddlePassPhaseDetail * 0.46 + slope * 0.18 + topology.ridgeStrength * 0.12), 0, 1);
+  } else if (slopePhaseDetail > 0) {
+    kind = 'slope-break';
+    anchor = 'stone-scatter';
+    strength = clamp(Math.max(strength, 0.2 + slopePhaseDetail * 0.46 + slope * 0.18 + topology.ridgeStrength * 0.12), 0, 1);
+  } else if (valleyCutPhaseDetail > 0) {
     kind = 'damp-rim';
     anchor = 'wet-rim';
-    strength = clamp(Math.max(strength, 0.18 + topologyDetailAmount * 0.42 + topology.ditchPotential * 0.24), 0, 1);
-  } else if (topologyDetailAmount > 0 && (phaseInfluence.kind === 'valley_fill' || phaseInfluence.kind === 'hill_slump')) {
+    strength = clamp(Math.max(strength, 0.18 + valleyCutPhaseDetail * 0.42 + topology.ditchPotential * 0.24), 0, 1);
+  } else if (softGroundPhaseDetail > 0) {
     kind = 'meadow-dust';
-    anchor = phaseInfluence.kind === 'valley_fill' ? 'tuft-line' : 'scuff-line';
-    strength = clamp(Math.max(strength, 0.16 + topologyDetailAmount * 0.38 + topology.valleyStrength * 0.12), 0, 1);
+    anchor =
+      hillPhaseMembershipAmount(phaseInfluence, 'valley_fill') >=
+      hillPhaseMembershipAmount(phaseInfluence, 'hill_slump')
+        ? 'tuft-line'
+        : 'scuff-line';
+    strength = clamp(Math.max(strength, 0.16 + softGroundPhaseDetail * 0.38 + topology.valleyStrength * 0.12), 0, 1);
   } else if (topology.ditchPotential > 0.58 || phaseInfluence.sideDitchAmount > 0.18 || proxyMaterial.wetness > 0.56) {
     kind = 'damp-rim';
     anchor = 'wet-rim';
@@ -3997,13 +4064,13 @@ function topologyAt(
   const uphill = (z + params.length * 0.5) / params.length;
   const centerRoute = 1 - smoothstep(halfFloor * 0.42, halfFloor * 1.08, lateral);
   const crownPull = 1 - clamp(Math.abs(z - params.crownZ) / Math.max(0.001, params.length * 0.48), 0, 1);
-  const valleyCutMotion = phaseInfluence.kind === 'valley_deepen' ? phaseInfluence.topologyAmount : 0;
-  const valleyFillMotion = phaseInfluence.kind === 'valley_fill' ? phaseInfluence.topologyAmount : 0;
-  const hillMotion = phaseInfluence.kind === 'hill_swell' || phaseInfluence.kind === 'ridge_lift' ? phaseInfluence.topologyAmount : 0;
-  const slumpMotion = phaseInfluence.kind === 'hill_slump' ? phaseInfluence.topologyAmount : 0;
-  const shearMotion = phaseInfluence.kind === 'ridge_shear' || phaseInfluence.kind === 'strata_reveal' ? phaseInfluence.topologyAmount : 0;
-  const saddleMotion = phaseInfluence.kind === 'saddle_pinch' || phaseInfluence.kind === 'saddle_pass' ? phaseInfluence.topologyAmount : 0;
-  const bloomMotion = phaseInfluence.kind === 'basin_bloom' ? phaseInfluence.topologyAmount : 0;
+  const valleyCutMotion = hillPhaseMembershipAmount(phaseInfluence, 'valley_deepen');
+  const valleyFillMotion = hillPhaseMembershipAmount(phaseInfluence, 'valley_fill');
+  const hillMotion = hillPhaseMembershipAmount(phaseInfluence, 'hill_swell', 'ridge_lift');
+  const slumpMotion = hillPhaseMembershipAmount(phaseInfluence, 'hill_slump');
+  const shearMotion = hillPhaseMembershipAmount(phaseInfluence, 'ridge_shear', 'strata_reveal');
+  const saddleMotion = hillPhaseMembershipAmount(phaseInfluence, 'saddle_pinch', 'saddle_pass');
+  const bloomMotion = hillPhaseMembershipAmount(phaseInfluence, 'basin_bloom');
   const valleyStrength = clamp(
     heightParts.valleys / Math.max(0.001, params.valleyHeight * 1.9) +
       phaseInfluence.sideDitchAmount * 0.2 +
@@ -4129,7 +4196,7 @@ function pressureFieldsFor(
   const strongestFold = Math.max(topology.ridgeStrength, topology.valleyStrength);
   const saddle = clamp(
     topology.routePressure * (1 - Math.abs(topology.ridgeStrength - topology.valleyStrength) * 0.68) * (1 - strongestFold * 0.2) +
-      (phaseInfluence.kind === 'saddle_pinch' || phaseInfluence.kind === 'saddle_pass' ? topologyAmount * 0.22 : 0),
+      hillPhaseMembershipAmount(phaseInfluence, 'saddle_pinch', 'saddle_pass') * 0.22,
     0,
     1
   );
@@ -4143,7 +4210,7 @@ function pressureFieldsFor(
       topology.ridgeStrength * 0.36 +
       (1 - topology.growthPotential) * 0.14 +
       (proxyMaterial.kind === 'rim-crust' ? 0.12 : 0) +
-      (phaseInfluence.kind === 'strata_reveal' ? topologyAmount * 0.16 : 0),
+      hillPhaseMembershipAmount(phaseInfluence, 'strata_reveal') * 0.16,
     0,
     1
   );
@@ -4156,7 +4223,7 @@ function pressureFieldsFor(
     topology.growthPotential * 0.5 +
       proxyMaterial.growthTint * 0.26 +
       (1 - clamp(slope, 0, 1)) * 0.08 +
-      (phaseInfluence.kind === 'basin_bloom' ? topologyAmount * 0.28 : 0) -
+      hillPhaseMembershipAmount(phaseInfluence, 'basin_bloom') * 0.28 -
       exposure * 0.05,
     0,
     1
@@ -4166,7 +4233,7 @@ function pressureFieldsFor(
       topology.ridgeStrength * 0.22 +
       slope * 0.16 +
       (proxyMaterial.kind === 'rim-crust' || proxyMaterial.kind === 'basin-dust' ? 0.1 : 0) +
-      (phaseInfluence.kind === 'strata_reveal' ? topologyAmount * 0.22 : 0),
+      hillPhaseMembershipAmount(phaseInfluence, 'strata_reveal') * 0.22,
     0,
     1
   );

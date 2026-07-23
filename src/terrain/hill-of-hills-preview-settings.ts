@@ -2,6 +2,8 @@ import { HILL_OF_HILLS_PRESSURE_FIELD_KINDS, type HillOfHillsPressureFieldKind }
 
 export const HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY = 'lerms.hill-of-hills.preview-settings.v0' as const;
 
+export type HillPreviewMode = 'material' | 'neutral_geometry';
+
 export type HillPreviewLayerKey =
   | 'base'
   | 'transitions'
@@ -29,6 +31,7 @@ export interface HillPreviewOverlaySettings {
 }
 
 export interface HillPreviewSettings {
+  mode: HillPreviewMode;
   layers: HillPreviewLayerSettings;
   growthSkin: HillPreviewGrowthSkinSettings;
   overlays: HillPreviewOverlaySettings;
@@ -94,6 +97,7 @@ export const HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE = {
 
 export function defaultHillPreviewSettings(): HillPreviewSettings {
   return {
+    mode: 'material',
     layers: { ...DEFAULT_LAYER_SETTINGS },
     growthSkin: { ...DEFAULT_GROWTH_SKIN_SETTINGS },
     overlays: { ...DEFAULT_OVERLAY_SETTINGS }
@@ -136,6 +140,7 @@ export function sanitizeHillPreviewSettings(input: unknown): HillPreviewSettings
   const overlayInput = isPlainObject(input.overlays) ? input.overlays : {};
 
   return {
+    mode: previewModeOrDefault(input.mode, defaults.mode),
     layers: {
       base: booleanOrDefault(layersInput.base, defaults.layers.base),
       transitions: booleanOrDefault(layersInput.transitions, defaults.layers.transitions),
@@ -187,6 +192,10 @@ export function sanitizeHillPreviewSettings(input: unknown): HillPreviewSettings
       )
     }
   };
+}
+
+function previewModeOrDefault(value: unknown, fallback: HillPreviewMode): HillPreviewMode {
+  return value === 'material' || value === 'neutral_geometry' ? value : fallback;
 }
 
 function booleanOrDefault(value: unknown, fallback: boolean): boolean {
