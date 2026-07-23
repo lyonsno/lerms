@@ -2,6 +2,8 @@ import {
   HILL_PREVIEW_PRESSURE_OVERLAY_STRENGTH_RANGE,
   HILL_OF_HILLS_PREVIEW_SETTINGS_STORAGE_KEY,
   defaultHillPreviewSettings,
+  hillPreviewBasePassEnabled,
+  hillPreviewVisualIdentity,
   loadHillPreviewSettings,
   saveHillPreviewSettings,
   sanitizeHillPreviewSettings,
@@ -43,6 +45,45 @@ assert(defaults.overlays.topographicContourStrength === 0.55, 'topographic conto
 assert(defaults.overlays.topographicContourSpacing === 0.6, 'topographic contour spacing defaults to a readable hill-scale interval');
 assert(defaults.overlays.pressureField === 'none', 'pressure field overlay defaults off');
 assert(defaults.overlays.pressureOverlayStrength === 0.45, 'pressure field overlay strength defaults to a readable debug tint');
+
+const neutralWithoutMaterialBase: HillPreviewSettings = {
+  ...defaults,
+  mode: 'neutral_geometry',
+  layers: {
+    ...defaults.layers,
+    base: false
+  }
+};
+assert(
+  hillPreviewBasePassEnabled(neutralWithoutMaterialBase),
+  'neutral geometry renders its height/normal base even when the persisted material base toggle is off'
+);
+assert(
+  hillPreviewVisualIdentity(neutralWithoutMaterialBase).effectiveLayers.join(',') === 'neutral_geometry',
+  'neutral visual identity names the geometry pass that is actually forced on'
+);
+
+const pressureIdentity = hillPreviewVisualIdentity({
+  ...defaults,
+  overlays: {
+    ...defaults.overlays,
+    pressureField: 'erosion',
+    pressureOverlayStrength: 0.64
+  }
+});
+assert(
+  pressureIdentity.effectiveLayers.includes('pressure:erosion'),
+  'active pressure overlay is named as an effective visual layer'
+);
+assert(
+  pressureIdentity.pressureOverlay?.field === 'erosion' &&
+    pressureIdentity.pressureOverlay.strength === 0.64,
+  'pressure overlay mode and effective strength survive into visual identity'
+);
+assert(
+  hillPreviewVisualIdentity(defaults).pressureOverlay === null,
+  'inactive pressure overlay is explicitly absent from visual identity'
+);
 
 const partial = sanitizeHillPreviewSettings({
   mode: 'neutral_geometry',

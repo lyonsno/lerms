@@ -69,13 +69,16 @@ import {
   HILL_PREVIEW_TOPOGRAPHIC_CONTOUR_STRENGTH_RANGE,
   HILL_PREVIEW_TOPOLOGY_LINE_STRENGTH_RANGE,
   defaultHillPreviewSettings,
+  hillPreviewBasePassEnabled,
+  hillPreviewVisualIdentity,
   loadHillPreviewSettings,
   saveHillPreviewSettings,
   type HillPreviewLayerKey,
   type HillPreviewMode,
   type HillPreviewPressureFieldSelection,
   type HillPreviewSettings,
-  type HillPreviewSettingsStorage
+  type HillPreviewSettingsStorage,
+  type HillPreviewVisualIdentity
 } from './terrain/hill-of-hills-preview-settings.js';
 import {
   loadHillOfHillsParamSettings,
@@ -151,11 +154,7 @@ interface HillPhaseFilmstripExportResult {
   reportFilename: string;
   frameCount: number;
   report: ReturnType<typeof createHillPhaseContinuityReport> & {
-    visualIdentity: {
-      requestedMode: HillPreviewMode;
-      effectiveMode: HillPreviewMode;
-      effectiveLayers: readonly string[];
-    };
+    visualIdentity: HillPreviewVisualIdentity;
   };
 }
 const SURFACE_ANCHOR_CODEBOOK: readonly HillOfHillsSurfaceAnchorKind[] = [
@@ -480,7 +479,7 @@ function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, hei
   const gridResolutionX = currentBuffer.gridResolution.x;
   const gridResolutionZ = currentBuffer.gridResolution.z;
 
-  if (previewSettings.layers.base) {
+  if (hillPreviewBasePassEnabled(previewSettings)) {
     const baseColors = Array.from(
       { length: gridResolutionX * gridResolutionZ },
       (_, index) => previewBaseColorForBufferSample(currentBuffer, index)
@@ -2860,16 +2859,7 @@ function exportHillPhaseFilmstrip(frameCount: HillPhaseFilmstripFrameCount): Hil
   });
   const report: HillPhaseFilmstripExportResult['report'] = {
     ...continuityReport,
-    visualIdentity: {
-      requestedMode: previewSettings.mode,
-      effectiveMode: previewSettings.mode,
-      effectiveLayers:
-        previewSettings.mode === 'neutral_geometry'
-          ? ['neutral_geometry']
-          : previewLayerSpecs
-              .filter((spec) => previewSettings.layers[spec.key])
-              .map((spec) => spec.key)
-    }
+    visualIdentity: hillPreviewVisualIdentity(previewSettings)
   };
   const anchor = document.createElement('a');
   anchor.href = stripCanvas.toDataURL('image/png');

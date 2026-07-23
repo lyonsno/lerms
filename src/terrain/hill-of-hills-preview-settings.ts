@@ -37,6 +37,16 @@ export interface HillPreviewSettings {
   overlays: HillPreviewOverlaySettings;
 }
 
+export interface HillPreviewVisualIdentity {
+  requestedMode: HillPreviewMode;
+  effectiveMode: HillPreviewMode;
+  effectiveLayers: readonly string[];
+  pressureOverlay: {
+    field: HillOfHillsPressureFieldKind;
+    strength: number;
+  } | null;
+}
+
 export interface HillPreviewSettingsStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -64,6 +74,16 @@ const DEFAULT_OVERLAY_SETTINGS: HillPreviewOverlaySettings = {
   pressureField: 'none',
   pressureOverlayStrength: 0.45
 };
+
+const HILL_PREVIEW_LAYER_KEYS: readonly HillPreviewLayerKey[] = [
+  'base',
+  'growthSkin',
+  'transitions',
+  'edgeDissolves',
+  'surfaceDetails',
+  'topologyOverlays',
+  'routeMarkers'
+];
 
 export const HILL_PREVIEW_GROWTH_SKIN_DENSITY_RANGE = {
   min: 0,
@@ -101,6 +121,36 @@ export function defaultHillPreviewSettings(): HillPreviewSettings {
     layers: { ...DEFAULT_LAYER_SETTINGS },
     growthSkin: { ...DEFAULT_GROWTH_SKIN_SETTINGS },
     overlays: { ...DEFAULT_OVERLAY_SETTINGS }
+  };
+}
+
+export function hillPreviewBasePassEnabled(settings: HillPreviewSettings): boolean {
+  return settings.mode === 'neutral_geometry' || settings.layers.base;
+}
+
+export function hillPreviewVisualIdentity(settings: HillPreviewSettings): HillPreviewVisualIdentity {
+  const pressureOverlay =
+    settings.mode === 'material' &&
+    settings.overlays.pressureField !== 'none' &&
+    settings.overlays.pressureOverlayStrength > 0
+      ? {
+          field: settings.overlays.pressureField,
+          strength: settings.overlays.pressureOverlayStrength
+        }
+      : null;
+  const effectiveLayers =
+    settings.mode === 'neutral_geometry'
+      ? ['neutral_geometry']
+      : [
+          ...HILL_PREVIEW_LAYER_KEYS.filter((key) => settings.layers[key]),
+          ...(pressureOverlay ? [`pressure:${pressureOverlay.field}`] : [])
+        ];
+
+  return {
+    requestedMode: settings.mode,
+    effectiveMode: settings.mode,
+    effectiveLayers,
+    pressureOverlay
   };
 }
 
