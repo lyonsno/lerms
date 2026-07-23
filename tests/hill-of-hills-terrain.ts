@@ -1406,9 +1406,110 @@ assert(
     persistentDisabled.witness.topologyDeformationRange.max === 0 &&
     persistentDisabled.witness.topologyVelocityRange.max === 0 &&
     persistentDisabled.witness.hillSwellMembershipRange.max === 0 &&
+    persistentDisabled.witness.hillSlumpMembershipRange.max === 0 &&
     persistentDisabled.witness.topologyInfluenceRange.max === 0 &&
     (persistentDisabled.witness.phaseInfluenceKinds.none ?? 0) === persistentDisabled.samples.length,
   'disabled persistent topology stays semantically and dynamically inert'
+);
+const persistentSignedEventClasses = Object.fromEntries(
+  topologyEventKinds.map((kind) => [
+    kind,
+    {
+      ...defaultHillOfHillsParams.topologyEventClasses[kind],
+      enabled: kind === 'hill_swell' || kind === 'hill_slump',
+      appetite: kind === 'hill_swell' ? 1.1 : kind === 'hill_slump' ? 1.7 : 0,
+      force: kind === 'hill_swell' || kind === 'hill_slump' ? 1.2 : 0,
+      gesture: kind === 'hill_swell' ? 'breath' : 'creep',
+      phaseOffset: kind === 'hill_swell' ? 0.04 : 0.38,
+      spread: 1.1
+    }
+  ])
+) as HillOfHillsTerrainParams['topologyEventClasses'];
+const persistentSignedParams: PersistentTopologyMotionParams = {
+  ...persistentTopologyParams,
+  topologyPhaseIntensity: 1,
+  topologyPhaseLimit: 8,
+  topologyPhaseRadius: 1.55,
+  topologyPhaseHeightScale: 1,
+  topologyPhaseHillBias: 2,
+  topologyEventClasses: persistentSignedEventClasses
+};
+const persistentSlump = createHillOfHillsTerrain({
+  ...persistentSignedParams,
+  topologyPhaseTimeMs: persistentSignedParams.topologyPhaseDurationMs * 0.5
+});
+assert(
+  persistentSlump.phaseState.activeEpisodes.length > 0 &&
+    persistentSlump.phaseState.activeEpisodes.every((episode) => episode.kind === 'hill_slump'),
+  'signed persistent fixture isolates an active hill-slump force basis'
+);
+assert(
+  persistentSlump.witness.topologyForceRange.min < -0.01 &&
+    persistentSlump.witness.topologyDeformationRange.min < -0.001,
+  'hill slump reaches persistent world memory as negative force and deformation instead of bypassing it through direct synthesis'
+);
+const persistentSlumpHeightScale =
+  0.8 + persistentSlump.params.hillHeight * 0.22 + persistentSlump.params.valleyHeight * 0.18;
+const persistentSlumpDirectBypassDelta = persistentSlump.samples.reduce(
+  (maximum, terrainSample) =>
+    Math.max(
+      maximum,
+      Math.abs(
+        terrainSample.phaseInfluence.topologyHeightDelta -
+          terrainSample.phaseInfluence.topologyDeformation / persistentSlumpHeightScale
+      )
+    ),
+  0
+);
+assert(
+  persistentSlumpDirectBypassDelta < 0.0001,
+  `persistent hill slump derives topology height only from world-memory deformation without a direct-synthesis duplicate: ${persistentSlumpDirectBypassDelta}`
+);
+assert(
+  persistentSlump.samples.some(
+    (terrainSample) => (terrainSample.phaseInfluence.semanticMemberships.hill_slump ?? 0) > 0.01
+  ),
+  'persistent hill slump exports continuous semantic membership'
+);
+const persistentSlumpBuffer = createHillOfHillsTerrainBuffer(persistentSlump);
+const persistentSlumpSampleIndex = persistentSlump.samples.findIndex(
+  (terrainSample) => (terrainSample.phaseInfluence.semanticMemberships.hill_slump ?? 0) > 0.01
+);
+assert(
+  persistentSlumpBuffer.channelLayout.metrics.includes('hillSlumpMembership'),
+  'terrain buffer declares the persistent hill-slump membership channel'
+);
+assert(persistentSlumpSampleIndex >= 0, 'persistent slump fixture provides a buffer round-trip sample');
+const decodedPersistentSlump = decodeHillOfHillsTerrainBufferSample(persistentSlumpBuffer, persistentSlumpSampleIndex);
+closeEnough(
+  decodedPersistentSlump.phaseInfluence.semanticMemberships.hill_slump ?? 0,
+  persistentSlump.samples[persistentSlumpSampleIndex].phaseInfluence.semanticMemberships.hill_slump ?? 0,
+  0.0001,
+  'persistent hill-slump membership survives terrain buffer transfer'
+);
+assert(
+  persistentPeak.witness.topologyForceRange.max > 0.01 && persistentSlump.witness.topologyForceRange.min < -0.01,
+  'one persistent topology field contract carries positive swell and negative slump event classes'
+);
+const liveSignedContinuityParams = applyHillDiagnosticParamPreset(
+  {
+    ...defaultHillOfHillsParams,
+    gridResolutionX: 24,
+    gridResolutionZ: 30
+  },
+  'continuity-hills'
+);
+const liveSignedContinuityTerrain = createHillOfHillsTerrain({
+  ...liveSignedContinuityParams,
+  topologyPhaseTimeMs: liveSignedContinuityParams.topologyPhaseDurationMs * 0.25
+});
+assert(
+  (liveSignedContinuityTerrain.witness.activePhaseKinds.hill_swell ?? 0) > 0 &&
+    (liveSignedContinuityTerrain.witness.activePhaseKinds.hill_slump ?? 0) > 0 &&
+    liveSignedContinuityTerrain.witness.topologyForceRange.min < -0.01 &&
+    liveSignedContinuityTerrain.witness.topologyForceRange.max > 0.01 &&
+    liveSignedContinuityTerrain.witness.hillSlumpMembershipRange.max > 0.01,
+  'continuity-hills live preset exercises positive swell and negative slump world memory in one deterministic frame'
 );
 assert(
   maxDynamics(persistentTail, 'topologyForce') < maxDynamics(persistentPeak, 'topologyForce'),

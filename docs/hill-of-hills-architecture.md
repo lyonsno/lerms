@@ -53,6 +53,11 @@ The first vertical contract remains `src/contracts/first-vertical.ts`. Hill-of-h
 - `sideDitchAmount`
 - `topologyAmount`
 - `topologyHeightDelta`
+- `topologyDeformation`
+- `topologyVelocity`
+- `topologyForce`
+- `hillSwellMembership`
+- `hillSlumpMembership`
 - `wetness`
 - `growthTint`
 - `previousHeight`
@@ -113,6 +118,8 @@ The central stability invariant is support continuity:
 - No newly admitted support may start hot enough to create a broad height, topology, material, or detail step.
 
 The phase scheduler is allowed to change which terrain features are selected over time, but it must not replace a visible terrain cause with a different visible cause in one frame. That was the source of the earlier phase-boundary pop. Treat this invariant as load-bearing for future scheduler work.
+
+In `persistent_pressure` mode, `hill_swell` and `hill_slump` share one signed world-memory field. Swell contributes positive pressure; slump contributes negative pressure. Both event classes retain continuous semantic membership after the instantaneous gesture force withdraws, and neither also applies the older direct-synthesis height mutation. The continuity preset exercises both sides of this force basis. The other eight topology event classes still use direct synthesis, so this is a two-class persistence contract rather than a claim that the full event vocabulary already participates in world memory.
 
 The filmstrip continuity report detects this class of failure. Suspicion kinds include hot entering supports, broad height steps, local height spikes, large support deltas, material pops, topology pops, and support exits.
 

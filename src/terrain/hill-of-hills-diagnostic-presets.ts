@@ -122,7 +122,7 @@ function disabledContinuityEventClass(eventClass: HillOfHillsTopologyEventClassC
 }
 
 function isHillContinuityEvent(kind: HillOfHillsTopologyPhaseKind): boolean {
-  return kind === 'hill_swell';
+  return kind === 'hill_swell' || kind === 'hill_slump';
 }
 
 function isHillDiagnosticPreset(value: unknown): value is HillOfHillsDiagnosticPreset {

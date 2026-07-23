@@ -305,6 +305,7 @@ const createAuthenticatedContinuityReport = createHillPhaseContinuityReport as u
       velocity: { max: number };
       force: { max: number };
       hillSwellMembership: { max: number };
+      hillSlumpMembership: { max: number };
     };
   })[];
 };
@@ -338,6 +339,7 @@ assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamic
 assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamics.velocity.max)));
 assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamics.force.max)));
 assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamics.hillSwellMembership.max)));
+assert.ok(continuityReport.frames.every((frame) => Number.isFinite(frame.dynamics.hillSlumpMembership.max)));
 assert.equal(continuityReport.frames[1].delta?.from.index, continuitySchedule[0].index);
 assert.ok(continuityReport.rankedTransitions.length > 0, "report should rank frame-to-frame transitions for machine diagnosis");
 assert.ok(

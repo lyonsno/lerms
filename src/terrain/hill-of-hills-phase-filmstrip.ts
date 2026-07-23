@@ -149,6 +149,7 @@ export interface HillPhaseContinuityDynamicsEvidence {
   velocity: HillPhaseContinuityRangeEvidence;
   force: HillPhaseContinuityRangeEvidence;
   hillSwellMembership: HillPhaseContinuityRangeEvidence;
+  hillSlumpMembership: HillPhaseContinuityRangeEvidence;
 }
 
 export interface HillPhaseContinuityControls {
@@ -447,7 +448,8 @@ export function createHillPhaseContinuityReport(
         deformation: rangeEvidence(terrain.witness.topologyDeformationRange),
         velocity: rangeEvidence(terrain.witness.topologyVelocityRange),
         force: rangeEvidence(terrain.witness.topologyForceRange),
-        hillSwellMembership: rangeEvidence(terrain.witness.hillSwellMembershipRange)
+        hillSwellMembership: rangeEvidence(terrain.witness.hillSwellMembershipRange),
+        hillSlumpMembership: rangeEvidence(terrain.witness.hillSlumpMembershipRange)
       },
       activeEventSummary: terrain.witness.topologyEventDebug.slice(0, 8).map(eventDebugSummary),
       delta

@@ -337,6 +337,7 @@ const terrain: HillOfHillsTerrain = {
     topologyVelocityRange: { min: 0, max: 0 },
     topologyForceRange: { min: 0, max: 0 },
     hillSwellMembershipRange: { min: 0, max: 0 },
+    hillSlumpMembershipRange: { min: 0, max: 0 },
     phaseInfluenceKinds: { none: 1 },
     trailSeedMethod: 'none',
     trailCandidateChecksum: 'none',
