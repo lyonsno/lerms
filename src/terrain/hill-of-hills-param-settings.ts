@@ -71,6 +71,29 @@ export type HillOfHillsPersistedParamSettings = Pick<HillOfHillsTerrainParams, H
 
 export const HILL_OF_HILLS_PERSISTED_PARAM_KEYS = Object.keys(HILL_OF_HILLS_PERSISTED_PARAM_RANGES) as HillOfHillsPersistedParamKey[];
 
+export function reconcileHillOfHillsTopologyModes(
+  topologyDynamicsMode: HillOfHillsTopologyDynamicsMode,
+  topologyPossibilityMode: HillOfHillsTopologyPossibilityMode,
+  changedMode: 'dynamics' | 'possibility'
+): Pick<HillOfHillsPersistedParamSettings, 'topologyDynamicsMode' | 'topologyPossibilityMode'> {
+  if (topologyDynamicsMode !== 'direct_synthesis' || topologyPossibilityMode !== 'phase_recomposed') {
+    return {
+      topologyDynamicsMode,
+      topologyPossibilityMode
+    };
+  }
+
+  return changedMode === 'dynamics'
+    ? {
+        topologyDynamicsMode,
+        topologyPossibilityMode: 'reauthored'
+      }
+    : {
+        topologyDynamicsMode: 'persistent_pressure',
+        topologyPossibilityMode
+      };
+}
+
 export function sanitizeHillOfHillsParamSettings(input: unknown, defaults: HillOfHillsTerrainParams): HillOfHillsPersistedParamSettings {
   const source = isPlainObject(input) ? input : {};
   const sanitized = {} as HillOfHillsPersistedParamSettings;
@@ -89,6 +112,14 @@ export function sanitizeHillOfHillsParamSettings(input: unknown, defaults: HillO
     source.topologyPossibilityMode === 'phase_recomposed'
       ? source.topologyPossibilityMode
       : defaults.topologyPossibilityMode;
+  Object.assign(
+    sanitized,
+    reconcileHillOfHillsTopologyModes(
+      sanitized.topologyDynamicsMode,
+      sanitized.topologyPossibilityMode,
+      'possibility'
+    )
+  );
   sanitized.topologyEventClasses = sanitizeTopologyEventClasses(source.topologyEventClasses, defaults.topologyEventClasses);
 
   return sanitized;

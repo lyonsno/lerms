@@ -1928,6 +1928,15 @@ const phaseRecomposedParams: PersistentTopologyMotionParams = {
   topologyPhaseLimit: 5,
   topologyPhaseOverlap: 0.28
 };
+const directRequestedRecomposition = createHillOfHillsTerrain({
+  ...phaseRecomposedParams,
+  topologyDynamicsMode: 'direct_synthesis',
+  topologyPhaseTimeMs: phaseRecomposedParams.topologyPhaseDurationMs * 1.28
+});
+assert(
+  directRequestedRecomposition.witness.topologyDynamicsMode === 'persistent_pressure',
+  'phase-point recomposition cannot advertise evolved-world authorship without an effective persistent field'
+);
 const reauthoredPhasePointCache = createHillOfHillsLayerTileCache();
 const recomposedPhasePointCache = createHillOfHillsLayerTileCache();
 const phasePointTimes = Array.from(

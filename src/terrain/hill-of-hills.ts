@@ -1456,7 +1456,11 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
     topologyPhaseDriftIntensity: clamp(finiteOr(params.topologyPhaseDriftIntensity, 0), 0, 1),
     topologyPhaseTimeMs: Math.max(0, finiteOr(params.topologyPhaseTimeMs, 0)),
     topologyPhaseDurationMs: finiteAtLeast(params.topologyPhaseDurationMs, 240),
-    topologyDynamicsMode: params.topologyDynamicsMode === 'persistent_pressure' ? 'persistent_pressure' : 'direct_synthesis',
+    topologyDynamicsMode:
+      params.topologyPossibilityMode === 'phase_recomposed' ||
+      params.topologyDynamicsMode === 'persistent_pressure'
+        ? 'persistent_pressure'
+        : 'direct_synthesis',
     topologyPossibilityMode:
       params.topologyPossibilityMode === 'reauthored' || params.topologyPossibilityMode === 'phase_recomposed'
         ? params.topologyPossibilityMode

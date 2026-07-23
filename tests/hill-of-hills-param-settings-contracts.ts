@@ -2,6 +2,7 @@ import { defaultHillOfHillsParams } from '../src/terrain/hill-of-hills.js';
 import {
   HILL_OF_HILLS_PARAM_SETTINGS_STORAGE_KEY,
   loadHillOfHillsParamSettings,
+  reconcileHillOfHillsTopologyModes,
   saveHillOfHillsParamSettings,
   sanitizeHillOfHillsParamSettings,
   type HillOfHillsParamSettingsStorage
@@ -114,6 +115,7 @@ assert(sanitized.floorWidth === defaults.floorWidth, 'partial terrain settings r
 
 const phaseRecomposed = sanitizeHillOfHillsParamSettings(
   {
+    topologyDynamicsMode: 'direct_synthesis',
     topologyPossibilityMode: 'phase_recomposed'
   },
   defaults
@@ -121,6 +123,20 @@ const phaseRecomposed = sanitizeHillOfHillsParamSettings(
 assert(
   phaseRecomposed.topologyPossibilityMode === 'phase_recomposed',
   'terrain param settings accept the evolved-world topology possibility posture'
+);
+assert(
+  phaseRecomposed.topologyDynamicsMode === 'persistent_pressure',
+  'persisted phase-point recomposition cannot reload without its persistent world'
+);
+assert(
+  reconcileHillOfHillsTopologyModes('direct_synthesis', 'phase_recomposed', 'possibility').topologyDynamicsMode ===
+    'persistent_pressure',
+  'selecting phase-point recomposition selects persistent pressure'
+);
+assert(
+  reconcileHillOfHillsTopologyModes('direct_synthesis', 'phase_recomposed', 'dynamics').topologyPossibilityMode ===
+    'reauthored',
+  'selecting direct synthesis while recomposition is active returns possibility to reauthored'
 );
 
 const clamped = sanitizeHillOfHillsParamSettings(

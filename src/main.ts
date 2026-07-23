@@ -82,6 +82,7 @@ import {
 } from './terrain/hill-of-hills-preview-settings.js';
 import {
   loadHillOfHillsParamSettings,
+  reconcileHillOfHillsTopologyModes,
   saveHillOfHillsParamSettings,
   type HillOfHillsParamSettingsStorage
 } from './terrain/hill-of-hills-param-settings.js';
@@ -2285,6 +2286,15 @@ function appendTopologyEventClassControls(parent: HTMLElement): void {
   parent.append(section);
 }
 
+function syncTopologyModeControls(): void {
+  for (const input of document.querySelectorAll<HTMLInputElement>('input[name="topology-dynamics-mode"]')) {
+    input.checked = input.value === params.topologyDynamicsMode;
+  }
+  for (const input of document.querySelectorAll<HTMLInputElement>('input[name="topology-possibility-mode"]')) {
+    input.checked = input.value === params.topologyPossibilityMode;
+  }
+}
+
 function appendTopologyDynamicsModeControl(parent: HTMLElement): void {
   const fieldset = document.createElement('div');
   const legend = document.createElement('span');
@@ -2312,8 +2322,13 @@ function appendTopologyDynamicsModeControl(parent: HTMLElement): void {
       if (!input.checked) return;
       params = {
         ...params,
-        topologyDynamicsMode: mode.value
+        ...reconcileHillOfHillsTopologyModes(
+          mode.value,
+          params.topologyPossibilityMode,
+          'dynamics'
+        )
       };
+      syncTopologyModeControls();
       persistParamSettings();
     });
     text.textContent = mode.label;
@@ -2353,8 +2368,13 @@ function appendTopologyPossibilityModeControl(parent: HTMLElement): void {
       if (!input.checked) return;
       params = {
         ...params,
-        topologyPossibilityMode: mode.value
+        ...reconcileHillOfHillsTopologyModes(
+          params.topologyDynamicsMode,
+          mode.value,
+          'possibility'
+        )
       };
+      syncTopologyModeControls();
       persistParamSettings();
     });
     text.textContent = mode.label;
