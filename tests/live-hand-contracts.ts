@@ -5,6 +5,12 @@ import {
   normalizeManoSurface,
   summarizeLiveHandLatency,
 } from '../src/hand/live-hand-contract.js';
+import {
+  LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
+  LIVE_HAND_CAPTURE_WORKER_ROUTE,
+  isCaptureRunCurrent,
+  normalizeCaptureWorkerResult,
+} from '../src/hand/live-hand-capture-contract.js';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -40,6 +46,34 @@ assert(healthTruth.chunkYieldMs === 0.2, 'preserves effective chunk yield');
 assertThrows(
   () => assertLiveRuntimeHealth({ ...health, runtimeOwner: 'perceptasia' }),
   'runtime owner',
+);
+
+const workerBlob = new Blob(['jpeg'], { type: 'image/jpeg' });
+const workerResult = normalizeCaptureWorkerResult({
+  schema: 'lerms.live-hand-capture-result.v0',
+  routeIdentity: 'transferable-videoframe-offscreen-jpeg-v0',
+  captureId: 'capture-1',
+  blob: workerBlob,
+  workerEncodeMs: 4.5,
+  width: 640,
+  height: 480,
+}, 'capture-1');
+assert(LIVE_HAND_CAPTURE_WORKER_ROUTE === 'transferable-videoframe-offscreen-jpeg-v0', 'identifies the off-main capture route');
+assert(LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS === 750, 'capture deadline matches the live frame freshness horizon');
+assert(isCaptureRunCurrent(8, 8, true), 'accepts a capture from the active run');
+assert(!isCaptureRunCurrent(7, 8, true), 'rejects a capture from a stopped run after restart');
+assert(!isCaptureRunCurrent(8, 8, false), 'rejects a capture after hand control stops');
+assert(workerResult.blob.size === 4 && workerResult.workerEncodeMs === 4.5, 'accepts a nonblank worker JPEG receipt');
+assertThrows(
+  () => normalizeCaptureWorkerResult({
+    ...workerResult,
+    routeIdentity: 'main-thread-canvas-to-blob',
+  }, 'capture-1'),
+  'capture worker route',
+);
+assertThrows(
+  () => normalizeCaptureWorkerResult({ ...workerResult, blob: new Blob([], { type: 'image/jpeg' }) }, 'capture-1'),
+  'nonblank JPEG',
 );
 
 const recordedSurface = normalizeManoSurface({ available: true, vertices, faces });

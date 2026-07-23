@@ -18,6 +18,13 @@ import {
   type RuntimeRouteTruth,
 } from './live-hand-contract.js';
 import {
+  LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
+  LIVE_HAND_CAPTURE_WORKER_ROUTE,
+  isCaptureRunCurrent,
+  normalizeCaptureWorkerResult,
+  type LiveHandCaptureWorkerResult,
+} from './live-hand-capture-contract.js';
+import {
   KAMINOS_FLUID_REVISION,
   LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
   LIVE_FLUID_CAMERA,
@@ -41,10 +48,6 @@ function requiredElement<T extends HTMLElement>(id: string): T {
 const canvas = requiredElement<HTMLCanvasElement>('hand-canvas');
 const fluidCanvas = requiredElement<HTMLCanvasElement>('fluid-canvas');
 const video = requiredElement<HTMLVideoElement>('camera');
-const captureCanvas = requiredElement<HTMLCanvasElement>('capture-canvas');
-const captureContextValue = captureCanvas.getContext('2d', { alpha: false });
-if (!captureContextValue) throw new Error('camera capture context is unavailable');
-const captureContext: CanvasRenderingContext2D = captureContextValue;
 const toggle = requiredElement<HTMLButtonElement>('hand-toggle');
 const status = requiredElement<HTMLDivElement>('status');
 const routeTruth = requiredElement<HTMLDivElement>('route-truth');
@@ -87,8 +90,10 @@ scene.add(handMesh);
 
 let stream: MediaStream | null = null;
 let running = false;
-let captureInFlight = false;
+let captureRunGeneration = 0;
+let captureInFlightGeneration: number | null = null;
 let captureTimer: number | null = null;
+let capturePostAbortController: AbortController | null = null;
 let stateAbortController: AbortController | null = null;
 let lastStateSequence = 0;
 let frameSequence = 0;
@@ -103,8 +108,17 @@ let fluidError: string | null = null;
 let latestFluidPacket: LiveFingerFluidPacket | null = null;
 let fluidStepCount = 0;
 let combinedLastFrameAt = 0;
+let captureWorker: Worker | null = null;
+let captureWorkerError: string | null = null;
 const combinedFrameIntervalsMs: number[] = [];
 const combinedCpuSubmitMs: number[] = [];
+const captureAcquireMs: number[] = [];
+const captureWorkerEncodeMs: number[] = [];
+const pendingCaptureWorkerResults = new Map<string, {
+  resolve: (result: LiveHandCaptureWorkerResult) => void;
+  reject: (error: Error) => void;
+  timeoutId: number;
+}>();
 interface RuntimeLatencySample extends LiveHandLatencySample {
   schema: 'hand-state.viewer-latency-sample.v0';
   benchmarkSessionId: string;
@@ -114,6 +128,9 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   dtypeRoute: string;
   captureTimestampMs: number;
   viewerReceiveTimestampMs: number;
+  captureAcquireMs: number;
+  workerEncodeMs: number;
+  captureRoute: typeof LIVE_HAND_CAPTURE_WORKER_ROUTE;
   clientEncodeMs: number;
   nativePostMs: number;
   captureToSidecarPublishMs: number;
@@ -125,7 +142,13 @@ let benchmarkSessionId = '';
 let pendingLatencySample: RuntimeLatencySample | null = null;
 let benchmarkDroppedBeforeRender = 0;
 let lastBenchmarkError: string | null = null;
-const captureMetricsByFrame = new Map<string, { capturedAtMs: number; clientEncodeMs: number; nativePostMs: number }>();
+const captureMetricsByFrame = new Map<string, {
+  capturedAtMs: number;
+  captureAcquireMs: number;
+  workerEncodeMs: number;
+  clientEncodeMs: number;
+  nativePostMs: number;
+}>();
 const latencySamples: RuntimeLatencySample[] = [];
 const unflushedLatencySamples: RuntimeLatencySample[] = [];
 let latencyFlushTimer: number | null = null;
@@ -259,6 +282,8 @@ function resetBenchmark(): void {
   captureMetricsByFrame.clear();
   latencySamples.length = 0;
   unflushedLatencySamples.length = 0;
+  captureAcquireMs.length = 0;
+  captureWorkerEncodeMs.length = 0;
   if (latencyFlushTimer !== null) window.clearTimeout(latencyFlushTimer);
   latencyFlushTimer = null;
 }
@@ -285,31 +310,120 @@ function scheduleLatencyFlush(): void {
   if (latencyFlushTimer === null) latencyFlushTimer = window.setTimeout(() => void flushLatencySamples(), 1000);
 }
 
-async function captureFrame(): Promise<void> {
-  if (!running || captureInFlight || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-  captureInFlight = true;
+function rejectCaptureWorkerResults(error: Error): void {
+  for (const pending of pendingCaptureWorkerResults.values()) {
+    window.clearTimeout(pending.timeoutId);
+    pending.reject(error);
+  }
+  pendingCaptureWorkerResults.clear();
+}
+
+function disposeCaptureWorker(error: Error): void {
+  rejectCaptureWorkerResults(error);
+  captureWorker?.terminate();
+  captureWorker = null;
+}
+
+function failCaptureWorker(worker: Worker, error: Error): void {
+  if (captureWorker !== worker) return;
+  captureWorkerError = error.message;
+  disposeCaptureWorker(error);
+  deactivateFluidInlets('capture_worker_failed');
+  setStatus(error.message, 'error');
+}
+
+function ensureCaptureWorker(): Worker {
+  if (captureWorker) return captureWorker;
+  if (typeof VideoFrame !== 'function' || typeof Worker !== 'function') {
+    throw new Error(`${LIVE_HAND_CAPTURE_WORKER_ROUTE} is unavailable in this browser`);
+  }
+  const worker = new Worker(new URL('./live-hand-capture.worker.ts', import.meta.url), { type: 'module' });
+  worker.addEventListener('message', event => {
+    const value = event.data as Record<string, unknown>;
+    const captureId = typeof value?.captureId === 'string' ? value.captureId : '';
+    const pending = pendingCaptureWorkerResults.get(captureId);
+    if (!pending) return;
+    if (value.schema === 'lerms.live-hand-capture-error.v0') {
+      const route = value.routeIdentity === LIVE_HAND_CAPTURE_WORKER_ROUTE
+        ? LIVE_HAND_CAPTURE_WORKER_ROUTE
+        : 'unverified capture route';
+      failCaptureWorker(worker, new Error(`${route}: ${typeof value.error === 'string' ? value.error : 'capture worker failed'}`));
+      return;
+    }
+    try {
+      const result = normalizeCaptureWorkerResult(value, captureId);
+      pendingCaptureWorkerResults.delete(captureId);
+      window.clearTimeout(pending.timeoutId);
+      pending.resolve(result);
+    } catch (error) {
+      failCaptureWorker(worker, error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+  worker.addEventListener('error', event => {
+    failCaptureWorker(worker, new Error(event.message || 'capture worker crashed'));
+  });
+  worker.addEventListener('messageerror', () => {
+    failCaptureWorker(worker, new Error(`${LIVE_HAND_CAPTURE_WORKER_ROUTE} returned an unreadable message`));
+  });
+  captureWorker = worker;
+  return worker;
+}
+
+function encodeCameraFrame(
+  captureId: string,
+  frame: VideoFrame,
+  width: number,
+  height: number,
+): Promise<LiveHandCaptureWorkerResult> {
+  const worker = ensureCaptureWorker();
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      if (!pendingCaptureWorkerResults.has(captureId)) return;
+      failCaptureWorker(worker, new Error(
+        `${LIVE_HAND_CAPTURE_WORKER_ROUTE} missed the ${LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS}ms live-frame deadline`,
+      ));
+    }, LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS);
+    pendingCaptureWorkerResults.set(captureId, { resolve, reject, timeoutId });
+    try {
+      worker.postMessage({ captureId, frame, width, height, quality: 0.78 }, [frame]);
+    } catch (error) {
+      pendingCaptureWorkerResults.delete(captureId);
+      window.clearTimeout(timeoutId);
+      frame.close();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+async function captureFrame(runGeneration: number): Promise<void> {
+  if (
+    !isCaptureRunCurrent(runGeneration, captureRunGeneration, running)
+    || captureWorkerError
+    || captureInFlightGeneration !== null
+    || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+  ) return;
+  captureInFlightGeneration = runGeneration;
   try {
     const sourceWidth = Math.max(video.videoWidth || 640, 1);
     const width = Math.min(sourceWidth, 640);
     const height = Math.round(width * Math.max(video.videoHeight || 480, 1) / sourceWidth);
     const capturedAtMs = Date.now();
-    const captureId = `${capturedAtMs}-${frameSequence += 1}`;
-    const encodeStartedAt = performance.now();
-    if (captureCanvas.width !== width || captureCanvas.height !== height) {
-      captureCanvas.width = width;
-      captureCanvas.height = height;
-    }
-    captureContext.save();
-    captureContext.translate(width, 0);
-    captureContext.scale(-1, 1);
-    captureContext.drawImage(video, 0, 0, width, height);
-    captureContext.restore();
-    const blob = await new Promise<Blob | null>(resolve => captureCanvas.toBlob(resolve, 'image/jpeg', 0.78));
-    if (!blob) throw new Error('camera frame encoding failed');
-    const clientEncodeMs = performance.now() - encodeStartedAt;
+    const captureId = `run-${runGeneration}-${capturedAtMs}-${frameSequence += 1}`;
+    const clientEncodeStartedAt = performance.now();
+    const captureAcquireStartedAt = performance.now();
+    const frame = new VideoFrame(video, { timestamp: capturedAtMs * 1000 });
+    const acquisitionMs = performance.now() - captureAcquireStartedAt;
+    const encoded = await encodeCameraFrame(captureId, frame, width, height);
+    if (!isCaptureRunCurrent(runGeneration, captureRunGeneration, running)) return;
+    const clientEncodeMs = performance.now() - clientEncodeStartedAt;
+    captureAcquireMs.push(acquisitionMs);
+    captureWorkerEncodeMs.push(encoded.workerEncodeMs);
     const postStartedAt = performance.now();
+    const postController = new AbortController();
+    capturePostAbortController = postController;
     await runtimeFetch('/native-frame', {
       method: 'POST',
+      signal: postController.signal,
       headers: {
         'Content-Type': 'image/jpeg',
         'X-Capture-Id': captureId,
@@ -317,10 +431,13 @@ async function captureFrame(): Promise<void> {
         'X-Frame-Width': String(width),
         'X-Frame-Height': String(height),
       },
-      body: blob,
+      body: encoded.blob,
     });
+    if (!isCaptureRunCurrent(runGeneration, captureRunGeneration, running)) return;
     captureMetricsByFrame.set(captureId, {
       capturedAtMs,
+      captureAcquireMs: acquisitionMs,
+      workerEncodeMs: encoded.workerEncodeMs,
       clientEncodeMs,
       nativePostMs: performance.now() - postStartedAt,
     });
@@ -328,13 +445,22 @@ async function captureFrame(): Promise<void> {
       if (capturedAtMs - metrics.capturedAtMs > 10_000) captureMetricsByFrame.delete(frameId);
     }
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error), 'error');
+    if (
+      isCaptureRunCurrent(runGeneration, captureRunGeneration, running)
+      && !(error instanceof DOMException && error.name === 'AbortError')
+    ) setStatus(error instanceof Error ? error.message : String(error), 'error');
   } finally {
-    captureInFlight = false;
+    if (captureInFlightGeneration === runGeneration) captureInFlightGeneration = null;
+    capturePostAbortController = null;
   }
 }
 
 function applyState(state: Record<string, unknown>): void {
+  if (captureWorkerError) {
+    deactivateFluidInlets('capture_worker_failed');
+    setStatus(captureWorkerError, 'error');
+    return;
+  }
   try {
     const frame = normalizeLiveManoFrame(state);
     updateHandSurface(frame);
@@ -358,6 +484,9 @@ function applyState(state: Record<string, unknown>): void {
         manoFaceCount: frame.faceCount,
         captureTimestampMs: frame.captureTimestampMs,
         viewerReceiveTimestampMs,
+        captureAcquireMs: captureMetrics.captureAcquireMs,
+        workerEncodeMs: captureMetrics.workerEncodeMs,
+        captureRoute: LIVE_HAND_CAPTURE_WORKER_ROUTE,
         clientEncodeMs: captureMetrics.clientEncodeMs,
         nativePostMs: captureMetrics.nativePostMs,
         modelLatencyMs: frame.modelLatencyMs,
@@ -407,6 +536,8 @@ async function start(): Promise<void> {
   if (fixtureMode) throw new Error('recorded fixture mode is visual-only');
   setStatus('initializing current Kaminos fluid');
   await ensureFluidSolver();
+  captureWorkerError = null;
+  ensureCaptureWorker();
   setStatus('verifying runtime');
   runtimeRoute = assertLiveRuntimeHealth(await runtimeFetch('/health'));
   setRouteTruth();
@@ -424,18 +555,24 @@ async function start(): Promise<void> {
   combinedLastFrameAt = 0;
   fluidStepCount = 0;
   lastStateSequence = 0;
+  captureRunGeneration += 1;
+  const runGeneration = captureRunGeneration;
   running = true;
   toggle.textContent = 'Stop Hand';
   toggle.dataset.running = 'true';
-  captureTimer = window.setInterval(() => void captureFrame(), captureIntervalMs);
+  captureTimer = window.setInterval(() => void captureFrame(runGeneration), captureIntervalMs);
   void streamState();
-  await captureFrame();
+  await captureFrame(runGeneration);
 }
 
 async function stop(): Promise<void> {
   running = false;
+  captureRunGeneration += 1;
   if (captureTimer !== null) window.clearInterval(captureTimer);
   captureTimer = null;
+  capturePostAbortController?.abort();
+  capturePostAbortController = null;
+  disposeCaptureWorker(new Error('hand control stopped'));
   stateAbortController?.abort();
   stateAbortController = null;
   stream?.getTracks().forEach(track => track.stop());
@@ -517,9 +654,13 @@ function animate(now: number): void {
 
 window.addEventListener('resize', resize);
 window.addEventListener('beforeunload', () => {
+  running = false;
+  captureRunGeneration += 1;
+  capturePostAbortController?.abort();
   stateAbortController?.abort();
   stream?.getTracks().forEach(track => track.stop());
-  if (running) navigator.sendBeacon?.(`${runtimeUrl}/sidecar/stop`, new Blob([], { type: 'application/octet-stream' }));
+  navigator.sendBeacon?.(`${runtimeUrl}/sidecar/stop`, new Blob([], { type: 'application/octet-stream' }));
+  disposeCaptureWorker(new Error('viewer closed'));
   fluidSolver?.destroy();
 });
 
@@ -543,6 +684,16 @@ Object.assign(window, {
     benchmarkDroppedBeforeRender,
     benchmarkError: lastBenchmarkError,
     benchmark: latencySamples.length ? summarizeLiveHandLatency(latencySamples) : null,
+    capture: {
+      route: LIVE_HAND_CAPTURE_WORKER_ROUTE,
+      workerActive: Boolean(captureWorker),
+      workerError: captureWorkerError,
+      acquireMs: distribution(captureAcquireMs),
+      workerEncodeMs: distribution(captureWorkerEncodeMs),
+      replyDeadlineMs: LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
+      runGeneration: captureRunGeneration,
+      inFlight: captureInFlightGeneration !== null,
+    },
     fluid: fluidSolver?.available ? {
       pinnedRevision: KAMINOS_FLUID_REVISION,
       inletContract: KAMINOS_FINGER_FLUID_LIVE_INLET_CONTRACT,

@@ -40,7 +40,7 @@
       #status[data-state="error"] { color: #ef968b; }
       #route-truth { margin-top: 7px; color: #547879; font-size: 9px; line-height: 1.55; }
       #receipt { position: absolute; z-index: 2; left: 16px; bottom: 14px; color: #345354; font-size: 9px; }
-      video, #capture-canvas { display: none; }
+      video { display: none; }
     </style>
   </head>
   <body>
@@ -53,7 +53,6 @@
     </section>
     <div id="receipt">LERMS / hand-state-runtime</div>
     <video id="camera" playsinline muted></video>
-    <canvas id="capture-canvas"></canvas>
     <script type="module" src="/src/hand/live-hand.ts"></script>
   </body>
 </html>
