@@ -11,6 +11,12 @@ import {
   isCaptureRunCurrent,
   normalizeCaptureWorkerResult,
 } from '../src/hand/live-hand-capture-contract.js';
+import {
+  LIVE_HAND_FLUID_FRAME_INTERVAL_MS,
+  LIVE_HAND_FLUID_MAX_DEFERRAL_MS,
+  decideLiveHandFrameWork,
+  shouldKeepHandPresentationPriority,
+} from '../src/hand/live-hand-frame-budget.js';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -76,6 +82,62 @@ assertThrows(
   'nonblank JPEG',
 );
 
+assert(LIVE_HAND_FLUID_FRAME_INTERVAL_MS === 1000 / 30, 'fluid cadence is explicitly bounded to 30 Hz');
+assert(LIVE_HAND_FLUID_MAX_DEFERRAL_MS === 100, 'continuous hand motion cannot starve fluid beyond 100ms');
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 100,
+    previousFrameAtMs: 92,
+    lastFluidSubmitAtMs: 50,
+    handStatePending: true,
+  }).reason === 'hand_state_priority',
+  'a newly received hand state gets the next presentation frame without fluid queued ahead of it',
+);
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 100,
+    previousFrameAtMs: 92,
+    lastFluidSubmitAtMs: 80,
+    handStatePending: false,
+  }).reason === 'cadence_wait',
+  'fluid work does not follow a 120 Hz display cadence',
+);
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 100,
+    previousFrameAtMs: 10,
+    lastFluidSubmitAtMs: 0,
+    handStatePending: false,
+  }).reason === 'hitch_recovery',
+  'the first frame after a long hitch drains presentation work instead of immediately refilling the GPU queue',
+);
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 100,
+    previousFrameAtMs: 92,
+    lastFluidSubmitAtMs: 60,
+    handStatePending: false,
+  }).runFluid,
+  'fluid advances when its bounded cadence is due and interaction presentation is clear',
+);
+assert(
+  decideLiveHandFrameWork({
+    nowMs: 200,
+    previousFrameAtMs: 192,
+    lastFluidSubmitAtMs: 90,
+    handStatePending: true,
+  }).reason === 'fluid_liveness',
+  'continuous hand convergence grants fluid a bounded liveness submission',
+);
+assert(
+  shouldKeepHandPresentationPriority({ handStatePending: true, interpolationUnsettled: true }),
+  'hand presentation priority survives until the received state has visibly converged',
+);
+assert(
+  !shouldKeepHandPresentationPriority({ handStatePending: true, interpolationUnsettled: false }),
+  'hand presentation priority clears once the received state has visibly converged',
+);
+
 const recordedSurface = normalizeManoSurface({ available: true, vertices, faces });
 assert(recordedSurface.vertexCount === 778 && recordedSurface.faceCount === 1538, 'recorded fixture uses the real topology contract');
 const objectVertices = vertices.map(([x, y, z]) => ({ x, y, z }));
@@ -139,16 +201,16 @@ const sample = {
   manoVertexCount: 778,
   manoFaceCount: 1538,
   modelLatencyMs: 61,
-  captureToRenderCompleteMs: 92,
+  captureToWebglRenderReturnMs: 92,
 };
 const summary = summarizeLiveHandLatency([
   sample,
-  { ...sample, frameId: 'frame-43', modelLatencyMs: 63, captureToRenderCompleteMs: 97 },
-  { ...sample, frameId: 'frame-44', modelLatencyMs: 70, captureToRenderCompleteMs: 110 },
+  { ...sample, frameId: 'frame-43', modelLatencyMs: 63, captureToWebglRenderReturnMs: 97 },
+  { ...sample, frameId: 'frame-44', modelLatencyMs: 70, captureToWebglRenderReturnMs: 110 },
 ]);
 assert(summary.sampleCount === 3, 'counts live samples');
 assert(summary.modelLatencyMs.p50 === 63, 'reports model p50');
-assert(summary.captureToRenderCompleteMs.p95 === 110, 'reports capture-to-render p95');
+assert(summary.captureToWebglRenderReturnMs.p95 === 110, 'reports capture-to-WebGL-return p95');
 
 assertThrows(
   () => summarizeLiveHandLatency([{ ...sample, effectiveRoute: 'unknown' }]),

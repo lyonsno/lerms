@@ -25,6 +25,12 @@ import {
   type LiveHandCaptureWorkerResult,
 } from './live-hand-capture-contract.js';
 import {
+  LIVE_HAND_FLUID_PIXEL_RATIO_CAP,
+  decideLiveHandFrameWork,
+  shouldKeepHandPresentationPriority,
+  type LiveHandFrameWorkReason,
+} from './live-hand-frame-budget.js';
+import {
   KAMINOS_FLUID_REVISION,
   LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
   LIVE_FLUID_CAMERA,
@@ -102,16 +108,29 @@ let runtimeRoute: RuntimeRouteTruth | null = null;
 let targetPositions: Float32Array | null = null;
 let currentPositions: Float32Array | null = null;
 let topologySignature = '';
+let handPresentationPending = false;
 let fluidSolver: FingerFluidSolver | null = null;
 let fluidInitialization: Promise<FingerFluidSolver> | null = null;
 let fluidError: string | null = null;
 let latestFluidPacket: LiveFingerFluidPacket | null = null;
 let fluidStepCount = 0;
-let combinedLastFrameAt = 0;
+let lastAnimationFrameAt = 0;
+let lastFluidSubmitAt = 0;
 let captureWorker: Worker | null = null;
 let captureWorkerError: string | null = null;
-const combinedFrameIntervalsMs: number[] = [];
+const animationFrameIntervalsMs: number[] = [];
+const fluidSubmitIntervalsMs: number[] = [];
 const combinedCpuSubmitMs: number[] = [];
+const handRenderCpuMs: number[] = [];
+const fluidStepCpuMs: number[] = [];
+const fluidRenderCpuMs: number[] = [];
+const fluidFrameDecisionCounts: Record<LiveHandFrameWorkReason, number> = {
+  fluid_due: 0,
+  fluid_liveness: 0,
+  hand_state_priority: 0,
+  hitch_recovery: 0,
+  cadence_wait: 0,
+};
 const captureAcquireMs: number[] = [];
 const captureWorkerEncodeMs: number[] = [];
 const pendingCaptureWorkerResults = new Map<string, {
@@ -136,6 +155,11 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   captureToSidecarPublishMs: number;
   publishToViewerReceiveMs: number;
   captureToViewerReceiveMs: number;
+  viewerReceiveToWebglRenderReturnMs?: number;
+  handRenderCpuMs?: number;
+  interactionFrameIntervalMs?: number;
+  interactionFrameFluidDecision?: LiveHandFrameWorkReason;
+  renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented';
 }
 
 let benchmarkSessionId = '';
@@ -196,6 +220,7 @@ function updateSurface(surface: NormalizedManoSurface): void {
 
 function updateHandSurface(frame: NormalizedManoFrame): void {
   updateSurface(frame);
+  handPresentationPending = true;
   if (fluidSolver?.available) {
     latestFluidPacket = createLiveFingerFluidEmitterPacket({
       eventSequence: frame.eventSequence,
@@ -243,7 +268,7 @@ async function ensureFluidSolver(): Promise<FingerFluidSolver> {
       solver.render({
         width: window.innerWidth,
         height: window.innerHeight,
-        pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+        pixelRatio: Math.min(window.devicePixelRatio || 1, LIVE_HAND_FLUID_PIXEL_RATIO_CAP),
         ...LIVE_FLUID_CAMERA,
       });
       setRouteTruth();
@@ -493,12 +518,13 @@ function applyState(state: Record<string, unknown>): void {
         captureToSidecarPublishMs: frame.captureToSidecarPublishMs,
         publishToViewerReceiveMs: Math.max(0, captureToViewerReceiveMs - frame.captureToSidecarPublishMs),
         captureToViewerReceiveMs,
-        captureToRenderCompleteMs: -1,
+        captureToWebglRenderReturnMs: -1,
+        renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented',
       };
       captureMetricsByFrame.delete(frame.frameId);
     }
     const tail = latencySamples.length ? summarizeLiveHandLatency(latencySamples) : null;
-    const receipt = tail ? ` | e2e p50 ${tail.captureToRenderCompleteMs.p50.toFixed(0)} p95 ${tail.captureToRenderCompleteMs.p95.toFixed(0)}ms` : '';
+    const receipt = tail ? ` | webgl-return p50 ${tail.captureToWebglRenderReturnMs.p50.toFixed(0)} p95 ${tail.captureToWebglRenderReturnMs.p95.toFixed(0)}ms` : '';
     setStatus(`live MANO | model ${frame.modelLatencyMs.toFixed(0)}ms${receipt}`, 'live');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -550,10 +576,19 @@ async function start(): Promise<void> {
   await video.play();
   await runtimeFetch('/sidecar/start', { method: 'POST' });
   resetBenchmark();
-  combinedFrameIntervalsMs.length = 0;
+  animationFrameIntervalsMs.length = 0;
+  fluidSubmitIntervalsMs.length = 0;
   combinedCpuSubmitMs.length = 0;
-  combinedLastFrameAt = 0;
+  lastAnimationFrameAt = 0;
+  lastFluidSubmitAt = 0;
+  handPresentationPending = false;
   fluidStepCount = 0;
+  handRenderCpuMs.length = 0;
+  fluidStepCpuMs.length = 0;
+  fluidRenderCpuMs.length = 0;
+  for (const reason of Object.keys(fluidFrameDecisionCounts) as LiveHandFrameWorkReason[]) {
+    fluidFrameDecisionCounts[reason] = 0;
+  }
   lastStateSequence = 0;
   captureRunGeneration += 1;
   const runGeneration = captureRunGeneration;
@@ -621,35 +656,61 @@ function animate(now: number): void {
   requestAnimationFrame(animate);
   if (!running && !fixtureMode) return;
   const cpuStartedAt = performance.now();
-  updateInterpolatedSurface();
+  const handStatePending = handPresentationPending;
+  const frameDecision = decideLiveHandFrameWork({
+    nowMs: now,
+    previousFrameAtMs: lastAnimationFrameAt,
+    lastFluidSubmitAtMs: lastFluidSubmitAt,
+    handStatePending,
+  });
+  lastAnimationFrameAt = now;
+  if (frameDecision.animationFrameIntervalMs > 0) {
+    animationFrameIntervalsMs.push(frameDecision.animationFrameIntervalMs);
+  }
+  fluidFrameDecisionCounts[frameDecision.reason] += 1;
+  const interpolationUnsettled = updateInterpolatedSurface();
   if (handMesh.visible && now - lastLiveAt > 1200 && running) handMaterial.emissive.setHex(0x101c1c);
   else handMaterial.emissive.setHex(0x000000);
-  if (running && fluidSolver?.available) {
-    if (latestFluidPacket && !isLiveFingerFluidPacketFresh(latestFluidPacket)) {
-      deactivateFluidInlets('hand_state_packet_expired');
-    }
-    const frameIntervalMs = combinedLastFrameAt > 0 ? now - combinedLastFrameAt : 0;
-    combinedLastFrameAt = now;
-    if (frameIntervalMs > 0) combinedFrameIntervalsMs.push(frameIntervalMs);
-    fluidSolver.step(Math.min(1 / 30, Math.max(1 / 240, frameIntervalMs > 0 ? frameIntervalMs / 1000 : 1 / 60)));
-    fluidSolver.render({
-      width: window.innerWidth,
-      height: window.innerHeight,
-      pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
-      ...LIVE_FLUID_CAMERA,
-    });
-    fluidStepCount += 1;
-  }
+  const handRenderStartedAt = performance.now();
   renderer.render(scene, camera);
-  if (running) combinedCpuSubmitMs.push(performance.now() - cpuStartedAt);
+  const handRenderDurationMs = performance.now() - handRenderStartedAt;
+  handRenderCpuMs.push(handRenderDurationMs);
+  handPresentationPending = shouldKeepHandPresentationPriority({
+    handStatePending,
+    interpolationUnsettled,
+  });
   if (pendingLatencySample) {
     const sample = pendingLatencySample;
     pendingLatencySample = null;
-    sample.captureToRenderCompleteMs = Math.max(0, Date.now() - sample.captureTimestampMs);
+    sample.captureToWebglRenderReturnMs = Math.max(0, Date.now() - sample.captureTimestampMs);
+    sample.viewerReceiveToWebglRenderReturnMs = Math.max(0, Date.now() - sample.viewerReceiveTimestampMs);
+    sample.handRenderCpuMs = handRenderDurationMs;
+    sample.interactionFrameIntervalMs = frameDecision.animationFrameIntervalMs;
+    sample.interactionFrameFluidDecision = frameDecision.reason;
     latencySamples.push(sample);
     unflushedLatencySamples.push(sample);
     scheduleLatencyFlush();
   }
+  if (running && fluidSolver?.available && frameDecision.runFluid) {
+    if (latestFluidPacket && !isLiveFingerFluidPacketFresh(latestFluidPacket)) {
+      deactivateFluidInlets('hand_state_packet_expired');
+    }
+    const fluidStepStartedAt = performance.now();
+    fluidSolver.step(1 / 30);
+    fluidStepCpuMs.push(performance.now() - fluidStepStartedAt);
+    const fluidRenderStartedAt = performance.now();
+    fluidSolver.render({
+      width: window.innerWidth,
+      height: window.innerHeight,
+      pixelRatio: Math.min(window.devicePixelRatio || 1, LIVE_HAND_FLUID_PIXEL_RATIO_CAP),
+      ...LIVE_FLUID_CAMERA,
+    });
+    fluidRenderCpuMs.push(performance.now() - fluidRenderStartedAt);
+    if (lastFluidSubmitAt > 0) fluidSubmitIntervalsMs.push(Math.max(0, now - lastFluidSubmitAt));
+    lastFluidSubmitAt = now;
+    fluidStepCount += 1;
+  }
+  if (running) combinedCpuSubmitMs.push(performance.now() - cpuStartedAt);
 }
 
 window.addEventListener('resize', resize);
@@ -701,8 +762,14 @@ Object.assign(window, {
       defaultParticleCount: KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT,
       stepCount: fluidStepCount,
       activeEmitterCount: latestFluidPacket?.emitters.filter(emitter => emitter.active).length || 0,
-      frameIntervalMs: distribution(combinedFrameIntervalsMs),
+      animationFrameIntervalMs: distribution(animationFrameIntervalsMs),
+      fluidSubmitIntervalMs: distribution(fluidSubmitIntervalsMs),
       cpuSubmitMs: distribution(combinedCpuSubmitMs),
+      handRenderCpuMs: distribution(handRenderCpuMs),
+      fluidStepCpuMs: distribution(fluidStepCpuMs),
+      fluidRenderCpuMs: distribution(fluidRenderCpuMs),
+      frameDecisionCounts: { ...fluidFrameDecisionCounts },
+      pixelRatioCap: LIVE_HAND_FLUID_PIXEL_RATIO_CAP,
       solver: fluidSolver.getDebugState(),
     } : { available: false, error: fluidError },
   }),

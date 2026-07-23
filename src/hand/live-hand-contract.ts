@@ -55,7 +55,7 @@ export interface LiveHandLatencySample {
   manoVertexCount: number;
   manoFaceCount: number;
   modelLatencyMs: number;
-  captureToRenderCompleteMs: number;
+  captureToWebglRenderReturnMs: number;
 }
 
 export interface Distribution {
@@ -75,7 +75,7 @@ export interface LiveHandLatencySummary {
   manoVertexCount: typeof MANO_VERTEX_COUNT;
   manoFaceCount: typeof MANO_FACE_COUNT;
   modelLatencyMs: Distribution;
-  captureToRenderCompleteMs: Distribution;
+  captureToWebglRenderReturnMs: Distribution;
 }
 
 type RecordLike = Record<string, unknown>;
@@ -263,7 +263,7 @@ export function summarizeLiveHandLatency(samples: readonly LiveHandLatencySample
       throw new Error(`sample lacks ${MANO_VERTEX_COUNT}/${MANO_FACE_COUNT} MANO topology`);
     }
     finiteNonNegative(sample.modelLatencyMs, 'modelLatencyMs');
-    finiteNonNegative(sample.captureToRenderCompleteMs, 'captureToRenderCompleteMs');
+    finiteNonNegative(sample.captureToWebglRenderReturnMs, 'captureToWebglRenderReturnMs');
   }
   return {
     schema: 'lerms.live-hand-latency-summary.v0',
@@ -272,6 +272,6 @@ export function summarizeLiveHandLatency(samples: readonly LiveHandLatencySample
     manoVertexCount: MANO_VERTEX_COUNT,
     manoFaceCount: MANO_FACE_COUNT,
     modelLatencyMs: distribution(samples.map(sample => sample.modelLatencyMs)),
-    captureToRenderCompleteMs: distribution(samples.map(sample => sample.captureToRenderCompleteMs)),
+    captureToWebglRenderReturnMs: distribution(samples.map(sample => sample.captureToWebglRenderReturnMs)),
   };
 }
