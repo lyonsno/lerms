@@ -14,7 +14,14 @@ import type {
 export const HILL_FLUID_PACKAGE_ADAPTER_FRAME_SCHEMA = 'lerms.hill-of-hills.watershed-package-adapter-frame.v0' as const;
 export const HILL_FLUID_PACKAGE_BLOCKED_REPORT_SCHEMA = 'lerms.hill-of-hills.watershed-package-blocked-report.v0' as const;
 
-const REQUIRED_METRIC_CHANNELS = ['height', 'previousHeight', 'heightDelta', 'surfaceVelocityY'] as const;
+const STABLE_FLUID_METRIC_CHANNELS = ['height', 'wetness', 'routePressure', 'surfaceVelocityY'] as const;
+const SIGNED_TERRAIN_EVIDENCE_CHANNELS = [
+  'topologyDeformation',
+  'topologyVelocity',
+  'topologyForce',
+  'hillSwellMembership',
+  'hillSlumpMembership'
+] as const;
 
 export interface HillFluidPhysicalScale {
   metersPerWorldUnit: number;
@@ -53,6 +60,7 @@ export interface HillFluidPackageAdapterFrame {
     domainBounds: HillOfHillsTerrainBuffer['witness']['supportFrame']['domainBounds'];
     gridResolution: HillOfHillsTerrainBuffer['gridResolution'];
     sampleCount: number;
+    heightRange: HillOfHillsTerrainBuffer['heightRange'];
   };
   channels: {
     positions: Float32Array;
@@ -61,6 +69,8 @@ export interface HillFluidPackageAdapterFrame {
     regionCodes: Uint8Array;
     materialCodes: Uint8Array;
     metricLayout: readonly HillOfHillsTerrainBufferMetricChannel[];
+    stableFluidMetricChannels: typeof STABLE_FLUID_METRIC_CHANNELS;
+    signedTerrainEvidenceChannels: typeof SIGNED_TERRAIN_EVIDENCE_CHANNELS;
   };
   providerBinding: {
     status: 'awaiting_canonical_package';
@@ -162,7 +172,8 @@ export function createHillFluidPackageAdapterFrame(
       worldBounds: support.worldBounds,
       domainBounds: support.domainBounds,
       gridResolution: terrainBuffer.gridResolution,
-      sampleCount: terrainBuffer.sampleCount
+      sampleCount: terrainBuffer.sampleCount,
+      heightRange: terrainBuffer.heightRange
     },
     channels: {
       positions: terrainBuffer.positions,
@@ -170,7 +181,9 @@ export function createHillFluidPackageAdapterFrame(
       metrics: terrainBuffer.metrics,
       regionCodes: terrainBuffer.regionCodes,
       materialCodes: terrainBuffer.materialCodes,
-      metricLayout: terrainBuffer.channelLayout.metrics
+      metricLayout: terrainBuffer.channelLayout.metrics,
+      stableFluidMetricChannels: STABLE_FLUID_METRIC_CHANNELS,
+      signedTerrainEvidenceChannels: SIGNED_TERRAIN_EVIDENCE_CHANNELS
     },
     providerBinding: {
       status: 'awaiting_canonical_package',
@@ -227,9 +240,14 @@ export function assertHillFluidPackageAdapterFrame(frame: HillFluidPackageAdapte
   if (frame.channels.materialCodes.length !== frame.terrain.sampleCount) {
     throw new Error('Hill package adapter material codes are partial for sample count');
   }
-  for (const channel of REQUIRED_METRIC_CHANNELS) {
+  for (const channel of STABLE_FLUID_METRIC_CHANNELS) {
     if (!frame.channels.metricLayout.includes(channel)) {
-      throw new Error(`Hill package adapter is missing required metric channel ${channel}`);
+      throw new Error(`Hill package adapter is missing stable fluid metric channel ${channel}`);
+    }
+  }
+  for (const channel of SIGNED_TERRAIN_EVIDENCE_CHANNELS) {
+    if (!frame.channels.metricLayout.includes(channel)) {
+      throw new Error(`Hill package adapter is missing signed terrain evidence channel ${channel}`);
     }
   }
   if (frame.providerBinding.status !== 'awaiting_canonical_package' || frame.providerBinding.canonicalTerrainFluidFrameSchema !== null) {
