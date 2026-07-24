@@ -615,6 +615,9 @@ function escapeXml(value: string): string {
     .replaceAll('"', '&quot;');
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   process.exitCode = runHillHordeLiveTraversalWitnessCli();
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   mkdtempSync,
   readFileSync,
@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type {
   LermHordeProducerHistoryCompositionReceipt,
@@ -379,5 +380,20 @@ assert.deepEqual(
   originalProducerBytes,
   'invalid output collision must not overwrite a protected producer receipt',
 );
+
+const compiledCliFailure = join(cliDir, 'compiled-cli-failure.json');
+const compiledCli = fileURLToPath(
+  new URL('../src/hill-horde-live-traversal-admission-witness.js', import.meta.url),
+);
+const compiledCliRun = spawnSync(
+  process.execPath,
+  [compiledCli, '--report-out', compiledCliFailure],
+  { encoding: 'utf8' },
+);
+assert.equal(compiledCliRun.status, 1);
+const compiledCliReport = JSON.parse(readFileSync(compiledCliFailure, 'utf8'));
+assert.equal(compiledCliReport.ok, false);
+assert.equal(compiledCliReport.failurePhase, 'argument-parse');
+assert.match(compiledCliRun.stderr, /missing required --horde-report/);
 
 console.log('Hill Horde live traversal admission contracts ok');
