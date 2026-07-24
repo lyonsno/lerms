@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +9,10 @@ import {
   composeLermHordeProducerHistory,
   type LermHordeProducerModule
 } from '../src/lerm-horde-producer-history-composition.js';
-import { runLermHordeProducerHistoryWitnessCli } from '../src/lerm-horde-producer-history-witness.js';
+import {
+  readCurrentGitBranch,
+  runLermHordeProducerHistoryWitnessCli
+} from '../src/lerm-horde-producer-history-witness.js';
 
 const transitionCache = new Map<string, {
   admissible: boolean;
@@ -74,14 +77,28 @@ const receipt = await composeLermHordeProducerHistory({
   registration: { schema: 'kaminos.axial-crawler-registration.v0' },
   lermsRevision: 'lerms-test-revision',
   producerBranch: 'cc/mushfinger-motion-ready-719024-0720',
-  producerRevision: 'ced6db3d',
+  producerCheckoutBranch: 'fixture-producer-checkout',
+  producerRevision: 'ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58',
   producerModuleSha256: 'producer-module-test-sha'
 });
 
 assert.equal(receipt.ok, true);
 assert.equal(receipt.schema, LERM_HORDE_PRODUCER_HISTORY_RECEIPT_SCHEMA);
 assert.equal(receipt.phase, 'complete');
-assert.equal(receipt.history.producer.revision, 'ced6db3d');
+assert.equal(
+  receipt.producer.sourceBranch,
+  'cc/mushfinger-motion-ready-719024-0720',
+  'the producer source-contract branch must be labeled separately'
+);
+assert.equal(
+  receipt.producer.checkoutBranch,
+  'fixture-producer-checkout',
+  'the producer checkout branch must preserve observed Git identity'
+);
+assert.equal(
+  receipt.history.producer.revision,
+  'ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58'
+);
 assert.equal(receipt.history.producer.creatureId, 'motion-ready-719024');
 assert.equal(receipt.history.producer.railId, 'fixture-rail');
 assert.equal(receipt.producer.routeSelection.candidateId, 'right-longitudinal-wide');
@@ -137,10 +154,11 @@ await assert.rejects(
     registration: {},
     lermsRevision: 'lerms-test-revision',
     producerBranch: 'cc/mushfinger-motion-ready-719024-0720',
+    producerCheckoutBranch: 'fixture-producer-checkout',
     producerRevision: 'wrong-revision',
     producerModuleSha256: 'producer-module-test-sha'
   }),
-  /producer revision must be immutable ced6db3d/,
+  /producer revision must be immutable ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58/,
   'a stale or substituted producer revision must fail before composition'
 );
 
@@ -185,5 +203,45 @@ assert.equal(
 const subprocessFailureReport = JSON.parse(readFileSync(subprocessFailurePath, 'utf8'));
 assert.equal(subprocessFailureReport.ok, false);
 assert.equal(subprocessFailureReport.failurePhase, 'input-validation');
+
+const producerIdentityRepo = mkdtempSync(join(tmpdir(), 'lerm-horde-producer-identity-'));
+execFileSync(
+  'git',
+  ['init', '--initial-branch', 'fixture-observed-producer'],
+  { cwd: producerIdentityRepo, stdio: 'ignore' }
+);
+assert.equal(
+  readCurrentGitBranch(producerIdentityRepo),
+  'fixture-observed-producer',
+  'producer checkout identity must be measured from the supplied repository'
+);
+await assert.rejects(
+  () => composeLermHordeProducerHistory({
+    producerModule,
+    registration: { schema: 'kaminos.axial-crawler-registration.v0' },
+    lermsRevision: 'lerms-test-revision',
+    producerBranch: 'cc/mushfinger-motion-ready-719024-0720',
+    producerCheckoutBranch: '',
+    producerRevision: 'ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58',
+    producerModuleSha256: 'producer-module-test-sha'
+  }),
+  /observed producer checkout branch is required/,
+  'a detached producer checkout must not emit a receipt claiming the source branch'
+);
+
+const reproductionReadme = readFileSync(
+  join(process.cwd(), 'artifacts/lerm-horde-producer-history/README.md'),
+  'utf8'
+);
+assert.match(
+  reproductionReadme,
+  /--out artifacts\/lerm-horde-producer-history\/receipt\.json/,
+  'the checked-in reproduction command must use the executable output flag'
+);
+assert.doesNotMatch(
+  reproductionReadme,
+  /--output|--expected-producer-revision/,
+  'the checked-in reproduction command must not advertise unsupported CLI flags'
+);
 
 console.log('lerm horde producer history composition contracts ok');

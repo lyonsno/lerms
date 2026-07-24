@@ -8,7 +8,8 @@ Kaminos creature-motion producer into Hill of Hills' reviewed
 
 - LERMS candidate: `cc/lerm-horde-live-producer-history-0723@9dbe0452476b451c1a23f0a999bcda19d7fa40ff`
 - Hill base: `cc/hill-producer-contact-history-0723@653175725ed695094a7420247ef4b9f96b988125`
-- Producer: `cc/mushfinger-motion-ready-719024-0720@ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58`
+- Producer source: `cc/mushfinger-motion-ready-719024-0720@ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58`
+- Producer checkout: `cc/lerm-horde-producer-ced6db3d@ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58`
 - Producer module SHA-256: `ffce984721d00468856e70bd0805961a852d8690bcd402d1dc5ae96ad1ec88f0`
 - Receipt SHA-256: `9c042f7b4f8e99ee9680aa33db9fe765b0577e6914e35e683da7fae2a46a5b3c`
 
@@ -37,8 +38,7 @@ From the clean LERMS candidate worktree at the revision above:
 npm run witness:lerm-horde-producer-history -- \
   --lerms-repo-root /private/tmp/lerms-lerm-horde-live-producer-history-0723 \
   --producer-repo-root /private/tmp/kaminos-lerm-horde-producer-ced6db3d \
-  --expected-producer-revision ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58 \
-  --output artifacts/lerm-horde-producer-history/receipt.json
+  --out artifacts/lerm-horde-producer-history/receipt.json
 ```
 
 The witness rejects dirty source inputs, wrong revisions, fallback routes,

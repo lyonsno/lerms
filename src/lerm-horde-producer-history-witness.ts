@@ -80,11 +80,8 @@ export async function runLermHordeProducerHistoryWitnessCli(
     const lermsBranch = git(lermsRepoRoot, 'branch', '--show-current');
     const lermsDirty = git(lermsRepoRoot, 'status', '--porcelain');
     const producerRevision = git(producerRepoRoot, 'rev-parse', 'HEAD');
-    const expectedProducerRevision = git(
-      producerRepoRoot,
-      'rev-parse',
-      LERM_HORDE_PRODUCER_REVISION
-    );
+    const producerCheckoutBranch = readCurrentGitBranch(producerRepoRoot);
+    const expectedProducerRevision = LERM_HORDE_PRODUCER_REVISION;
     const dirtyProducerInputs = git(
       producerRepoRoot,
       'status',
@@ -97,7 +94,8 @@ export async function runLermHordeProducerHistoryWitnessCli(
       lermsBranch,
       lermsRevision,
       lermsDirty,
-      producerBranch: EXPECTED_PRODUCER_BRANCH,
+      expectedProducerBranch: EXPECTED_PRODUCER_BRANCH,
+      producerCheckoutBranch,
       producerRevision,
       expectedProducerRevision,
       dirtyProducerInputs
@@ -110,6 +108,9 @@ export async function runLermHordeProducerHistoryWitnessCli(
     }
     if (producerRevision !== expectedProducerRevision) {
       throw new Error(`producer checkout must be exact ${LERM_HORDE_PRODUCER_REVISION}`);
+    }
+    if (!producerCheckoutBranch) {
+      throw new Error('producer checkout must expose an observed branch identity');
     }
     if (dirtyProducerInputs) {
       throw new Error('producer module and registration inputs must be clean');
@@ -129,6 +130,7 @@ export async function runLermHordeProducerHistoryWitnessCli(
       registration,
       lermsRevision,
       producerBranch: EXPECTED_PRODUCER_BRANCH,
+      producerCheckoutBranch,
       producerRevision: LERM_HORDE_PRODUCER_REVISION,
       producerModuleSha256
     });
@@ -204,6 +206,10 @@ function git(repoRoot: string, ...args: string[]): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   }).trim();
+}
+
+export function readCurrentGitBranch(repoRoot: string): string {
+  return git(repoRoot, 'branch', '--show-current');
 }
 
 function writeJson(path: string, payload: unknown): void {

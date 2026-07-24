@@ -21,7 +21,8 @@ export const LERM_HORDE_PRODUCER_HISTORY_ROUTE =
   'lerms/lerm-horde/live-producer-history-composition' as const;
 export const LERM_HORDE_HILL_REVISION =
   '653175725ed695094a7420247ef4b9f96b988125' as const;
-export const LERM_HORDE_PRODUCER_REVISION = 'ced6db3d' as const;
+export const LERM_HORDE_PRODUCER_REVISION =
+  'ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58' as const;
 
 const SAMPLE_COUNT = 15;
 const DESIRED_SPEED = 1.25;
@@ -91,6 +92,7 @@ export interface LermHordeProducerHistoryCompositionOptions {
   registration: unknown;
   lermsRevision: string;
   producerBranch: string;
+  producerCheckoutBranch: string;
   producerRevision: string;
   producerModuleSha256: string;
   episodeId?: string;
@@ -109,7 +111,8 @@ export interface LermHordeProducerHistoryCompositionReceipt {
   };
   producer: {
     repository: 'kaminos';
-    branch: string;
+    sourceBranch: string;
+    checkoutBranch: string;
     revision: string;
     moduleSha256: string;
     creatureId: typeof CREATURE_ID;
@@ -420,7 +423,8 @@ export async function composeLermHordeProducerHistory(
     },
     producer: {
       repository: 'kaminos',
-      branch: options.producerBranch,
+      sourceBranch: options.producerBranch,
+      checkoutBranch: options.producerCheckoutBranch,
       revision: options.producerRevision,
       moduleSha256: options.producerModuleSha256,
       creatureId: CREATURE_ID,
@@ -527,7 +531,10 @@ function validateCompositionOptions(options: LermHordeProducerHistoryComposition
     }
   }
   if (!options.lermsRevision?.trim()) throw new Error('LERMS revision is required');
-  if (!options.producerBranch?.trim()) throw new Error('producer branch is required');
+  if (!options.producerBranch?.trim()) throw new Error('producer source branch is required');
+  if (!options.producerCheckoutBranch?.trim()) {
+    throw new Error('observed producer checkout branch is required');
+  }
   if (options.producerRevision !== LERM_HORDE_PRODUCER_REVISION) {
     throw new Error(`producer revision must be immutable ${LERM_HORDE_PRODUCER_REVISION}`);
   }
