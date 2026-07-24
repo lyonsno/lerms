@@ -38,6 +38,7 @@ import {
 } from './live-hand-landmarker-contract.js';
 import {
   planLiveHandSourceFrame,
+  resolveLiveHandAnchorIntervalMs,
   type LiveHandSourceMode,
 } from './live-hand-source-scheduler.js';
 import {
@@ -75,7 +76,6 @@ const fixtureKind = params.get('fixture');
 const fixtureMode = fixtureKind === '1' || fixtureKind === 'articulated';
 const articulatedFixtureMode = fixtureKind === 'articulated';
 const fluidAssayMode = params.get('fluid_assay') === '1';
-const captureIntervalMs = 50;
 const maxFrameAgeMs = 750;
 const LIVE_FLUID_ENVELOPE_ASSAY_ROUTE = 'lerms.live-fluid-envelope.synthetic-assay.v0' as const;
 const ARTICULATED_FIXTURE_SCHEMA = 'lerms.articulated-mano-dense-fixture.v1' as const;
@@ -527,6 +527,8 @@ function updateHandSurface(frame: NormalizedManoFrame): void {
 }
 
 function deactivateFluidInlets(reason: string): void {
+  handMesh.visible = false;
+  handPresentationPending = false;
   latestFluidPacket = null;
   latestFluidFrame = null;
   latestLiveInletReceipt = fluidSolver?.setLiveInletPacket({
@@ -1077,7 +1079,7 @@ function handleCameraFrame(runGeneration: number): void {
       mode: sourceMode,
       nowMs: captureTimestampMs,
       lastAnchorCaptureAtMs,
-      anchorIntervalMs: captureIntervalMs,
+      anchorIntervalMs: resolveLiveHandAnchorIntervalMs(sourceMode),
       fastPathAvailable: sourceMode === 'pure_wilor' || landmarkerWorkerReady,
       fastPathInFlight: landmarkerInFlightCaptureId !== null,
       anchorInFlight: captureInFlightGeneration !== null,
@@ -1167,6 +1169,7 @@ function applyState(state: Record<string, unknown>): void {
     const frame = normalizeLiveManoFrame(state);
     const requestedRoute = sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE;
     if (frame.effectiveRoute !== requestedRoute) {
+      deactivateFluidInlets('unexpected_live_hand_route');
       setStatus(`waiting for ${requestedRoute} | observed ${frame.effectiveRoute}`);
       setRouteTruth(frame);
       return;
@@ -1180,12 +1183,8 @@ function applyState(state: Record<string, unknown>): void {
     setStatus(`live MANO | model ${frame.modelLatencyMs.toFixed(0)}ms${receipt}`, 'live');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('fresh live authority') || message.includes('MANO surface')) {
-      deactivateFluidInlets('invalid_or_stale_hand_state');
-      setStatus(`waiting for live MANO | ${message}`);
-      return;
-    }
-    setStatus(message, 'error');
+    deactivateFluidInlets('invalid_or_stale_hand_state');
+    setStatus(`waiting for live MANO | ${message}`, 'error');
   }
 }
 

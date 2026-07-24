@@ -13,7 +13,10 @@ import {
   normalizeCaptureWorkerResult,
 } from '../src/hand/live-hand-capture-contract.js';
 import { LiveHandLatencyReceiptJoiner } from '../src/hand/live-hand-latency-receipt.js';
-import { planLiveHandSourceFrame } from '../src/hand/live-hand-source-scheduler.js';
+import {
+  planLiveHandSourceFrame,
+  resolveLiveHandAnchorIntervalMs,
+} from '../src/hand/live-hand-source-scheduler.js';
 import {
   LIVE_HAND_LANDMARKER_ERROR_SCHEMA,
   LIVE_HAND_LANDMARKER_RESULT_SCHEMA,
@@ -244,7 +247,7 @@ const firstHybridCameraFrame = planLiveHandSourceFrame({
   mode: 'hybrid_mano',
   nowMs: 1_000,
   lastAnchorCaptureAtMs: null,
-  anchorIntervalMs: 50,
+  anchorIntervalMs: resolveLiveHandAnchorIntervalMs('hybrid_mano'),
   fastPathAvailable: true,
   fastPathInFlight: false,
   anchorInFlight: false,
@@ -254,7 +257,7 @@ const interAnchorCameraFrame = planLiveHandSourceFrame({
   mode: 'hybrid_mano',
   nowMs: 1_016,
   lastAnchorCaptureAtMs: 1_000,
-  anchorIntervalMs: 50,
+  anchorIntervalMs: resolveLiveHandAnchorIntervalMs('hybrid_mano'),
   fastPathAvailable: true,
   fastPathInFlight: false,
   anchorInFlight: false,
@@ -263,9 +266,9 @@ assert(interAnchorCameraFrame.submitFastPath, 'MediaPipe preserves camera cadenc
 assert(!interAnchorCameraFrame.submitAnchor, 'WiLoR remains on its lower-cadence correction schedule');
 const blockedHybridAnchor = planLiveHandSourceFrame({
   mode: 'hybrid_mano',
-  nowMs: 1_064,
+  nowMs: 1_216,
   lastAnchorCaptureAtMs: 1_000,
-  anchorIntervalMs: 50,
+  anchorIntervalMs: resolveLiveHandAnchorIntervalMs('hybrid_mano'),
   fastPathAvailable: true,
   fastPathInFlight: true,
   anchorInFlight: false,
@@ -278,12 +281,14 @@ const pureAnchor = planLiveHandSourceFrame({
   mode: 'pure_wilor',
   nowMs: 1_064,
   lastAnchorCaptureAtMs: 1_000,
-  anchorIntervalMs: 50,
+  anchorIntervalMs: resolveLiveHandAnchorIntervalMs('pure_wilor'),
   fastPathAvailable: false,
   fastPathInFlight: false,
   anchorInFlight: false,
 });
 assert(!pureAnchor.submitFastPath && pureAnchor.submitAnchor, 'pure WiLoR remains independent of browser-landmarker availability');
+assert(resolveLiveHandAnchorIntervalMs('pure_wilor') === 50, 'pure WiLoR preserves the current 20Hz request schedule');
+assert(resolveLiveHandAnchorIntervalMs('hybrid_mano') === 200, 'hybrid MANO starts the correction assay at 5Hz');
 
 const imageLandmarks = Array.from({ length: 21 }, (_, index) => ({ x: index / 20, y: 1 - index / 20, z: -index / 100 }));
 const worldLandmarks = imageLandmarks.map(point => ({ x: point.x - 0.5, y: 0.5 - point.y, z: point.z }));

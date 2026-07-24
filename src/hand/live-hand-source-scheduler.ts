@@ -1,5 +1,12 @@
 export type LiveHandSourceMode = 'pure_wilor' | 'hybrid_mano';
 
+export const PURE_WILOR_ANCHOR_INTERVAL_MS = 50;
+export const HYBRID_MANO_ANCHOR_INTERVAL_MS = 200;
+
+export function resolveLiveHandAnchorIntervalMs(mode: LiveHandSourceMode): number {
+  return mode === 'hybrid_mano' ? HYBRID_MANO_ANCHOR_INTERVAL_MS : PURE_WILOR_ANCHOR_INTERVAL_MS;
+}
+
 export interface LiveHandSourceFramePlanInput {
   mode: LiveHandSourceMode;
   nowMs: number;

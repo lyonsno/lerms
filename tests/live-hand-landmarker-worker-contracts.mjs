@@ -22,6 +22,31 @@ assert.match(liveHandSource, /postAnchorFrame\(runGeneration, captureId, capture
 assert.match(liveHandSource, /postLandmarkerFrame\(captureId, captureTimestampMs, sourceFrame/, 'the MediaPipe frame keeps the shared capture id');
 assert.match(liveHandSource, /runtimeFetch\('\/fast-landmarks'/, 'browser landmarks post to the runtime-owned fusion endpoint');
 assert.match(liveHandSource, /manoRegeneratorAvailable[\s\S]*native_mano_regeneration/, 'hybrid start fails before camera output when native MANO regeneration is unavailable');
+assert.match(
+  liveHandSource,
+  /anchorIntervalMs:\s*resolveLiveHandAnchorIntervalMs\(sourceMode\)/,
+  'the live loop applies the tested route-specific anchor cadence',
+);
+assert.match(
+  liveHandSource,
+  /function deactivateFluidInlets[\s\S]*handMesh\.visible = false[\s\S]*handPresentationPending = false/,
+  'invalid live authority immediately removes the previously visible hand',
+);
+assert.match(
+  liveHandSource,
+  /if \(frame\.effectiveRoute !== requestedRoute\) \{[\s\S]*deactivateFluidInlets\('unexpected_live_hand_route'\)/,
+  'a mismatched effective route cannot leave prior hand or fluid authority active',
+);
+assert.match(
+  liveHandSource,
+  /catch \(error\) \{[\s\S]*deactivateFluidInlets\('invalid_or_stale_hand_state'\)[\s\S]*setStatus/,
+  'every normalization or hybrid contract failure immediately invalidates prior presentation state',
+);
+assert.doesNotMatch(
+  liveHandSource,
+  /message\.includes\('fresh live authority'\)[\s\S]*message\.includes\('MANO surface'\)/,
+  'consumer invalidation is not restricted to two selected error strings',
+);
 assert.match(liveHandHtml, /id="hand-route-mode"[\s\S]*value="pure_wilor"[\s\S]*value="hybrid_mano"/, 'operator can switch the matched pure/hybrid route');
 
 console.log('live hand landmarker worker contracts ok');
