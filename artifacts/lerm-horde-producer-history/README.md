@@ -65,9 +65,9 @@ Route:
 - repo: `lerms`
 - worktree: `/private/tmp/lerms-hill-producer-history-operator-replay-0724`
 - branch: `cc/hill-producer-history-operator-replay-0724`
-- replay implementation: `d1f3e841f84ae1ebfb5a2ba2dd58495bf8c5eb7a`
+- replay implementation: `bd41fbae50e3299b935b404c51c9cab988b80978`
 - receipt input: `receipt.json` at SHA-256 `c56627554f5cacb8f151361419bfe70177e2d86490193e30b2f148a11b430b2e`
-- generated: `2026-07-24T00:57:47Z`
+- generated: `2026-07-24T01:06:00Z`
 - effective Hill route: `lerms/hill-of-hills/producer-contact-history-v0`
 - effective authority/backend/config: `live_simulation` / `cpu-live` / `hill-of-hills-live-v0`
 - replay profile: `lerm-horde-live-producer-history-v0`, seed `414`, grid `48x60`, terrain `12x15`, phase duration `600ms`
@@ -87,9 +87,9 @@ Images and reports:
 - `operator-replay.svg`: primary deterministic replay image; SHA-256
   `c80f05025997a109e503fbb052215881b00cd9d0192742d16db4a2fd8ab2411a`.
 - `operator-replay.json`: machine report with requested/effective source
-  identity, independently replayed checksums, assertion results, and primary
-  output status; SHA-256
-  `eacd59287f04f377a8cd7b9dbea3391e8156f83e1060c7775f89c022d130bbae`.
+  and output path identity, independently replayed checksums, assertion results,
+  and primary output status; SHA-256
+  `fb99fc1d752d206e117f779777d3d7119f66b691e77b3ca59d7334b03fe1ffe1`.
 
 This evidence does not prove a moving rendered creature, a final Lerm body,
 complete stance contacts, or that the current traffic material is the desired

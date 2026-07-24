@@ -92,5 +92,16 @@
     "svgSha256": "c80f05025997a109e503fbb052215881b00cd9d0192742d16db4a2fd8ab2411a",
     "primaryOutputWritten": true
   },
-  "failurePhase": null
+  "failurePhase": null,
+  "outputs": {
+    "requested": {
+      "imageOut": "artifacts/lerm-horde-producer-history/operator-replay.svg",
+      "reportOut": "artifacts/lerm-horde-producer-history/operator-replay.json"
+    },
+    "effective": {
+      "imageOut": "/private/tmp/lerms-hill-producer-history-operator-replay-0724/artifacts/lerm-horde-producer-history/operator-replay.svg",
+      "reportOut": "/private/tmp/lerms-hill-producer-history-operator-replay-0724/artifacts/lerm-horde-producer-history/operator-replay.json"
+    },
+    "imageSha256": "c80f05025997a109e503fbb052215881b00cd9d0192742d16db4a2fd8ab2411a"
+  }
 }
