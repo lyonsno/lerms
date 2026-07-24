@@ -51,6 +51,7 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   fastPathLatencyMs: number | null;
   fitResidualMean: number | null;
   fitResidualMax: number | null;
+  baselineResidualMean: number | null;
   calibrationDeterminant: number | null;
   calibrationResidualMean: number | null;
   calibrationResidualMax: number | null;
@@ -209,6 +210,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let fastPathLatencyMs: number | null = null;
   let fitResidualMean: number | null = null;
   let fitResidualMax: number | null = null;
+  let baselineResidualMean: number | null = null;
   let calibrationDeterminant: number | null = null;
   let calibrationResidualMean: number | null = null;
   let calibrationResidualMax: number | null = null;
@@ -235,6 +237,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     fastPathLatencyMs = finiteNonNegative(timing.fastPathLatencyMs, 'fastPathLatencyMs');
     fitResidualMean = finiteNonNegative(diagnostics.fitResidualMean, 'fitResidualMean');
     fitResidualMax = finiteNonNegative(diagnostics.fitResidualMax, 'fitResidualMax');
+    baselineResidualMean = finiteNonNegative(diagnostics.baselineResidualMean, 'baselineResidualMean');
     calibrationDeterminant = finite(diagnostics.calibrationDeterminant, 'calibrationDeterminant');
     if (Math.abs(calibrationDeterminant - 1) > 1e-6) {
       throw new Error('hybrid frame must carry a proper paired calibration');
@@ -289,6 +292,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     fastPathLatencyMs,
     fitResidualMean,
     fitResidualMax,
+    baselineResidualMean,
     calibrationDeterminant,
     calibrationResidualMean,
     calibrationResidualMax,

@@ -410,6 +410,7 @@ const hybrid = normalizeLiveManoFrame({
       fastPathAgeMs: 12,
       fitResidualMean: 0.024,
       fitResidualMax: 0.041,
+      baselineResidualMean: 0.032,
       calibrationDeterminant: 1,
       calibrationResidualMean: 0.004,
       calibrationResidualMax: 0.007,
@@ -435,6 +436,7 @@ assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_pose', 'preserves the 
 assert(hybrid.geometryMode === 'native_mano_regeneration', 'requires native MANO surface regeneration');
 assert(hybrid.anchorCaptureId === 'run-8-1000-1', 'preserves the exact paired WiLoR/MediaPipe capture identity');
 assert(hybrid.fitResidualMean === 0.024, 'preserves the articulated fit residual');
+assert(hybrid.baselineResidualMean === 0.032, 'preserves the uncorrected anchor residual');
 assert(hybrid.calibrationDeterminant === 1, 'preserves the paired calibration orientation');
 assert(hybrid.calibrationResidualMean === 0.004, 'preserves paired calibration quality');
 assert(hybrid.fastWorldBasisTransform === 'mediapipe_to_wilor_flip_z_v1', 'preserves the explicit model basis transform');
