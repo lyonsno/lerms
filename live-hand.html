@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en" data-runtime-owner="hand-state-runtime">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LERMS Live Hand</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #040809; color: #d9eced; }
+      body { font-family: "SF Mono", "Menlo", monospace; }
+      #fluid-canvas, #hand-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      #fluid-canvas { z-index: 0; }
+      #hand-canvas { z-index: 1; pointer-events: none; }
+      #controls {
+        position: absolute;
+        z-index: 2;
+        top: 16px;
+        right: 16px;
+        width: min(360px, calc(100vw - 32px));
+        padding: 10px;
+        border: 1px solid rgba(102, 180, 181, 0.34);
+        border-radius: 6px;
+        background: rgba(3, 11, 12, 0.7);
+        backdrop-filter: blur(8px);
+      }
+      #hand-toggle {
+        width: 100%;
+        height: 34px;
+        border: 1px solid #477b7c;
+        border-radius: 5px;
+        background: #102324;
+        color: #d9eeee;
+        font: 11px inherit;
+        cursor: pointer;
+      }
+      #hand-toggle:hover { background: #173031; }
+      #hand-toggle[data-running="true"] { border-color: #bd8150; background: #372719; color: #ffe0bc; }
+      #status { margin-top: 9px; color: #749697; font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+      #status[data-state="live"] { color: #83d7bc; }
+      #status[data-state="error"] { color: #ef968b; }
+      #route-truth { margin-top: 7px; color: #547879; font-size: 9px; line-height: 1.55; }
+      #density-controls { display: grid; gap: 8px; margin-top: 10px; }
+      .density-control { display: grid; grid-template-columns: 72px 1fr 48px; align-items: center; gap: 8px; color: #9fc7c8; font-size: 9px; }
+      .density-control input { width: 100%; accent-color: #70d6b8; }
+      .density-value { color: #e2eeee; text-align: right; font-variant-numeric: tabular-nums; }
+      #receipt { position: absolute; z-index: 2; left: 16px; bottom: 14px; color: #345354; font-size: 9px; }
+      video { display: none; }
+    </style>
+  </head>
+  <body>
+    <canvas id="fluid-canvas" aria-label="Current Kaminos WebGPU finger fluid"></canvas>
+    <canvas id="hand-canvas" aria-label="Live WiLoR MANO hand surface"></canvas>
+    <section id="controls" aria-label="Live hand controls">
+      <button id="hand-toggle" type="button">Start Hand</button>
+      <div id="density-controls">
+        <label class="density-control">Flux <input id="fluid-flux" type="range" min="60" max="1440" step="20" value="360" /><span id="fluid-flux-value" class="density-value">360</span></label>
+        <label class="density-control">Active <input id="fluid-active-budget" type="range" min="120" max="1920" step="60" value="720" /><span id="fluid-active-budget-value" class="density-value">720</span></label>
+        <label class="density-control">Optics <input id="fluid-optical-density" type="range" min="0.5" max="5" step="0.1" value="2.2" /><span id="fluid-optical-density-value" class="density-value">2.2</span></label>
+        <label class="density-control">Radius <input id="fluid-reconstruction-radius" type="range" min="0.7" max="3" step="0.1" value="1.6" /><span id="fluid-reconstruction-radius-value" class="density-value">1.6</span></label>
+        <label class="density-control">Life <input id="fluid-lifetime" type="range" min="1" max="12" step="0.5" value="6" /><span id="fluid-lifetime-value" class="density-value">6.0</span></label>
+      </div>
+      <div id="status" data-state="idle">runtime idle</div>
+      <div id="route-truth">route unverified</div>
+    </section>
+    <div id="receipt">LERMS / hand-state-runtime</div>
+    <video id="camera" playsinline muted></video>
+    <script type="module" src="/src/hand/live-hand.ts"></script>
+  </body>
+</html>
