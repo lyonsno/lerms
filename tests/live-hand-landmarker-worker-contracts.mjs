@@ -11,6 +11,26 @@ assert.match(source, /captureId: request\.captureId[\s\S]*captureTimestampMs: re
 assert.match(source, /failurePhase[\s\S]*primaryOutputWritten: false[\s\S]*lastTrustworthyEvidence/, 'worker failure reports survive pre-output failure');
 assert.match(source, /no_complete_hand_detected[\s\S]*primaryOutputWritten: false/, 'no-hand frames cannot masquerade as fast-path output');
 assert.doesNotMatch(source, /setInterval/, 'worker inference is caller-cadenced rather than self-throttled');
+assert.doesNotMatch(
+  source,
+  /^\s*import\s/m,
+  'the classic MediaPipe worker entry is self-contained so browser parsing reaches the dynamic Tasks Vision import',
+);
+assert.match(
+  source,
+  /^\(\(\) => \{/,
+  'the classic worker keeps its lexical declarations out of importScripts global scope',
+);
+assert.match(
+  liveHandSource,
+  /new Worker\(new URL\('\.\/live-hand-landmarker\.worker\.ts', import\.meta\.url\)\);/,
+  'MediaPipe runs in a classic worker because its WASM loader requires importScripts',
+);
+assert.doesNotMatch(
+  liveHandSource,
+  /new Worker\(new URL\('\.\/live-hand-landmarker\.worker\.ts', import\.meta\.url\),\s*\{\s*type:\s*['"]module['"]\s*\}\)/,
+  'MediaPipe cannot initialize in a module worker where importScripts is forbidden',
+);
 assert.match(liveHandSource, /planLiveHandSourceFrame/, 'the live camera loop uses the tested source scheduler');
 assert.match(liveHandSource, /requestVideoFrameCallback/, 'fast inference follows decoded camera frames');
 assert.match(

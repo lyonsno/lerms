@@ -793,7 +793,7 @@ function ensureLandmarkerWorker(): Promise<void> {
   if (typeof VideoFrame !== 'function' || typeof Worker !== 'function' || typeof OffscreenCanvas !== 'function') {
     return Promise.reject(new Error(`${LIVE_HAND_LANDMARKER_WORKER_ROUTE} is unavailable in this browser`));
   }
-  const worker = new Worker(new URL('./live-hand-landmarker.worker.ts', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./live-hand-landmarker.worker.ts', import.meta.url));
   landmarkerWorker = worker;
   landmarkerInitialization = new Promise<void>((resolve, reject) => {
     rejectLandmarkerInitialization = reject;
