@@ -115,10 +115,18 @@ export interface LermHordeProducerHistoryCompositionReceipt {
     creatureId: typeof CREATURE_ID;
     bodyRevision: typeof BODY_REVISION;
     motionRevision: string;
-    routeId: typeof ROUTE_ID;
+    routeId: string;
     railId: string;
     railSchema: 'kaminos.creature-scale-locomotion-rail.v0';
     supportSchema: 'kaminos.axial-terrain-support-envelope.v0';
+    routeSelection: {
+      candidateId: string;
+      attemptedCandidateCount: number;
+      rejectedCandidates: readonly {
+        id: string;
+        reason: string;
+      }[];
+    };
   };
   hill: {
     requested: {
@@ -241,18 +249,13 @@ export async function composeLermHordeProducerHistory(
     registration,
     producerSupportOptions()
   );
-  const routePlan = createRoutePlan(options.producerModule, producerTerrain, transitionEvaluator);
-  const rail = options.producerModule.compileCreatureScaleLocomotionRail(
+  const railSelection = compileFirstAdmittedRail(
+    options.producerModule,
     producerTerrain,
     registration,
-    routePlan,
-    {
-      id: `${ROUTE_ID}-rail`,
-      ...producerSupportOptions(),
-      sampleSpacing: 0.08,
-      transitionEvaluator
-    }
+    transitionEvaluator
   );
+  const rail = railSelection.rail;
   if (
     rail.schema !== 'kaminos.creature-scale-locomotion-rail.v0' ||
     !rail.id?.trim() ||
@@ -263,7 +266,13 @@ export async function composeLermHordeProducerHistory(
   }
 
   const episodeId = options.episodeId ?? 'lerm-horde-719024-live-control-crossing-0001';
-  const history = createHistory(options, prior, rail, episodeId);
+  const history = createHistory(
+    options,
+    prior,
+    rail,
+    railSelection.routeId,
+    episodeId
+  );
   const historyChecksum = producerContactHistoryChecksum(history);
 
   const admitted = createHillOfHillsTerrainWithCache(
@@ -417,10 +426,15 @@ export async function composeLermHordeProducerHistory(
       creatureId: CREATURE_ID,
       bodyRevision: BODY_REVISION,
       motionRevision: options.producerRevision,
-      routeId: ROUTE_ID,
+      routeId: railSelection.routeId,
       railId: rail.id,
       railSchema: rail.schema,
-      supportSchema: 'kaminos.axial-terrain-support-envelope.v0'
+      supportSchema: 'kaminos.axial-terrain-support-envelope.v0',
+      routeSelection: {
+        candidateId: railSelection.candidateId,
+        attemptedCandidateCount: railSelection.rejectedCandidates.length + 1,
+        rejectedCandidates: railSelection.rejectedCandidates
+      }
     },
     hill: {
       requested: {
@@ -556,11 +570,13 @@ function hillToProducerTerrain(terrain: HillOfHillsTerrain): unknown {
 function createRoutePlan(
   producerModule: LermHordeProducerModule,
   producerTerrain: unknown,
-  transitionEvaluator: ReturnType<LermHordeProducerModule['createAxialTerrainRouteTransitionEvaluator']>
+  transitionEvaluator: ReturnType<LermHordeProducerModule['createAxialTerrainRouteTransitionEvaluator']>,
+  candidate: {
+    id: string;
+    points: readonly (readonly [number, number])[];
+  }
 ): unknown {
-  const zPositions = [-3, -2, -1, 0, 1, 2, 3];
-  const world = zPositions.map((z) => {
-    const x = -1.25;
+  const world = candidate.points.map(([x, z]) => {
     return [x, producerModule.sampleHillTerrainSurface(producerTerrain, x, z).height, z] as HillOfHillsVec3;
   });
   const routePoints = world.map((point, index) => {
@@ -590,7 +606,7 @@ function createRoutePlan(
     };
   });
   return {
-    id: ROUTE_ID,
+    id: `${ROUTE_ID}-${candidate.id}`,
     source: {
       route: LERM_HORDE_PRODUCER_HISTORY_ROUTE
     },
@@ -601,6 +617,92 @@ function createRoutePlan(
   };
 }
 
+function compileFirstAdmittedRail(
+  producerModule: LermHordeProducerModule,
+  producerTerrain: unknown,
+  registration: unknown,
+  transitionEvaluator: ReturnType<LermHordeProducerModule['createAxialTerrainRouteTransitionEvaluator']>
+): {
+  rail: ReturnType<LermHordeProducerModule['compileCreatureScaleLocomotionRail']>;
+  candidateId: string;
+  routeId: string;
+  rejectedCandidates: readonly { id: string; reason: string }[];
+} {
+  const candidates = routeCandidates();
+  const rejectedCandidates: { id: string; reason: string }[] = [];
+  for (const candidate of candidates) {
+    try {
+      const routePlan = createRoutePlan(
+        producerModule,
+        producerTerrain,
+        transitionEvaluator,
+        candidate
+      ) as { id: string };
+      const rail = producerModule.compileCreatureScaleLocomotionRail(
+        producerTerrain,
+        registration,
+        routePlan,
+        {
+          id: `${routePlan.id}-rail`,
+          ...producerSupportOptions(),
+          sampleSpacing: 0.08,
+          transitionEvaluator
+        }
+      );
+      return {
+        rail,
+        candidateId: candidate.id,
+        routeId: routePlan.id,
+        rejectedCandidates
+      };
+    } catch (error) {
+      rejectedCandidates.push({
+        id: candidate.id,
+        reason: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  throw new Error(
+    `producer rejected every Horde route candidate: ${rejectedCandidates
+      .map(({ id, reason }) => `${id}=${reason}`)
+      .join('; ')}`
+  );
+}
+
+function routeCandidates(): readonly {
+  id: string;
+  points: readonly (readonly [number, number])[];
+}[] {
+  const line = (
+    id: string,
+    start: readonly [number, number],
+    end: readonly [number, number]
+  ) => ({
+    id,
+    points: Array.from({ length: 7 }, (_, index) => {
+      const t = index / 6;
+      return [
+        start[0] + (end[0] - start[0]) * t,
+        start[1] + (end[1] - start[1]) * t
+      ] as const;
+    })
+  });
+  return [
+    line('left-longitudinal-wide', [-1.25, -3], [-1.25, 3]),
+    line('right-longitudinal-wide', [1.25, -3], [1.25, 3]),
+    line('center-longitudinal-wide', [0, -3], [0, 3]),
+    line('left-longitudinal-mid', [-1.25, -2], [-1.25, 2]),
+    line('right-longitudinal-mid', [1.25, -2], [1.25, 2]),
+    line('center-longitudinal-mid', [0, -2], [0, 2]),
+    line('left-longitudinal-short', [-1.25, -1.5], [-1.25, 1.5]),
+    line('right-longitudinal-short', [1.25, -1.5], [1.25, 1.5]),
+    line('center-longitudinal-short', [0, -1.5], [0, 1.5]),
+    line('lower-lateral', [-3, -2], [3, -2]),
+    line('center-lateral', [-3, 0], [3, 0]),
+    line('upper-lateral', [-3, 2], [3, 2])
+  ];
+}
+
 function createHistory(
   options: LermHordeProducerHistoryCompositionOptions,
   prior: HillOfHillsTerrain,
@@ -609,6 +711,7 @@ function createHistory(
     id: string;
     length: number;
   },
+  routeId: string,
   episodeId: string
 ): HillOfHillsProducerContactHistory {
   const attentionTarget: HillOfHillsVec3 = [-1.25, 1.5, 3.5];
@@ -667,7 +770,7 @@ function createHistory(
       creatureId: CREATURE_ID,
       bodyRevision: BODY_REVISION,
       motionRevision: options.producerRevision,
-      routeId: ROUTE_ID,
+      routeId,
       railSchema: rail.schema,
       railId: rail.id,
       supportSchema: 'kaminos.axial-terrain-support-envelope.v0'
