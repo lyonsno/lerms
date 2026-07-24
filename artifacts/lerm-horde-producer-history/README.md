@@ -65,9 +65,9 @@ Route:
 - repo: `lerms`
 - worktree: `/private/tmp/lerms-hill-producer-history-operator-replay-0724`
 - branch: `cc/hill-producer-history-operator-replay-0724`
-- replay implementation: `bd41fbae50e3299b935b404c51c9cab988b80978`
+- replay implementation: `b22474eb10f927f1416ce760354a1dca075fc538`
 - receipt input: `receipt.json` at SHA-256 `c56627554f5cacb8f151361419bfe70177e2d86490193e30b2f148a11b430b2e`
-- generated: `2026-07-24T01:06:00Z`
+- generated: `2026-07-24T01:13:13Z`
 - effective Hill route: `lerms/hill-of-hills/producer-contact-history-v0`
 - effective authority/backend/config: `live_simulation` / `cpu-live` / `hill-of-hills-live-v0`
 - replay profile: `lerm-horde-live-producer-history-v0`, seed `414`, grid `48x60`, terrain `12x15`, phase duration `600ms`
