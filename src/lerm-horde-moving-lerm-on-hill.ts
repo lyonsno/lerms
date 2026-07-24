@@ -7,6 +7,7 @@ import {
   type FirstVerticalFrame,
   type LermState,
   type SourceTruth,
+  type TerrainSample,
   type Vec3,
 } from './contracts/first-vertical.ts';
 
@@ -57,10 +58,10 @@ export interface MovingLermMotionSample {
   poseSampleId: string;
   poseFingerprint: string;
   rootWorld: Vec3;
-  supportWorld: Vec3;
+  supportWorld?: Vec3;
   heading: Vec3;
-  terrainNormal: Vec3;
-  terrainSlope: number;
+  terrainNormal?: Vec3;
+  terrainSlope?: number;
   state: LermState['state'];
 }
 
@@ -107,7 +108,7 @@ export interface MovingLermTimelineFrame {
   poseSampleId: string;
   poseFingerprint: string;
   bodyRootWorld: Vec3;
-  supportWorld: Vec3;
+  supportWorld?: Vec3;
   lerm: LermState;
   firstVerticalFrame: FirstVerticalFrame;
 }
@@ -133,10 +134,10 @@ export interface MovingLermOnHillComposition {
     declaredLermIdentity: true;
     stableActorIdentity: true;
     dynamicRootMotion: true;
-    declaredPoseVariation: true;
+    declaredPoseVariation: boolean;
     sourceIdentityDeclared: true;
     routeIdentityPreserved: true;
-    rootSupportSamplesDeclared: true;
+    rootSupportSamplesDeclared: boolean;
     visibleBodyDriverSeparated: true;
   };
 }
@@ -145,6 +146,10 @@ export function composeMovingLermOnHill(
   input: MovingLermOnHillInput,
 ): MovingLermOnHillComposition {
   validateInput(input);
+  const declaredPoseVariation =
+    new Set(input.motion.samples.map((sample) => sample.poseFingerprint)).size > 1;
+  const rootSupportSamplesDeclared =
+    input.motion.samples[0].supportWorld !== undefined;
 
   const timeline = input.motion.samples.map((sample, index) =>
     buildTimelineFrame(input, sample, index),
@@ -188,10 +193,10 @@ export function composeMovingLermOnHill(
       declaredLermIdentity: true,
       stableActorIdentity: true,
       dynamicRootMotion: true,
-      declaredPoseVariation: true,
+      declaredPoseVariation,
       sourceIdentityDeclared: true,
       routeIdentityPreserved: true,
-      rootSupportSamplesDeclared: true,
+      rootSupportSamplesDeclared,
       visibleBodyDriverSeparated: true,
     },
   };
@@ -268,8 +273,8 @@ function validateInput(input: MovingLermOnHillInput): void {
   if (input.support.hillRevision !== LERM_HORDE_MOVING_LERM_HILL_REVISION) {
     throw new Error(`support Hill revision must be landed ${LERM_HORDE_MOVING_LERM_HILL_REVISION}`);
   }
-  if (input.support.schema !== 'kaminos.motion-contact-constraints.v0') {
-    throw new Error('support schema must be kaminos.motion-contact-constraints.v0');
+  if (input.support.schema !== 'kaminos.axial-terrain-support-envelope.v0') {
+    throw new Error('support schema must be kaminos.axial-terrain-support-envelope.v0');
   }
   requireString(input.behavior.route, 'behavior.route');
   requireString(input.behavior.backend, 'behavior.backend');
@@ -309,8 +314,8 @@ function validateMotionSamples(samples: readonly MovingLermMotionSample[]): void
     throw new Error('motion evidence requires at least two time samples');
   }
   const poseSampleIds = new Set<string>();
-  const poseFingerprints = new Set<string>();
   const rootKeys = new Set<string>();
+  let supportDeclaration: 'absent' | 'present' | null = null;
 
   samples.forEach((sample, index) => {
     if (!Number.isFinite(sample.timestampMs)) {
@@ -325,22 +330,43 @@ function validateMotionSamples(samples: readonly MovingLermMotionSample[]): void
       throw new Error(`duplicate pose sample id ${sample.poseSampleId}`);
     }
     poseSampleIds.add(sample.poseSampleId);
-    poseFingerprints.add(sample.poseFingerprint);
     assertVec3(sample.rootWorld, `motion.samples[${index}].rootWorld`);
-    assertVec3(sample.supportWorld, `motion.samples[${index}].supportWorld`);
     assertVec3(sample.heading, `motion.samples[${index}].heading`);
-    assertVec3(sample.terrainNormal, `motion.samples[${index}].terrainNormal`);
-    if (!Number.isFinite(sample.terrainSlope)) {
-      throw new Error(`motion.samples[${index}].terrainSlope must be finite`);
+    const supportFieldCount = [
+      sample.supportWorld,
+      sample.terrainNormal,
+      sample.terrainSlope,
+    ].filter((value) => value !== undefined).length;
+    if (supportFieldCount !== 0 && supportFieldCount !== 3) {
+      throw new Error(
+        `motion.samples[${index}] supportWorld, terrainNormal, and terrainSlope must be declared together`,
+      );
+    }
+    const currentSupportDeclaration = supportFieldCount === 3 ? 'present' : 'absent';
+    if (supportDeclaration !== null && supportDeclaration !== currentSupportDeclaration) {
+      throw new Error('motion samples must use one consistent support declaration shape');
+    }
+    supportDeclaration = currentSupportDeclaration;
+    if (currentSupportDeclaration === 'present') {
+      const { supportWorld, terrainNormal, terrainSlope } = sample;
+      if (
+        supportWorld === undefined ||
+        terrainNormal === undefined ||
+        terrainSlope === undefined
+      ) {
+        throw new Error(`motion.samples[${index}] has an incomplete support declaration`);
+      }
+      assertVec3(supportWorld, `motion.samples[${index}].supportWorld`);
+      assertVec3(terrainNormal, `motion.samples[${index}].terrainNormal`);
+      if (!Number.isFinite(terrainSlope)) {
+        throw new Error(`motion.samples[${index}].terrainSlope must be finite`);
+      }
     }
     rootKeys.add(sample.rootWorld.join(','));
   });
 
   if (rootKeys.size < 2) {
     throw new Error('motion samples do not move the body root');
-  }
-  if (poseFingerprints.size < 2) {
-    throw new Error('motion samples do not change body pose');
   }
 }
 
@@ -370,7 +396,23 @@ function buildTimelineFrame(
     backend: input.support.routeIdentity.backend,
     configId: input.support.routeIdentity.configId,
   };
-  const terrainSampleId = `hill-support:${input.identity.actorId}:${index}`;
+  const terrainSamples: TerrainSample[] = [];
+  if (
+    sample.supportWorld !== undefined &&
+    sample.terrainNormal !== undefined &&
+    sample.terrainSlope !== undefined
+  ) {
+    terrainSamples.push({
+      schema: TERRAIN_SAMPLE_SCHEMA,
+      id: `declared-support:${input.identity.actorId}:${index}`,
+      source: supportSource,
+      world: sample.supportWorld,
+      normal: sample.terrainNormal,
+      height: sample.supportWorld[1],
+      slope: sample.terrainSlope,
+      region: 'slope',
+    });
+  }
   const lerm: LermState = {
     schema: LERM_STATE_SCHEMA,
     id: input.identity.actorId,
@@ -386,16 +428,7 @@ function buildTimelineFrame(
   const firstVerticalFrame: FirstVerticalFrame = {
     schema: FIRST_VERTICAL_INTERFACE_SCHEMA,
     source,
-    terrainSamples: [{
-      schema: TERRAIN_SAMPLE_SCHEMA,
-      id: terrainSampleId,
-      source: supportSource,
-      world: sample.supportWorld,
-      normal: sample.terrainNormal,
-      height: sample.supportWorld[1],
-      slope: sample.terrainSlope,
-      region: 'slope',
-    }],
+    terrainSamples,
     lerms: [lerm],
     goins: [],
     juiceHits: [],

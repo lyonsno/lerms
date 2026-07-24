@@ -16,7 +16,7 @@
     "test:body-candidates": "node tests/red-lerm-body-candidate-witness-contracts.mjs",
     "test:successor": "node tests/lerm-horde-successor-witness-contracts.mjs",
     "test:red-lerm": "node --experimental-strip-types tests/red-lerm-body-motion-contracts.mjs && node tests/red-lerm-body-motion-witness-contracts.mjs && node tests/red-lerm-visual-witness-contracts.mjs",
-    "test:moving-lerm": "node --experimental-strip-types tests/lerm-horde-moving-lerm-on-hill-contracts.mjs",
+    "test:moving-lerm": "node --experimental-strip-types tests/lerm-horde-moving-lerm-on-hill-contracts.mjs && node --experimental-strip-types tests/lerm-horde-stable-rail-visual-witness-contracts.mjs",
     "witness:lerm-horde-successor": "node --experimental-strip-types src/lerm-horde-successor-witness.ts",
     "witness:composer": "node --experimental-strip-types src/contracts/first-vertical-composer-witness.ts",
     "witness:composer-visual": "node --experimental-strip-types src/contracts/first-vertical-composer-visual-witness.ts",
@@ -25,7 +25,8 @@
     "witness:hill-motion-affordance-packet": "rm -rf /tmp/lerms-hill-motion-affordance-packet && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --outDir /tmp/lerms-hill-motion-affordance-packet --noEmit false src/contracts/first-vertical.ts src/terrain/hill-of-hills.ts src/terrain/hill-of-hills-terrain-sample-packet.ts && node /tmp/lerms-hill-motion-affordance-packet/terrain/hill-of-hills-terrain-sample-packet.js --motion-affordance",
     "witness:red-lerm-body-candidates": "node --experimental-strip-types src/red-lerm-body-candidate-witness.ts",
     "witness:red-lerm": "node --experimental-strip-types src/red-lerm-body-motion-witness.ts",
-    "witness:red-lerm-visual": "node --experimental-strip-types src/red-lerm-visual-witness.ts"
+    "witness:red-lerm-visual": "node --experimental-strip-types src/red-lerm-visual-witness.ts",
+    "witness:lerm-horde-stable-rail": "node --experimental-strip-types src/lerm-horde-stable-rail-visual-witness.ts"
   },
   "dependencies": {
     "vite": "^8.1.0"

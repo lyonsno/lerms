@@ -106,7 +106,7 @@ const input = {
   },
   support: {
     ...handle({
-      schema: 'kaminos.motion-contact-constraints.v0',
+      schema: 'kaminos.axial-terrain-support-envelope.v0',
       path: 'artifacts/motion-ready-red-lerm/motion-contact-constraints.json',
       sha256: sha('3'),
       sourceRevision: 'mushfinger-support-revision',
@@ -315,18 +315,36 @@ assert.throws(
   /motion samples do not move the body root/,
 );
 
-assert.throws(
-  () => composeMovingLermOnHill({
-    ...input,
-    motion: {
-      ...input.motion,
-      samples: input.motion.samples.map((sample) => ({
-        ...sample,
-        poseFingerprint: 'same-pose',
-      })),
-    },
-  }),
-  /motion samples do not change body pose/,
+const rootOnlySamples = input.motion.samples.map((sample) => ({
+  timestampMs: sample.timestampMs,
+  poseSampleId: sample.poseSampleId,
+  poseFingerprint: 'static-procedural-body',
+  rootWorld: sample.rootWorld,
+  heading: sample.heading,
+  state: sample.state,
+}));
+const rootOnlyComposition = composeMovingLermOnHill({
+  ...input,
+  support: {
+    ...input.support,
+    schema: 'kaminos.axial-terrain-support-envelope.v0',
+  },
+  motion: {
+    ...input.motion,
+    schema: 'kaminos.creature-scale-locomotion-rail.v0',
+    samples: rootOnlySamples,
+  },
+});
+assert.equal(rootOnlyComposition.assertions.declaredPoseVariation, false);
+assert.equal(rootOnlyComposition.assertions.rootSupportSamplesDeclared, false);
+assert.deepEqual(
+  rootOnlyComposition.timeline.map((frame) => frame.firstVerticalFrame.terrainSamples),
+  [[], [], []],
+  'root-only rail samples must not fabricate terrain/contact samples',
+);
+assert.ok(
+  rootOnlyComposition.timeline.every((frame) => frame.lerm.terrainContact.grounded === false),
+  'root-only rail traversal remains explicitly ungrounded',
 );
 
 const adversarialSupport = composeMovingLermOnHill({
