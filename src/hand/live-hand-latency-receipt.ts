@@ -1,9 +1,9 @@
 export interface LiveHandCaptureMetrics {
   capturedAtMs: number;
   captureAcquireMs: number;
-  workerEncodeMs: number;
-  clientEncodeMs: number;
-  nativePostMs: number;
+  captureRoute: string;
+  captureWorkerMs: number;
+  producerPostMs: number;
 }
 
 export interface LiveHandLatencyReceipt<TFrame> {
