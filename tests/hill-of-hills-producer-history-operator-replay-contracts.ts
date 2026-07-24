@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
+  lstatSync,
   mkdtempSync,
+  readlinkSync,
   readFileSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
   HILL_PRODUCER_HISTORY_OPERATOR_REPLAY_SCHEMA,
@@ -202,5 +205,29 @@ assert.equal(
   protectedImageBytes,
   'a failure report path collision must not overwrite a protected image'
 );
+
+const danglingImagePath = join(cliDir, 'dangling-target-image.svg');
+const danglingReportPath = join(cliDir, 'dangling-report-link.json');
+symlinkSync(basename(danglingImagePath), danglingReportPath);
+const danglingSymlinkStatus = runHillProducerHistoryOperatorReplayCli([
+  '--input',
+  liveReceiptPath,
+  '--image-out',
+  danglingImagePath,
+  '--report-out',
+  danglingReportPath
+]);
+assert.equal(
+  danglingSymlinkStatus,
+  1,
+  'a report symlink that would resolve after image creation must fail before output'
+);
+assert.equal(
+  existsSync(danglingImagePath),
+  false,
+  'dangling output alias rejection must happen before the primary image write'
+);
+assert.equal(lstatSync(danglingReportPath).isSymbolicLink(), true);
+assert.equal(readlinkSync(danglingReportPath), basename(danglingImagePath));
 
 console.log('hill of hills producer history operator replay contracts ok');

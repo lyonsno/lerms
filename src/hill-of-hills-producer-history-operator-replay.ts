@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -243,6 +244,9 @@ export function runHillProducerHistoryOperatorReplayCli(
     const inputPath = resolve(args.input);
     const imageOut = resolve(args.imageOut);
     const reportOut = resolve(args.reportOut);
+    if (pathIsSymbolicLink(imageOut) || pathIsSymbolicLink(reportOut)) {
+      throw new Error('image and report output paths must not be symbolic links');
+    }
     if (
       pathsAlias(inputPath, imageOut) ||
       pathsAlias(inputPath, reportOut) ||
@@ -632,12 +636,28 @@ function inspectPreexistingOutput(path: string): Record<string, unknown> {
 function safeFailureReportPath(args: CliArgs): string | null {
   if (!args.reportOut) return null;
   const reportOut = resolve(args.reportOut);
+  if (pathIsSymbolicLink(reportOut)) return null;
   const protectedPaths = [args.input, args.imageOut]
     .filter((path): path is string => path !== null)
     .map((path) => resolve(path));
   return protectedPaths.some((path) => pathsAlias(path, reportOut))
     ? null
     : reportOut;
+}
+
+function pathIsSymbolicLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'ENOENT'
+    ) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function pathsAlias(left: string, right: string): boolean {
