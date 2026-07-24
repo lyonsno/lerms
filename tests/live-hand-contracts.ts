@@ -401,6 +401,9 @@ const hybrid = normalizeLiveManoFrame({
       fitResidualMax: 0.041,
       maxJointCorrectionRad: 0.18,
       maxAnchorJointDeviationRad: 0.42,
+      jointStepIntervalMs: 16.667,
+      jointStepLimitRad: 0.08,
+      maxJointStepAppliedRad: 0.073,
     },
     timing: {
       ...state.frame.timing,
@@ -419,6 +422,9 @@ assert(hybrid.anchorCaptureId === 'run-8-1000-1', 'preserves the exact paired Wi
 assert(hybrid.fitResidualMean === 0.024, 'preserves the articulated fit residual');
 assert(hybrid.fastPathLatencyMs === 8.5, 'preserves MediaPipe inference timing separately from WiLoR anchor timing');
 assert(hybrid.maxAnchorJointDeviationRad === 0.42, 'preserves absolute anchor-relative joint authority');
+assert(hybrid.jointStepIntervalMs === 16.667, 'preserves the observed fast-path correction interval');
+assert(hybrid.jointStepLimitRad === 0.08, 'preserves the cadence-scaled correction limit');
+assert(hybrid.maxJointStepAppliedRad === 0.073, 'preserves the correction actually applied to the visible mesh');
 assert(hybrid.anchorSource === LIVE_HAND_ROUTE, 'preserves the WiLoR MANO anchor source');
 assert(hybrid.fastPathSource === 'browser_mediapipe_hand_landmarker_live', 'preserves the browser fast-path source');
 
