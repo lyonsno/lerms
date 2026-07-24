@@ -1,5 +1,5 @@
 export const LIVE_HAND_ROUTE = 'native_wilor_mini_mlx_detector_sidecar_live' as const;
-export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v1' as const;
+export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v2' as const;
 export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_live' as const;
 export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_pose' as const;
 export const LIVE_HAND_HYBRID_GEOMETRY_MODE = 'native_mano_regeneration' as const;
@@ -51,6 +51,10 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   fastPathLatencyMs: number | null;
   fitResidualMean: number | null;
   fitResidualMax: number | null;
+  calibrationDeterminant: number | null;
+  calibrationResidualMean: number | null;
+  calibrationResidualMax: number | null;
+  fastWorldBasisTransform: string | null;
   maxJointCorrectionRad: number | null;
   maxAnchorJointDeviationRad: number | null;
   jointStepIntervalMs: number | null;
@@ -205,6 +209,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let fastPathLatencyMs: number | null = null;
   let fitResidualMean: number | null = null;
   let fitResidualMax: number | null = null;
+  let calibrationDeterminant: number | null = null;
+  let calibrationResidualMean: number | null = null;
+  let calibrationResidualMax: number | null = null;
+  let fastWorldBasisTransform: string | null = null;
   let maxJointCorrectionRad: number | null = null;
   let maxAnchorJointDeviationRad: number | null = null;
   let jointStepIntervalMs: number | null = null;
@@ -227,6 +235,16 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     fastPathLatencyMs = finiteNonNegative(timing.fastPathLatencyMs, 'fastPathLatencyMs');
     fitResidualMean = finiteNonNegative(diagnostics.fitResidualMean, 'fitResidualMean');
     fitResidualMax = finiteNonNegative(diagnostics.fitResidualMax, 'fitResidualMax');
+    calibrationDeterminant = finite(diagnostics.calibrationDeterminant, 'calibrationDeterminant');
+    if (Math.abs(calibrationDeterminant - 1) > 1e-6) {
+      throw new Error('hybrid frame must carry a proper paired calibration');
+    }
+    calibrationResidualMean = finiteNonNegative(diagnostics.calibrationResidualMean, 'calibrationResidualMean');
+    calibrationResidualMax = finiteNonNegative(diagnostics.calibrationResidualMax, 'calibrationResidualMax');
+    fastWorldBasisTransform = optionalText(diagnostics.fastWorldBasisTransform);
+    if (fastWorldBasisTransform !== 'mediapipe_to_wilor_flip_z_v1') {
+      throw new Error('hybrid frame must expose the MediaPipe-to-WiLoR basis transform');
+    }
     maxJointCorrectionRad = finiteNonNegative(diagnostics.maxJointCorrectionRad, 'maxJointCorrectionRad');
     maxAnchorJointDeviationRad = finiteNonNegative(
       diagnostics.maxAnchorJointDeviationRad,
@@ -271,6 +289,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     fastPathLatencyMs,
     fitResidualMean,
     fitResidualMax,
+    calibrationDeterminant,
+    calibrationResidualMean,
+    calibrationResidualMax,
+    fastWorldBasisTransform,
     maxJointCorrectionRad,
     maxAnchorJointDeviationRad,
     jointStepIntervalMs,

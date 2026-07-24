@@ -293,12 +293,12 @@ assert(resolveLiveHandAnchorIntervalMs('hybrid_mano') === 200, 'hybrid MANO star
 const imageLandmarks = Array.from({ length: 21 }, (_, index) => ({ x: index / 20, y: 1 - index / 20, z: -index / 100 }));
 const worldLandmarks = imageLandmarks.map(point => ({ x: point.x - 0.5, y: 0.5 - point.y, z: point.z }));
 assert(
-  String(LIVE_HAND_LANDMARKER_WORKER_ROUTE) === 'browser-mediapipe-hand-landmarker-worker-mirrored-v1',
-  'the worker route declares the shared mirrored camera coordinate contract',
+  String(LIVE_HAND_LANDMARKER_WORKER_ROUTE) === 'browser-mediapipe-hand-landmarker-worker-unmirrored-v2',
+  'the worker route declares the shared unmirrored camera coordinate contract',
 );
 const landmarkerResult = normalizeLandmarkerWorkerResult({
   schema: LIVE_HAND_LANDMARKER_RESULT_SCHEMA,
-  routeIdentity: 'browser-mediapipe-hand-landmarker-worker-mirrored-v1',
+  routeIdentity: 'browser-mediapipe-hand-landmarker-worker-unmirrored-v2',
   captureId: 'run-8-1000-1',
   captureTimestampMs: 1_000,
   publishedAtMs: 1_011,
@@ -308,7 +308,8 @@ const landmarkerResult = normalizeLandmarkerWorkerResult({
   worldLandmarks,
   workerLandmarkerMs: 8.5,
   workerProcessingMs: 10.25,
-  mirroredInput: true,
+  mirroredInput: false,
+  worldCoordinateBasis: 'mediapipe-world-unmirrored-x-right-y-down-z-camera-depth-v1',
 }, 'run-8-1000-1');
 const fastPayload = createFastLandmarkPayload(landmarkerResult);
 assert(fastPayload.schema === 'hand-state.browser-fast-landmarks.v1', 'emits the runtime v1 fast-landmark schema');
@@ -321,6 +322,11 @@ assert(
     && (fastPayload.timing as Record<string, unknown>).browserWorkerProcessingMs === 10.25,
   'preserves worker inference and total processing timing',
 );
+assert(
+  (fastPayload.timing as Record<string, unknown>).worldCoordinateBasis
+    === 'mediapipe-world-unmirrored-x-right-y-down-z-camera-depth-v1',
+  'preserves the exact MediaPipe world basis for runtime conversion',
+);
 assertThrows(
   () => normalizeLandmarkerWorkerResult({ ...landmarkerResult, captureId: 'wrong-capture' }, 'run-8-1000-1'),
   'does not match',
@@ -328,7 +334,7 @@ assertThrows(
 
 const landmarkerFailure = normalizeLandmarkerWorkerError({
   schema: LIVE_HAND_LANDMARKER_ERROR_SCHEMA,
-  routeIdentity: 'browser-mediapipe-hand-landmarker-worker-mirrored-v1',
+  routeIdentity: 'browser-mediapipe-hand-landmarker-worker-unmirrored-v2',
   captureId: null,
   failurePhase: 'initialize_model',
   error: 'model fetch failed',
@@ -404,6 +410,10 @@ const hybrid = normalizeLiveManoFrame({
       fastPathAgeMs: 12,
       fitResidualMean: 0.024,
       fitResidualMax: 0.041,
+      calibrationDeterminant: 1,
+      calibrationResidualMean: 0.004,
+      calibrationResidualMax: 0.007,
+      fastWorldBasisTransform: 'mediapipe_to_wilor_flip_z_v1',
       maxJointCorrectionRad: 0.18,
       maxAnchorJointDeviationRad: 0.42,
       jointStepIntervalMs: 16.667,
@@ -418,13 +428,16 @@ const hybrid = normalizeLiveManoFrame({
 });
 assert(hybrid.effectiveRoute === LIVE_HAND_HYBRID_ROUTE, 'accepts the explicit WiLoR-anchor/browser-fast hybrid route');
 assert(
-  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v1',
+  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v2',
   'the consumer accepts only the articulated MANO route',
 );
 assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_pose', 'preserves the parameter-space fusion mode');
 assert(hybrid.geometryMode === 'native_mano_regeneration', 'requires native MANO surface regeneration');
 assert(hybrid.anchorCaptureId === 'run-8-1000-1', 'preserves the exact paired WiLoR/MediaPipe capture identity');
 assert(hybrid.fitResidualMean === 0.024, 'preserves the articulated fit residual');
+assert(hybrid.calibrationDeterminant === 1, 'preserves the paired calibration orientation');
+assert(hybrid.calibrationResidualMean === 0.004, 'preserves paired calibration quality');
+assert(hybrid.fastWorldBasisTransform === 'mediapipe_to_wilor_flip_z_v1', 'preserves the explicit model basis transform');
 assert(hybrid.fastPathLatencyMs === 8.5, 'preserves MediaPipe inference timing separately from WiLoR anchor timing');
 assert(hybrid.maxAnchorJointDeviationRad === 0.42, 'preserves absolute anchor-relative joint authority');
 assert(hybrid.jointStepIntervalMs === 16.667, 'preserves the observed fast-path correction interval');

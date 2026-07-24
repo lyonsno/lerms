@@ -6,7 +6,31 @@ const liveHandSource = readFileSync(new URL('../src/hand/live-hand.ts', import.m
 const liveHandHtml = readFileSync(new URL('../live-hand.html', import.meta.url), 'utf8');
 
 assert.match(source, /tasks-vision@\$\{TASKS_VISION_VERSION\}/, 'MediaPipe Tasks Vision is version-pinned');
-assert.match(source, /context\.setTransform\(-1, 0, 0, 1, request\.width, 0\)/, 'MediaPipe receives the same mirrored pixels as WiLoR');
+assert.match(
+  source,
+  /context\.setTransform\(1, 0, 0, 1, 0, 0\)/,
+  'MediaPipe receives the same unmirrored pixels as the paired WiLoR anchor',
+);
+assert.doesNotMatch(
+  source,
+  /context\.setTransform\(-1, 0, 0, 1, request\.width, 0\)/,
+  'the fast-path clone cannot be reflected relative to its paired WiLoR frame',
+);
+assert.match(
+  source,
+  /function normalizeUnmirroredHandedness[\s\S]*left[\s\S]*right/,
+  'MediaPipe handedness is swapped when its input is not mirrored',
+);
+assert.match(
+  source,
+  /mirroredInput: false/,
+  'worker evidence states that the model received the original camera orientation',
+);
+assert.match(
+  source,
+  /worldCoordinateBasis: LIVE_HAND_LANDMARKER_WORLD_BASIS/,
+  'worker evidence names the MediaPipe world-coordinate basis that requires explicit depth conversion',
+);
 assert.match(source, /captureId: request\.captureId[\s\S]*captureTimestampMs: request\.captureTimestampMs/, 'worker output preserves shared capture identity');
 assert.match(source, /failurePhase[\s\S]*primaryOutputWritten: false[\s\S]*lastTrustworthyEvidence/, 'worker failure reports survive pre-output failure');
 assert.match(source, /no_complete_hand_detected[\s\S]*primaryOutputWritten: false/, 'no-hand frames cannot masquerade as fast-path output');
