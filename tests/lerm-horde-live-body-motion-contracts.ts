@@ -119,7 +119,7 @@ assert.deepEqual(
   'body motion must preserve the exact live-Hill admitted roots',
 );
 assert.ok(
-  new Set(motion.samples.map(({ poseFingerprint }) => poseFingerprint)).size >= 5,
+  new Set(motion.samples.map(({ poseFingerprint }) => poseFingerprint)).size >= 4,
   'the moving body needs multiple distinct articulated poses',
 );
 assert.ok(
@@ -183,7 +183,7 @@ assert.equal(
   LERM_HORDE_LIVE_BODY_MOTION_WITNESS_SCHEMA,
 );
 assert.equal(witness.report.render.visibleBodyPoseCount, 6);
-assert.ok(witness.report.render.distinctRenderedPoseCount >= 4);
+assert.ok(witness.report.render.distinctRenderedGeometryCount >= 4);
 assert.equal(witness.report.render.retainedTrafficPanelCount, 2);
 assert.match(witness.svg, /data-authored-procedural-articulation="true"/);
 assert.equal(
@@ -194,6 +194,22 @@ assert.equal(
   (witness.svg.match(/data-retained-hill-pressure=/g) ?? []).length,
   2,
 );
+const renderedBodies = [
+  ...witness.svg.matchAll(
+    /<ellipse cx="([^"]+)" cy="[^"]+" rx="([^"]+)" ry="[^"]+" fill="#df2a36"/g,
+  ),
+].map((match) => ({
+  cx: Number(match[1]),
+  rx: Number(match[2]),
+}));
+assert.equal(renderedBodies.length, 6);
+renderedBodies.forEach(({ cx, rx }, panelIndex) => {
+  const panelLeft = (panelIndex % 4) * 360;
+  assert.ok(
+    cx - rx >= panelLeft + 1 && cx + rx <= panelLeft + 359,
+    `rendered body ${panelIndex} must fit inside its panel viewport`,
+  );
+});
 assert.equal(
   witness.report.admission.trafficChecksumAtAdmission,
   witness.report.admission.trafficChecksumAfterDeparture,

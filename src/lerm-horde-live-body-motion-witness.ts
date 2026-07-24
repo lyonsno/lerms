@@ -112,7 +112,7 @@ export interface LermHordeLiveBodyMotionWitnessReport {
     svgSha256: string;
     primaryOutputWritten: true;
     visibleBodyPoseCount: 6;
-    distinctRenderedPoseCount: number;
+    distinctRenderedGeometryCount: number;
     retainedTrafficPanelCount: 2;
   };
   outputs: {
@@ -146,12 +146,12 @@ export function buildLermHordeLiveBodyMotionWitness(
   const motion = composeLermHordeLiveBodyMotion(admission);
   const svg = runtime.render(admission, motion);
   verifySvg(svg);
-  const distinctRenderedPoseCount = new Set(
+  const distinctRenderedGeometryCount = new Set(
     RENDERED_SAMPLE_SEQUENCES.map(
       (sequence) => motion.samples[sequence].poseFingerprint,
     ),
   ).size;
-  if (distinctRenderedPoseCount < 4) {
+  if (distinctRenderedGeometryCount < 4) {
     throw new Error('render selection does not show enough distinct body poses');
   }
 
@@ -186,7 +186,7 @@ export function buildLermHordeLiveBodyMotionWitness(
         svgSha256: sha256(svg),
         primaryOutputWritten: true,
         visibleBodyPoseCount: 6,
-        distinctRenderedPoseCount,
+        distinctRenderedGeometryCount,
         retainedTrafficPanelCount: 2,
       },
       claimBoundary: motion.claimBoundary,
@@ -304,12 +304,12 @@ export function runLermHordeLiveBodyMotionWitnessCli(
     phase = 'render';
     const svg = runtime.render(admission, motion);
     verifySvg(svg);
-    const distinctRenderedPoseCount = new Set(
+    const distinctRenderedGeometryCount = new Set(
       RENDERED_SAMPLE_SEQUENCES.map(
         (sequence) => motion.samples[sequence].poseFingerprint,
       ),
     ).size;
-    if (distinctRenderedPoseCount < 4) {
+    if (distinctRenderedGeometryCount < 4) {
       throw new Error('render selection does not show enough distinct body poses');
     }
     const svgSha256 = sha256(svg);
@@ -365,7 +365,7 @@ export function runLermHordeLiveBodyMotionWitnessCli(
         svgSha256,
         primaryOutputWritten: true,
         visibleBodyPoseCount: 6,
-        distinctRenderedPoseCount,
+        distinctRenderedGeometryCount,
         retainedTrafficPanelCount: 2,
       },
       outputs: {
@@ -458,7 +458,7 @@ function renderMotionPanel(
 ): string {
   const x0 = (panelIndex % 4) * PANEL_WIDTH;
   const y0 = Math.floor(panelIndex / 4) * PANEL_HEIGHT;
-  const plot = { x: x0 + 24, y: y0 + 92, width: 312, height: 205 };
+  const plot = { x: x0 + 50, y: y0 + 92, width: 260, height: 205 };
   const roots = admission.traversal.liveRootWorld;
   const minZ = Math.min(...roots.map((root) => root[2]));
   const maxZ = Math.max(...roots.map((root) => root[2]));

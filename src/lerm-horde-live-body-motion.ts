@@ -119,18 +119,31 @@ export function composeLermHordeLiveBodyMotion(
       (sample.root.sourceDistance / STRIDE_LENGTH_WORLD) * Math.PI * 2,
     );
     const stride = Math.sin(phase);
+    const foreAft = Math.cos(phase);
     const compression = Math.cos(phase * 2);
     const bobWorld = round(
-      0.035 + (MAX_BODY_BOB_WORLD - 0.035) * Math.abs(stride),
+      0.035 +
+        0.022 * Math.abs(stride) +
+        0.008 * ((1 - foreAft) * 0.5),
     );
-    const scaleX = round(1 + compression * 0.06 + stride * 0.02);
-    const scaleY = round(1 - compression * 0.08 + stride * 0.025);
+    const scaleX = round(
+      1 + compression * 0.05 + stride * 0.02 + foreAft * 0.025,
+    );
+    const scaleY = round(
+      1 - compression * 0.07 + stride * 0.025 - foreAft * 0.02,
+    );
     const leftReach = round(stride * MAX_LEG_REACH_WORLD);
     const rightReach = round(-leftReach);
     const leftLift = round(Math.max(0, -stride) * MAX_LEG_LIFT_WORLD);
     const rightLift = round(Math.max(0, stride) * MAX_LEG_LIFT_WORLD);
     const leanRadians = round(
-      clamp(sample.root.tangent[1] * 0.35 + stride * 0.045, -0.14, 0.14),
+      clamp(
+        sample.root.tangent[1] * 0.35 +
+          stride * 0.045 +
+          foreAft * 0.012,
+        -0.14,
+        0.14,
+      ),
     );
     const rootWorld = admission.traversal.liveRootWorld[sequence];
     const centerWorld: Vec3 = [
@@ -139,12 +152,11 @@ export function composeLermHordeLiveBodyMotion(
       rootWorld[2],
     ];
     const poseFingerprint = [
-      `p${round(phase, 4)}`,
-      `b${bobWorld}`,
-      `s${scaleX}:${scaleY}`,
-      `l${leftReach}:${leftLift}`,
-      `r${rightReach}:${rightLift}`,
-      `n${leanRadians}`,
+      `b${round(bobWorld, 3)}`,
+      `s${round(scaleX, 3)}:${round(scaleY, 3)}`,
+      `l${round(leftReach, 3)}:${round(leftLift, 3)}`,
+      `r${round(rightReach, 3)}:${round(rightLift, 3)}`,
+      `n${round(leanRadians, 3)}`,
     ].join('|');
 
     return {
@@ -179,7 +191,7 @@ export function composeLermHordeLiveBodyMotion(
       vec3Equal(sample.rootWorld, historySamples[sequence].root.worldPosition),
   );
   const timeVaryingBodyGeometry =
-    new Set(samples.map(({ poseFingerprint }) => poseFingerprint)).size >= 5;
+    new Set(samples.map(({ poseFingerprint }) => poseFingerprint)).size >= 4;
   const alternatingLegReach =
     samples.some(({ legs }) => legs.leftReach > 0 && legs.rightReach < 0) &&
     samples.some(({ legs }) => legs.leftReach < 0 && legs.rightReach > 0);
