@@ -233,6 +233,7 @@ export function runHillHordeLiveTraversalWitnessCli(
     const composition = composeHordeTraversalIntoLiveHill({
       hordeReport,
       producerReceipt,
+      producerReceiptSha256,
       hordeRevision: complete.hordeRevision,
       hillRevision: complete.hillRevision,
     });

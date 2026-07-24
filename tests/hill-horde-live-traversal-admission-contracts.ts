@@ -15,6 +15,7 @@ import type {
 } from '../src/lerm-horde-producer-history-composition.js';
 import {
   HILL_HORDE_LIVE_TRAVERSAL_ADMISSION_SCHEMA,
+  HILL_HORDE_REVIEWED_SOURCE_REVISION,
   composeHordeTraversalIntoLiveHill,
 } from '../src/hill-horde-live-traversal-admission.js';
 import {
@@ -27,10 +28,25 @@ const fileSha256 = (path: string) =>
   createHash('sha256').update(readFileSync(path)).digest('hex');
 const gitText = (args: readonly string[]) =>
   execFileSync('git', args, { encoding: 'utf8' }).trim();
+const failFirstFailures: string[] = [];
+const requireContractRejection = (
+  action: () => unknown,
+  expected: RegExp,
+  label: string,
+) => {
+  try {
+    action();
+    failFirstFailures.push(label);
+  } catch (error) {
+    assert.match(error instanceof Error ? error.message : String(error), expected);
+  }
+};
 
 const producerReceipt = JSON.parse(
   readFileSync('artifacts/lerm-horde-producer-history/receipt.json', 'utf8'),
 ) as LermHordeProducerHistoryCompositionReceipt;
+const producerReceiptSha256 =
+  fileSha256('artifacts/lerm-horde-producer-history/receipt.json');
 const bodySourceRevision = gitText([
   'log',
   '-1',
@@ -52,7 +68,7 @@ const hordeReport = {
   },
   receipt: {
     sourceRevision: producerReceipt.lerms.revision,
-    sha256: fileSha256('artifacts/lerm-horde-producer-history/receipt.json'),
+    sha256: producerReceiptSha256,
   },
   producer: {
     revision: producerReceipt.producer.revision,
@@ -95,10 +111,12 @@ const hordeReport = {
 } as const;
 
 const hillRevision = gitText(['rev-parse', 'HEAD']);
+const reviewedHordeRevision = HILL_HORDE_REVIEWED_SOURCE_REVISION;
 const receipt = composeHordeTraversalIntoLiveHill({
   hordeReport,
   producerReceipt,
-  hordeRevision: hillRevision,
+  producerReceiptSha256,
+  hordeRevision: reviewedHordeRevision,
   hillRevision,
 });
 
@@ -106,7 +124,7 @@ assert.equal(receipt.schema, HILL_HORDE_LIVE_TRAVERSAL_ADMISSION_SCHEMA);
 assert.equal(receipt.ok, true);
 assert.equal(receipt.phase, 'complete');
 assert.equal(receipt.evidenceClass, 'live_current_hill_lerm_traversal');
-assert.equal(receipt.source.horde.revision, hillRevision);
+assert.equal(receipt.source.horde.revision, reviewedHordeRevision);
 assert.equal(
   receipt.source.horde.visibleBody.assetIdentity,
   'lerms.red-lerm-body.procedural-squash-thief.v0',
@@ -215,7 +233,8 @@ assert.throws(
     composeHordeTraversalIntoLiveHill({
       hordeReport: substitutedRoot,
       producerReceipt,
-      hordeRevision: hillRevision,
+      producerReceiptSha256,
+      hordeRevision: reviewedHordeRevision,
       hillRevision,
     }),
   /Horde body timeline does not match the reviewed producer rail/,
@@ -228,7 +247,8 @@ assert.throws(
     composeHordeTraversalIntoLiveHill({
       hordeReport: fallbackReport,
       producerReceipt,
-      hordeRevision: hillRevision,
+      producerReceiptSha256,
+      hordeRevision: reviewedHordeRevision,
       hillRevision,
     }),
   /fresh complete non-fallback Horde traversal/,
@@ -241,16 +261,66 @@ assert.throws(
     composeHordeTraversalIntoLiveHill({
       hordeReport,
       producerReceipt: staleProducerReceipt,
-      hordeRevision: hillRevision,
+      producerReceiptSha256,
+      hordeRevision: reviewedHordeRevision,
       hillRevision,
     }),
   /fresh complete root-only producer receipt/,
 );
 
+const unsupportedAfterRemap = structuredClone(producerReceipt);
+unsupportedAfterRemap.history.samples[0].root.support.minimumComplianceMargin = 0;
+requireContractRejection(
+  () =>
+    composeHordeTraversalIntoLiveHill({
+      hordeReport,
+      producerReceipt: unsupportedAfterRemap,
+      producerReceiptSha256,
+      hordeRevision: reviewedHordeRevision,
+      hillRevision,
+    }),
+  /live Hill remap invalidates local support/,
+  'negative remapped local-support margin was admitted',
+);
+
+const substitutedReceiptSha = structuredClone(hordeReport);
+(substitutedReceiptSha.receipt as { sha256: string }).sha256 = '0'.repeat(64);
+requireContractRejection(
+  () =>
+    composeHordeTraversalIntoLiveHill({
+      hordeReport: substitutedReceiptSha,
+      producerReceipt,
+      producerReceiptSha256,
+      hordeRevision: reviewedHordeRevision,
+      hillRevision,
+    }),
+  /Horde report receipt SHA does not match the verified producer receipt/,
+  'report-only producer receipt SHA substitution was admitted',
+);
+
+requireContractRejection(
+  () =>
+    composeHordeTraversalIntoLiveHill({
+      hordeReport,
+      producerReceipt,
+      producerReceiptSha256,
+      hordeRevision: hillRevision,
+      hillRevision,
+    }),
+  /Horde revision does not match the reviewed source/,
+  'current Hill head impersonated the reviewed Horde source',
+);
+assert.deepEqual(
+  failFirstFailures,
+  [],
+  'all adversarial source/support custody contracts must reject',
+);
+
 const witness = buildHillHordeLiveTraversalWitness({
   hordeReport,
   producerReceipt,
-  hordeRevision: hillRevision,
+  producerReceiptSha256,
+  hordeRevision: reviewedHordeRevision,
   hillRevision,
 });
 assert.equal(witness.report.schema, HILL_HORDE_LIVE_TRAVERSAL_WITNESS_SCHEMA);
@@ -283,7 +353,7 @@ assert.equal(
     '--producer-receipt',
     producerReceiptPath,
     '--horde-revision',
-    hillRevision,
+    reviewedHordeRevision,
     '--hill-revision',
     hillRevision,
     '--image-out',
@@ -296,7 +366,8 @@ assert.equal(
         buildHillHordeLiveTraversalWitness({
           hordeReport,
           producerReceipt,
-          hordeRevision: hillRevision,
+          producerReceiptSha256,
+          hordeRevision: reviewedHordeRevision,
           hillRevision,
         }).svg
       : () => '',
@@ -327,7 +398,7 @@ assert.equal(
       '--producer-receipt',
       producerReceiptPath,
       '--horde-revision',
-      hillRevision,
+      reviewedHordeRevision,
       '--hill-revision',
       hillRevision,
       '--image-out',
@@ -356,7 +427,7 @@ assert.equal(
     '--producer-receipt',
     producerReceiptPath,
     '--horde-revision',
-    hillRevision,
+    reviewedHordeRevision,
     '--hill-revision',
     hillRevision,
     '--image-out',
@@ -368,7 +439,8 @@ assert.equal(
       buildHillHordeLiveTraversalWitness({
         hordeReport,
         producerReceipt,
-        hordeRevision: hillRevision,
+        producerReceiptSha256,
+        hordeRevision: reviewedHordeRevision,
         hillRevision,
       }).svg,
     sourceIdentity: () => cleanSourceIdentity,

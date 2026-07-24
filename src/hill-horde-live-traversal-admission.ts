@@ -19,6 +19,8 @@ export const HILL_HORDE_LIVE_TRAVERSAL_ADMISSION_SCHEMA =
   'lerms.hill-of-hills.lerm-traversal-live-admission.v0' as const;
 export const HILL_HORDE_LIVE_TRAVERSAL_ROUTE =
   'lerms/hill-of-hills/horde-live-traversal-admission' as const;
+export const HILL_HORDE_REVIEWED_SOURCE_REVISION =
+  '6cf5cd05c2bd13962cc58183b24f26a7b41ae5d2' as const;
 
 const HILL_ROUTE = 'hill-of-hills/horde-live-traversal-admission';
 const HILL_BACKEND = 'deterministic-cpu-heightfield';
@@ -43,6 +45,7 @@ const LIVE_TERRAIN_PARAMS: HillOfHillsTerrainParams = {
 export interface ComposeHordeTraversalIntoLiveHillInput {
   hordeReport: ReviewedHordeTraversalReport;
   producerReceipt: LermHordeProducerHistoryCompositionReceipt;
+  producerReceiptSha256: string;
   hordeRevision: string;
   hillRevision: string;
 }
@@ -426,6 +429,14 @@ function validateInput(input: ComposeHordeTraversalIntoLiveHillInput): void {
   if (!input.hordeRevision?.trim() || !input.hillRevision?.trim()) {
     throw new Error('Horde and Hill source revisions are required');
   }
+  if (input.hordeRevision !== HILL_HORDE_REVIEWED_SOURCE_REVISION) {
+    throw new Error(
+      `Horde revision does not match the reviewed source ${HILL_HORDE_REVIEWED_SOURCE_REVISION}`,
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(input.producerReceiptSha256)) {
+    throw new Error('verified producer receipt SHA-256 is required');
+  }
   const report = input.hordeReport;
   if (
     report?.ok !== true ||
@@ -467,10 +478,16 @@ function validateInput(input: ComposeHordeTraversalIntoLiveHillInput): void {
   }
   if (
     report.receipt.sourceRevision !== producer.lerms.revision ||
+    report.receipt.sha256 !== input.producerReceiptSha256 ||
     report.producer.revision !== producer.producer.revision ||
     report.producer.moduleSha256 !== producer.producer.moduleSha256 ||
     report.route.effective !== producer.history.producer.route
   ) {
+    if (report.receipt.sha256 !== input.producerReceiptSha256) {
+      throw new Error(
+        'Horde report receipt SHA does not match the verified producer receipt',
+      );
+    }
     throw new Error('Horde report does not bind the supplied reviewed producer receipt');
   }
   if (
@@ -510,6 +527,17 @@ function rebaseTraversalToLiveHill(
     const liveSurface = sampleHillOfHillsTerrain(prior, x, z);
     const originalSurfaceHeight = sourceRootY - sample.root.support.rootLift;
     const supportHeightRemap = liveSurface.height - originalSurfaceHeight;
+    const minimumComplianceMargin =
+      sample.root.support.minimumComplianceMargin -
+      Math.abs(supportHeightRemap);
+    if (
+      sample.root.support.disposition === 'local-support' &&
+      minimumComplianceMargin < 0
+    ) {
+      throw new Error(
+        `Horde root ${sequence} live Hill remap invalidates local support`,
+      );
+    }
     maxSupportHeightRemap = Math.max(
       maxSupportHeightRemap,
       Math.abs(supportHeightRemap),
@@ -527,9 +555,7 @@ function rebaseTraversalToLiveHill(
         worldPosition: liveRoot,
         support: {
           ...sample.root.support,
-          minimumComplianceMargin:
-            sample.root.support.minimumComplianceMargin -
-            Math.abs(supportHeightRemap),
+          minimumComplianceMargin,
           provenance: {
             hillSourceId: prior.source.frameId,
             revision: input.hillRevision,
