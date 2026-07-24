@@ -35,15 +35,18 @@ export type TerrainRegion =
 
 export type LermSpecies = 'red' | 'blue' | 'yellow' | 'fixture';
 
-export type LermStateKind =
-  | 'approaching_hoard'
-  | 'stealing_goin'
-  | 'carrying_goin'
-  | 'fleeing_with_goin'
-  | 'hit_reacting'
-  | 'tumbling'
-  | 'recovering'
-  | 'rerouting_to_goin';
+export const LERM_STATE_KINDS = [
+  'approaching_hoard',
+  'stealing_goin',
+  'carrying_goin',
+  'fleeing_with_goin',
+  'hit_reacting',
+  'tumbling',
+  'recovering',
+  'rerouting_to_goin',
+] as const;
+
+export type LermStateKind = typeof LERM_STATE_KINDS[number];
 
 export type GoinStateKind = 'hoarded' | 'carried' | 'dropped' | 'rolling' | 'settled' | 'recovered';
 
@@ -195,6 +198,9 @@ export function assertFirstVerticalFrame(frame: FirstVerticalFrame): asserts fra
     const label = `lerms[${index}]`;
     requireSchema(lerm.schema, LERM_STATE_SCHEMA, label);
     assertSourceTruth(lerm.source, `${label}.source`);
+    if (!LERM_STATE_KINDS.includes(lerm.state)) {
+      throw new Error(`${label}.state must be a known Lerm state; got ${lerm.state}`);
+    }
     assertVec3(lerm.world, `${label}.world`);
     assertVec3(lerm.heading, `${label}.heading`);
     if (lerm.terrainContact.terrainSampleId && !terrainIds.has(lerm.terrainContact.terrainSampleId)) {

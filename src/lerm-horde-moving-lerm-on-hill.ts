@@ -14,6 +14,12 @@ export const LERM_HORDE_MOVING_LERM_ON_HILL_SCHEMA =
   'lerms.lerm-horde.moving-lerm-on-hill.v0' as const;
 export const LERM_HORDE_MOVING_LERM_HILL_REVISION =
   'fd052b64e5cb27502873847d946e9e19197eb59a' as const;
+export const LERM_HORDE_VISIBLE_BODY_SCHEMA =
+  'lerms.red-lerm-procedural-body.v0' as const;
+export const LERM_HORDE_VISIBLE_BODY_ASSET_IDENTITY =
+  'lerms.red-lerm-body.procedural-squash-thief.v0' as const;
+export const LERM_HORDE_VISIBLE_BODY_SCHEMA_IDENTITY =
+  'lerms.red-lerm-body-schema.v0' as const;
 
 export interface MovingLermRouteIdentity {
   requestedRoute: string;
@@ -124,13 +130,13 @@ export interface MovingLermOnHillComposition {
   timeline: readonly MovingLermTimelineFrame[];
   assertions: {
     exactLandedHill: true;
-    actualLermIdentity: true;
+    declaredLermIdentity: true;
     stableActorIdentity: true;
     dynamicRootMotion: true;
-    dynamicPoseMotion: true;
+    declaredPoseVariation: true;
     sourceIdentityDeclared: true;
     routeIdentityPreserved: true;
-    rootSupportSamplesPreserved: true;
+    rootSupportSamplesDeclared: true;
     visibleBodyDriverSeparated: true;
   };
 }
@@ -179,13 +185,13 @@ export function composeMovingLermOnHill(
     timeline,
     assertions: {
       exactLandedHill: true,
-      actualLermIdentity: true,
+      declaredLermIdentity: true,
       stableActorIdentity: true,
       dynamicRootMotion: true,
-      dynamicPoseMotion: true,
+      declaredPoseVariation: true,
       sourceIdentityDeclared: true,
       routeIdentityPreserved: true,
-      rootSupportSamplesPreserved: true,
+      rootSupportSamplesDeclared: true,
       visibleBodyDriverSeparated: true,
     },
   };
@@ -225,11 +231,19 @@ function validateInput(input: MovingLermOnHillInput): void {
   if (input.driver.assetIdentity === input.identity.assetIdentity) {
     throw new Error('visible Lerm body and non-Lerm driver identities must differ');
   }
-  if (
-    input.body.representationKind !== 'authored_procedural' &&
-    input.body.representationKind !== 'generated_mesh_imported'
-  ) {
-    throw new Error('body representation must be a non-fixture imported or authored body');
+  if (input.body.schema !== LERM_HORDE_VISIBLE_BODY_SCHEMA) {
+    throw new Error(`body schema must be ${LERM_HORDE_VISIBLE_BODY_SCHEMA}`);
+  }
+  if (input.body.representationKind !== 'authored_procedural') {
+    throw new Error('body representation must be authored_procedural for this checkpoint');
+  }
+  if (input.identity.assetIdentity !== LERM_HORDE_VISIBLE_BODY_ASSET_IDENTITY) {
+    throw new Error(`visible body asset identity must be ${LERM_HORDE_VISIBLE_BODY_ASSET_IDENTITY}`);
+  }
+  if (input.identity.bodySchemaIdentity !== LERM_HORDE_VISIBLE_BODY_SCHEMA_IDENTITY) {
+    throw new Error(
+      `visible body schema identity must be ${LERM_HORDE_VISIBLE_BODY_SCHEMA_IDENTITY}`,
+    );
   }
 
   validateArtifact('body', input.body);
@@ -346,15 +360,15 @@ function buildTimelineFrame(
     backend: input.behavior.backend,
     configId: input.behavior.configId,
   };
-  const hillSource: SourceTruth = {
+  const supportSource: SourceTruth = {
     schema: SOURCE_TRUTH_SCHEMA,
-    authority: input.hill.authority,
-    route: input.hill.route,
-    frameId: `hill:${frameId}`,
+    authority: 'visual_only',
+    route: input.support.routeIdentity.effectiveRoute,
+    frameId: `declared-support:${frameId}`,
     timestampMs: sample.timestampMs,
     sampleAgeMs: 0,
-    backend: 'hill-of-hills-producer-history',
-    configId: input.hill.revision,
+    backend: input.support.routeIdentity.backend,
+    configId: input.support.routeIdentity.configId,
   };
   const terrainSampleId = `hill-support:${input.identity.actorId}:${index}`;
   const lerm: LermState = {
@@ -366,9 +380,7 @@ function buildTimelineFrame(
     world: sample.rootWorld,
     heading: sample.heading,
     terrainContact: {
-      terrainSampleId,
-      grounded: true,
-      contactWorld: sample.supportWorld,
+      grounded: false,
     },
   };
   const firstVerticalFrame: FirstVerticalFrame = {
@@ -377,7 +389,7 @@ function buildTimelineFrame(
     terrainSamples: [{
       schema: TERRAIN_SAMPLE_SCHEMA,
       id: terrainSampleId,
-      source: hillSource,
+      source: supportSource,
       world: sample.supportWorld,
       normal: sample.terrainNormal,
       height: sample.supportWorld[1],

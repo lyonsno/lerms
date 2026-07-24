@@ -202,17 +202,29 @@ assert.deepEqual(
   input.motion.samples.map((sample) => sample.rootWorld),
 );
 assert.deepEqual(
-  composition.timeline.map((frame) => frame.lerm.terrainContact.contactWorld),
+  composition.timeline.map((frame) => frame.supportWorld),
   input.motion.samples.map((sample) => sample.supportWorld),
+  'caller-declared support samples remain available without becoming grounded Hill evidence',
 );
 assert.ok(composition.assertions.dynamicRootMotion);
-assert.ok(composition.assertions.dynamicPoseMotion);
+assert.ok(composition.assertions.declaredPoseVariation);
+assert.equal(
+  composition.assertions.dynamicPoseMotion,
+  undefined,
+  'opaque pose fingerprint labels must not claim verified body articulation',
+);
 assert.ok(composition.assertions.stableActorIdentity);
 assert.ok(composition.assertions.exactLandedHill);
 assert.ok(composition.assertions.routeIdentityPreserved);
 assert.ok(composition.assertions.sourceIdentityDeclared);
-assert.ok(composition.assertions.rootSupportSamplesPreserved);
+assert.ok(composition.assertions.rootSupportSamplesDeclared);
 assert.ok(composition.assertions.visibleBodyDriverSeparated);
+assert.ok(composition.assertions.declaredLermIdentity);
+assert.equal(
+  composition.assertions.actualLermIdentity,
+  undefined,
+  'caller declarations must not claim verified actual Lerm identity',
+);
 assert.equal(
   composition.assertions.sourceIdentityPreserved,
   undefined,
@@ -315,6 +327,59 @@ assert.throws(
     },
   }),
   /motion samples do not change body pose/,
+);
+
+const adversarialSupport = composeMovingLermOnHill({
+  ...input,
+  motion: {
+    ...input.motion,
+    samples: input.motion.samples.map((sample, index) => ({
+      ...sample,
+      supportWorld: index === 0 ? [999, -999, 999] : sample.supportWorld,
+    })),
+  },
+});
+assert.equal(
+  adversarialSupport.timeline[0].firstVerticalFrame.terrainSamples[0].source.authority,
+  'visual_only',
+  'motion-carried support coordinates are not live Hill evidence',
+);
+assert.equal(
+  adversarialSupport.timeline[0].lerm.terrainContact.grounded,
+  false,
+  'uncorroborated motion-carried support cannot assert grounded contact',
+);
+
+assert.throws(
+  () => composeMovingLermOnHill({
+    ...input,
+    motion: {
+      ...input.motion,
+      samples: input.motion.samples.map((sample) => ({
+        ...sample,
+        state: 'not_a_lerm_state',
+      })),
+    },
+  }),
+  /lerms\[0\]\.state must be a known Lerm state; got not_a_lerm_state/,
+);
+
+assert.throws(
+  () => composeMovingLermOnHill({
+    ...input,
+    identity: {
+      ...input.identity,
+      assetIdentity: 'generated.arbitrary-body.v0',
+      bodySchemaIdentity: 'unrelated-schema',
+    },
+    body: {
+      ...input.body,
+      schema: 'anything.nonempty',
+      representationKind: 'generated_mesh_imported',
+      assetIdentity: 'generated.arbitrary-body.v0',
+    },
+  }),
+  /body schema must be lerms\.red-lerm-procedural-body\.v0/,
 );
 
 console.log('lerm horde moving lerm on hill contracts ok');
