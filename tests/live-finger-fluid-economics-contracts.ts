@@ -1,6 +1,7 @@
 import {
   createLiveFingerFluidEmitterPacket,
   createLiveFingerFluidFrontierSweep,
+  resolveLiveFingerFluidRouteEconomics,
 } from '../src/hand/live-finger-fluid.js';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -85,5 +86,50 @@ assert(sweep.rows.every(row => row.requested.effectiveParticleCount === 2400), '
 assert(sweep.rows.every(row => row.authority.blankOrPartialOutput === false), 'bench rows cannot look successful while blank or partial');
 assert(sweep.rows.every(row => row.authority.staleOrFallback === false), 'bench rows reject stale or fallback source authority');
 assert(sweep.rows.every(row => row.estimatedVisibleMaterialScore > 0), 'frontier estimates visible material separately from solver work');
+
+const routeDefaults = {
+  requestedParticleCount: 2400,
+  requestedActiveParticleBudget: 720,
+  sourceFluxParticlesPerSecond: 360,
+  opticalDensityScale: 2.2,
+  reconstructionRadiusScale: 1.6,
+  lifetimeSeconds: 6,
+};
+const completeRoute = resolveLiveFingerFluidRouteEconomics(new URLSearchParams({
+  fluid_active: '1440',
+  fluid_flux: '960',
+  fluid_optics: '4',
+  fluid_radius: '2.5',
+  fluid_lifetime: '10',
+}), routeDefaults);
+assert(completeRoute.provided === true && completeRoute.error === null, 'complete route economics must resolve without fallback');
+assert(completeRoute.economics?.requestedActiveParticleBudget === 1440, 'complete route preserves active budget');
+assert(completeRoute.economics?.sourceFluxParticlesPerSecond === 960, 'complete route preserves source flux');
+assert(completeRoute.economics?.opticalDensityScale === 4, 'complete route preserves optical density');
+assert(completeRoute.economics?.reconstructionRadiusScale === 2.5, 'complete route preserves reconstruction radius');
+assert(completeRoute.economics?.lifetimeSeconds === 10, 'complete route preserves lifetime');
+assert(completeRoute.economics?.fallbackActive === false, 'valid route economics remain authoritative');
+
+const partialRoute = resolveLiveFingerFluidRouteEconomics(new URLSearchParams({
+  fluid_optics: '4',
+}), routeDefaults);
+assert(partialRoute.economics?.opticalDensityScale === 4, 'partial query changes the requested field');
+assert(partialRoute.economics?.sourceFluxParticlesPerSecond === 360, 'partial query preserves untouched UI defaults');
+
+for (const [query, expectedReason] of [
+  ['fluid_flux=', 'fluid_flux must not be empty'],
+  ['fluid_flux=wat', 'fluid_flux must be finite'],
+  ['fluid_flux=370', 'fluid_flux must align to step 20'],
+  ['fluid_flux=2000', 'fluid_flux must be between 60 and 1440'],
+  ['fluid_active=2100', 'fluid_active must be between 120 and 1920'],
+  ['fluid_optics=8', 'fluid_optics must be between 0.5 and 5'],
+  ['fluid_radius=6', 'fluid_radius must be between 0.7 and 3'],
+  ['fluid_lifetime=20', 'fluid_lifetime must be between 1 and 12'],
+] as const) {
+  const invalid = resolveLiveFingerFluidRouteEconomics(new URLSearchParams(query), routeDefaults);
+  assert(invalid.provided === true, `${query} remains explicit route input`);
+  assert(invalid.economics === null, `${query} cannot silently clamp into authoritative economics`);
+  assert(invalid.error?.includes(expectedReason), `${query} reports its exact invalid-route reason`);
+}
 
 console.log('live finger fluid economics contracts ok');
