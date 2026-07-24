@@ -1539,7 +1539,7 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     effectiveRoute: fluidAssayMode
       ? LIVE_FLUID_ENVELOPE_ASSAY_ROUTE
       : articulatedFixtureMode
-        ? ARTICULATED_FIXTURE_ROUTE
+        ? articulatedFixture ? ARTICULATED_FIXTURE_ROUTE : null
         : fixtureMode
         ? 'recorded_wilor_mano_fixture'
         : latestFluidPacket?.source_route || null,

@@ -1,12 +1,16 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import {
+  evaluateExactFluidWorkloadMismatch,
+  evaluateHandVisualMismatch,
+  mayPromotePrimaryOutput,
+} from './articulated-dense-witness-contract.mjs';
 
 const REPORT_SCHEMA = 'lerms.articulated-dense-witness.v1';
 const FIXTURE_ROUTE = 'hand-state-runtime/deterministic-articulated-replay-not-camera-v1';
 const FIXTURE_AUTHORITY = 'deterministic_fixture_not_live_camera';
-const FLUID_AUTHORITY = 'fixture_density_bench_not_live_hand';
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
   args.set(process.argv[index], process.argv[index + 1]);
@@ -21,6 +25,7 @@ const sourceFrameSettleMs = Number(args.get('--source-frame-settle-ms') || 70);
 const viewportWidth = Number(args.get('--viewport-width') || 1280);
 const viewportHeight = Number(args.get('--viewport-height') || 720);
 const headless = args.get('--headless') !== '0';
+const adversarialHandMode = args.get('--adversarial-hand-mode') || 'none';
 if (!Number.isSafeInteger(frameCount) || frameCount < 4) {
   throw new RangeError(`--capture-count must be an integer of at least 4, received ${frameCount}`);
 }
@@ -33,11 +38,16 @@ if (!['source-step', 'realtime'].includes(captureMode)) {
 if (!Number.isSafeInteger(sourceStartFrame) || !Number.isFinite(sourceFrameSettleMs) || sourceFrameSettleMs < 0) {
   throw new RangeError('source frame start and settle duration are invalid');
 }
+if (!['none', 'hidden'].includes(adversarialHandMode)) {
+  throw new RangeError(`--adversarial-hand-mode must be none or hidden, received ${adversarialHandMode}`);
+}
 
 const chrome = process.env.LERMS_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const outputDir = resolve(args.get('--out-dir') || `/tmp/lerms-articulated-dense-witness-${process.pid}`);
 const contactSheetPath = resolve(args.get('--contact-sheet') || `${outputDir}/contact-sheet.png`);
 const reportPath = resolve(args.get('--report') || `${outputDir}/report.json`);
+const stagingDir = resolve(outputDir, '.articulated-dense-staging');
+const candidateContactSheetPath = resolve(stagingDir, 'contact-sheet.candidate.png');
 const userDataDir = resolve(args.get('--user-data-dir') || `/tmp/lerms-articulated-dense-profile-${process.pid}`);
 const baseUrl = args.get('--url') || 'http://127.0.0.1:4187/live-hand.html';
 const requestedUrl = new URL(baseUrl);
@@ -56,7 +66,9 @@ let chromeExit = null;
 let debugState = null;
 let capturedFrames = [];
 let visualDeltas = [];
+let handVisualDeltas = [];
 let captureTiming = null;
+let candidateContactSheetImage = null;
 let falseClosureChecks = {
   wrongOrFallbackRoute: true,
   fixtureAuthorityMismatch: true,
@@ -64,6 +76,7 @@ let falseClosureChecks = {
   missingFrameProgression: true,
   fluidWorkloadMismatch: true,
   blankOrPartialOutput: true,
+  handVisualMismatch: true,
   captureCadenceShadowed: true,
 };
 
@@ -80,6 +93,8 @@ function writeReport(extra = {}) {
     requestedCaptureCount: frameCount,
     captureIntervalMs,
     captureMode,
+    adversarialHandMode,
+    adversarialAuthority: adversarialHandMode === 'none' ? null : 'witness_fault_injection_not_evidence',
     sourceStartFrame: captureMode === 'source-step' ? sourceStartFrame : null,
     sourceFrameSettleMs: captureMode === 'source-step' ? sourceFrameSettleMs : null,
     settleMs,
@@ -101,6 +116,7 @@ function writeReport(extra = {}) {
     falseClosureChecks,
     capturedFrames,
     visualDeltas,
+    handVisualDeltas,
     captureTiming,
     debugState,
     output: primaryOutputWritten ? contactSheetPath : null,
@@ -204,6 +220,41 @@ async function captureScreenshot(socket, path) {
   writeFileSync(path, Buffer.from(capture.data, 'base64'));
 }
 
+async function captureHandOnlyScreenshot(socket, path) {
+  await evaluate(socket, `(() => {
+    const selectors = ['#fluid-canvas', '#controls', '#receipt'];
+    window.__lermsHandOnlyWitnessRestore = {
+      background: document.body.style.background,
+      elements: selectors.map(selector => {
+        const element = document.querySelector(selector);
+        return { selector, visibility: element?.style.visibility ?? '' };
+      }),
+    };
+    document.body.style.background = '#000';
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      if (element) element.style.visibility = 'hidden';
+    }
+    return true;
+  })()`);
+  try {
+    await evaluate(socket, 'new Promise(resolve => requestAnimationFrame(() => resolve(true)))');
+    await captureScreenshot(socket, path);
+  } finally {
+    await evaluate(socket, `(() => {
+      const restore = window.__lermsHandOnlyWitnessRestore;
+      if (!restore) return false;
+      document.body.style.background = restore.background;
+      for (const entry of restore.elements) {
+        const element = document.querySelector(entry.selector);
+        if (element) element.style.visibility = entry.visibility;
+      }
+      delete window.__lermsHandOnlyWitnessRestore;
+      return true;
+    })()`);
+  }
+}
+
 function decodeRgb(path) {
   const decoded = spawnSync('ffmpeg', ['-v', 'error', '-i', path, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], {
     encoding: null,
@@ -255,15 +306,15 @@ function measureVisualDelta(beforePath, afterPath) {
   };
 }
 
-function writeContactSheet(paths) {
+function writeContactSheet(paths, targetPath) {
   const process = spawnSync('ffmpeg', [
     '-v', 'error',
     '-framerate', '1',
-    '-i', `${outputDir}/frame-%02d.png`,
+    '-i', `${stagingDir}/frame-%02d.png`,
     '-frames:v', '1',
     '-vf', `tile=${Math.min(4, paths.length)}x${Math.ceil(paths.length / 4)}:padding=4:margin=4`,
     '-y',
-    contactSheetPath,
+    targetPath,
   ], { encoding: 'utf8' });
   if (process.status !== 0) {
     throw new Error(`ffmpeg could not assemble the contact sheet: ${process.stderr || process.status}`);
@@ -274,6 +325,8 @@ async function main() {
   let chromeProcess = null;
   let socket = null;
   try {
+    rmSync(contactSheetPath, { force: true });
+    rmSync(stagingDir, { recursive: true, force: true });
     failurePhase = 'launch_chrome';
     chromeProcess = spawn(chrome, [
       '--remote-debugging-port=0',
@@ -342,9 +395,17 @@ async function main() {
 
     failurePhase = 'settle_fixture';
     await delay(settleMs);
+    if (adversarialHandMode === 'hidden') {
+      await evaluate(socket, `(() => {
+        const handCanvas = document.querySelector('#hand-canvas');
+        if (!handCanvas) throw new Error('missing hand canvas for adversarial hide');
+        handCanvas.style.visibility = 'hidden';
+        return true;
+      })()`);
+    }
 
     failurePhase = 'capture_dense_frames';
-    mkdirSync(outputDir, { recursive: true });
+    mkdirSync(stagingDir, { recursive: true });
     const captureSequenceStartedAt = performance.now();
     for (let index = 0; index < frameCount; index += 1) {
       const captureWallTimestampMs = performance.now();
@@ -363,8 +424,10 @@ async function main() {
           ...window.__lermsLiveHandDebugState(),
           effectiveUrl: window.location.href,
         })`);
-      const outputPath = resolve(outputDir, `frame-${String(index).padStart(2, '0')}.png`);
+      const outputPath = resolve(stagingDir, `frame-${String(index).padStart(2, '0')}.png`);
+      const handWitnessPath = resolve(stagingDir, `hand-frame-${String(index).padStart(2, '0')}.png`);
       await captureScreenshot(socket, outputPath);
+      await captureHandOnlyScreenshot(socket, handWitnessPath);
       capturedFrames.push({
         captureIndex: index,
         path: outputPath,
@@ -374,7 +437,9 @@ async function main() {
         frameSelectionAuthority: frameSelectionReceipt?.authority ?? null,
         fixtureFrameIndex: debugState?.articulatedFixture?.currentFrameIndex ?? null,
         presentedFrameCount: debugState?.articulatedFixture?.presentedFrameCount ?? null,
+        handWitnessPath,
         image: null,
+        handImage: null,
       });
       lastTrustworthyEvidence = { phase: failurePhase, capturedFrame: capturedFrames.at(-1), debugState };
       if (captureMode === 'realtime' && index + 1 < frameCount) {
@@ -386,8 +451,13 @@ async function main() {
     failurePhase = 'analyze_dense_frames';
     for (let index = 0; index < capturedFrames.length; index += 1) {
       capturedFrames[index].image = measureImage(capturedFrames[index].path);
+      capturedFrames[index].handImage = measureImage(capturedFrames[index].handWitnessPath);
       if (index > 0) {
         visualDeltas.push(measureVisualDelta(capturedFrames[index - 1].path, capturedFrames[index].path));
+        handVisualDeltas.push(measureVisualDelta(
+          capturedFrames[index - 1].handWitnessPath,
+          capturedFrames[index].handWitnessPath,
+        ));
       }
     }
     const captureIntervals = capturedFrames.slice(1).map(
@@ -405,14 +475,20 @@ async function main() {
       maximumAcceptedP50IntervalMs: captureMode === 'realtime'
         ? Math.max(captureIntervalMs * 2, captureIntervalMs + 25)
         : null,
+      maximumAcceptedP95IntervalMs: captureMode === 'realtime'
+        ? Math.max(captureIntervalMs * 3, captureIntervalMs + 50)
+        : null,
+      maximumAcceptedMaxIntervalMs: captureMode === 'realtime'
+        ? Math.max(captureIntervalMs * 4, captureIntervalMs + 100)
+        : null,
       authority: captureMode === 'source-step'
         ? 'deterministic_source_frame_selection_not_realtime_cadence'
         : 'node_monotonic_clock_at_cdp_capture_start',
     };
 
     failurePhase = 'assemble_contact_sheet';
-    writeContactSheet(capturedFrames.map(frame => frame.path));
-    primaryOutputWritten = true;
+    writeContactSheet(capturedFrames.map(frame => frame.path), candidateContactSheetPath);
+    candidateContactSheetImage = measureImage(candidateContactSheetPath);
 
     failurePhase = 'validate_evidence';
     const distinctFixtureFrames = new Set(capturedFrames.map(frame => frame.fixtureFrameIndex)).size;
@@ -426,34 +502,44 @@ async function main() {
         || debugState?.faceCount !== 1538
         || debugState?.articulatedFixture?.frameCount < 90,
       missingFrameProgression: distinctFixtureFrames < Math.min(4, frameCount)
-        || visualDeltas.filter(delta => delta.changedRatio >= 0.0002).length < Math.min(3, frameCount - 1),
-      fluidWorkloadMismatch: debugState?.densityBenchAuthority !== FLUID_AUTHORITY
-        || debugState?.fluid?.activeEmitterCount !== 5
-        || debugState?.fluid?.effectiveParticleCount !== debugState?.fluid?.requestedParticleCount
-        || debugState?.fluid?.juiceBudget?.lastMacroMapping?.effectiveBudget !== 80,
-      blankOrPartialOutput: !primaryOutputWritten
+        || handVisualDeltas.filter(delta => delta.changedRatio >= 0.0002).length < Math.min(3, frameCount - 1),
+      fluidWorkloadMismatch: evaluateExactFluidWorkloadMismatch(debugState),
+      blankOrPartialOutput: candidateContactSheetImage.byteCount <= 0
+        || candidateContactSheetImage.dynamicRange < 16
         || capturedFrames.length !== frameCount
         || capturedFrames.some(frame => frame.image.byteCount <= 0 || frame.image.dynamicRange < 16),
+      handVisualMismatch: evaluateHandVisualMismatch({
+        requestedFrameCount: frameCount,
+        handFrames: capturedFrames.map(frame => frame.handImage),
+        handVisualDeltas,
+      }),
       captureCadenceShadowed:
         captureMode === 'source-step'
           ? capturedFrames.some(frame => (
             frame.fixtureFrameIndex !== frame.requestedFixtureFrameIndex
             || frame.frameSelectionAuthority !== 'deterministic_source_frame_selection_not_realtime_cadence'
           ))
-          : captureTiming.p50IntervalMs > captureTiming.maximumAcceptedP50IntervalMs,
+          : captureTiming.p50IntervalMs > captureTiming.maximumAcceptedP50IntervalMs
+            || captureTiming.p95IntervalMs > captureTiming.maximumAcceptedP95IntervalMs
+            || captureTiming.maxIntervalMs > captureTiming.maximumAcceptedMaxIntervalMs,
     };
     const failedChecks = Object.entries(falseClosureChecks).filter(([, failed]) => failed);
-    if (failedChecks.length) {
+    if (!mayPromotePrimaryOutput({ failedChecks })) {
       throw new Error(`articulated dense witness false-closure checks failed: ${JSON.stringify(failedChecks)}`);
     }
 
+    failurePhase = 'promote_primary_output';
+    mkdirSync(dirname(contactSheetPath), { recursive: true });
+    renameSync(candidateContactSheetPath, contactSheetPath);
+    primaryOutputWritten = true;
     failurePhase = 'complete';
     writeReport({
       ok: true,
       distinctFixtureFrameCount: distinctFixtureFrames,
-      contactSheetImage: measureImage(contactSheetPath),
+      contactSheetImage: candidateContactSheetImage,
     });
   } catch (error) {
+    rmSync(stagingDir, { recursive: true, force: true });
     writeReport({
       ok: false,
       error: error instanceof Error ? error.stack || error.message : String(error),
