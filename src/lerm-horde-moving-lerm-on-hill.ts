@@ -71,7 +71,8 @@ export interface MovingLermOnHillInput {
   hill: {
     revision: typeof LERM_HORDE_MOVING_LERM_HILL_REVISION;
     route: string;
-    authority: 'live_simulation';
+    authority: 'live_simulation' | 'historical_replay';
+    evidenceRevision?: string;
     fallbackStatus: 'none';
     staleStatus: 'fresh';
     replaySchema: string;
@@ -122,6 +123,8 @@ export interface MovingLermOnHillComposition {
   sources: {
     lermsRevision: typeof LERM_HORDE_MOVING_LERM_HILL_REVISION;
     hillRevision: typeof LERM_HORDE_MOVING_LERM_HILL_REVISION;
+    hillAuthority: MovingLermOnHillInput['hill']['authority'];
+    hillEvidenceRevision: string;
     hillReplaySchema: string;
     body: MovingLermOnHillInput['body'];
     rig: MovingLermOnHillInput['rig'];
@@ -130,7 +133,8 @@ export interface MovingLermOnHillComposition {
   };
   timeline: readonly MovingLermTimelineFrame[];
   assertions: {
-    exactLandedHill: true;
+    exactLandedHill: boolean;
+    historicalRailReplay: boolean;
     declaredLermIdentity: true;
     stableActorIdentity: true;
     dynamicRootMotion: true;
@@ -150,6 +154,7 @@ export function composeMovingLermOnHill(
     new Set(input.motion.samples.map((sample) => sample.poseFingerprint)).size > 1;
   const rootSupportSamplesDeclared =
     input.motion.samples[0].supportWorld !== undefined;
+  const historicalRailReplay = input.hill.authority === 'historical_replay';
 
   const timeline = input.motion.samples.map((sample, index) =>
     buildTimelineFrame(input, sample, index),
@@ -164,6 +169,8 @@ export function composeMovingLermOnHill(
     sources: {
       lermsRevision: input.lermsRevision,
       hillRevision: input.hill.revision,
+      hillAuthority: input.hill.authority,
+      hillEvidenceRevision: input.hill.evidenceRevision ?? input.hill.revision,
       hillReplaySchema: input.hill.replaySchema,
       body: {
         ...artifactHandle(input.body),
@@ -189,7 +196,8 @@ export function composeMovingLermOnHill(
     },
     timeline,
     assertions: {
-      exactLandedHill: true,
+      exactLandedHill: !historicalRailReplay,
+      historicalRailReplay,
       declaredLermIdentity: true,
       stableActorIdentity: true,
       dynamicRootMotion: true,
@@ -214,12 +222,16 @@ function validateInput(input: MovingLermOnHillInput): void {
   }
   requireString(input.hill.route, 'hill.route');
   requireString(input.hill.replaySchema, 'hill.replaySchema');
-  if (
-    input.hill.authority !== 'live_simulation' ||
-    input.hill.fallbackStatus !== 'none' ||
-    input.hill.staleStatus !== 'fresh'
-  ) {
-    throw new Error('Hill evidence must be live, fresh, and non-fallback');
+  if (input.hill.fallbackStatus !== 'none' || input.hill.staleStatus !== 'fresh') {
+    throw new Error('Hill evidence must be fresh and non-fallback');
+  }
+  if (input.hill.authority === 'historical_replay') {
+    requireString(input.hill.evidenceRevision ?? '', 'hill.evidenceRevision');
+    if (input.hill.evidenceRevision === input.hill.revision) {
+      throw new Error('historical Hill evidence revision must differ from the current target');
+    }
+  } else if (input.hill.evidenceRevision !== undefined) {
+    throw new Error('live Hill evidence must not declare a separate evidence revision');
   }
 
   requireString(input.identity.actorId, 'identity.actorId');

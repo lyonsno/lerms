@@ -5,6 +5,28 @@ import {
 import { FIRST_VERTICAL_INTERFACE_SCHEMA, type SimulationAuthority } from './contracts/first-vertical.ts';
 
 export const RED_LERM_BODY_CANDIDATE_SCHEMA = 'lerms.red-lerm-body-candidate.v0' as const;
+export const RED_LERM_PROCEDURAL_SHAPE_SCHEMA =
+  'lerms.red-lerm-procedural-shape.v0' as const;
+
+export const RED_LERM_PROCEDURAL_SQUASH_THIEF_SHAPE = {
+  schema: RED_LERM_PROCEDURAL_SHAPE_SCHEMA,
+  candidateId: 'procedural-squash-thief-v0',
+  silhouette: {
+    bodyRadiusX: 25,
+    bodyRadiusY: 20,
+    faceRadius: 10,
+    eyeRadius: 4,
+  },
+  feet: {
+    thickness: 4,
+    leftOffset: [-14, 16, -30, 28] as const,
+    rightOffset: [15, 16, 32, 26] as const,
+  },
+  carrySocket: {
+    radius: 10,
+    offset: [28, 2] as const,
+  },
+} as const;
 
 export type RedLermBodyRepresentationKind =
   | 'fixture_baseline'
@@ -78,6 +100,7 @@ export interface RedLermBodyCandidate {
   sourceTruth: RedLermBodyCandidateSourceTruth;
   affordance: RedLermBodyAffordance;
   evaluation: RedLermBodyEvaluation;
+  proceduralShape?: typeof RED_LERM_PROCEDURAL_SQUASH_THIEF_SHAPE;
   generatorPlan?: RedLermBodyGeneratorPlan;
 }
 
@@ -193,7 +216,8 @@ function buildProceduralSquashThief(): RedLermBodyCandidate {
       sourceTruth: 9,
       promotionPath: 7,
       timeToFirstBetterWitness: 8
-    })
+    }),
+    proceduralShape: RED_LERM_PROCEDURAL_SQUASH_THIEF_SHAPE,
   };
 }
 

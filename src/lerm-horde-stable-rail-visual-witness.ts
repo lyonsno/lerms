@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +21,13 @@ import {
   type MovingLermOnHillInput,
 } from './lerm-horde-moving-lerm-on-hill.ts';
 import type { Vec3 } from './contracts/first-vertical.ts';
+import {
+  RED_LERM_BODY_CANDIDATE_SCHEMA,
+  RED_LERM_PROCEDURAL_SHAPE_SCHEMA,
+  RED_LERM_PROCEDURAL_SQUASH_THIEF_SHAPE,
+  buildRedLermBodyBakeoff,
+  type RedLermBodyCandidate,
+} from './red-lerm-body-candidates.ts';
 
 export const CED6DB3D_PRODUCER_REVISION =
   'ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58' as const;
@@ -30,6 +43,15 @@ const REGISTRATION_PATH = 'artifacts/motion-ready-719024/registration.json';
 const REGISTRATION_SCHEMA = 'kaminos.axial-crawler-registration.v0';
 const RAIL_SCHEMA = 'kaminos.creature-scale-locomotion-rail.v0';
 const SUPPORT_SCHEMA = 'kaminos.axial-terrain-support-envelope.v0';
+const REVIEWED_RECEIPT_PATH = 'artifacts/lerm-horde-producer-history/receipt.json';
+const REVIEWED_RECEIPT_SHA256 =
+  'c56627554f5cacb8f151361419bfe70177e2d86490193e30b2f148a11b430b2e';
+const REVIEWED_RECEIPT_GIT_BLOB = 'c172578aa6663bb82a5e2d9cc0ab273f9f9d0279';
+const REVIEWED_RECEIPT_SOURCE_REVISION =
+  '1014904b64c8e2adef257bafc0a2489cab0e56a1';
+const VISIBLE_BODY_PATH = 'src/red-lerm-body-candidates.ts';
+const REVIEWED_VISIBLE_BODY_SHA256 =
+  'df52b476836a386bc87270536d4bc39e53dc2b73ad2b13b721e3e73de6915c6b';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const COLUMNS = 3;
@@ -82,6 +104,7 @@ interface ProducerHistoryReceipt {
   staleStatus: string;
   partialStatus: string;
   lerms: {
+    revision: string;
     hillBaseRevision: string;
   };
   producer: {
@@ -118,6 +141,10 @@ interface ProducerHistoryReceipt {
 }
 
 export interface StableRailVerifiedInputs {
+  receiptPath: string;
+  receiptSha256: string;
+  receiptGitBlob: string;
+  dirtyReceiptInput: string;
   producerRoot: string;
   producerRevision: string;
   producerModulePath: string;
@@ -127,6 +154,7 @@ export interface StableRailVerifiedInputs {
   dirtyProducerInputs: string;
   bodyPath: string;
   bodySha256: string;
+  dirtyBodyInput: string;
 }
 
 interface StableRailVisualWitnessInput {
@@ -158,6 +186,13 @@ interface StableRailVisualWitnessReport {
     staleStatus: 'fresh';
     partialStatus: 'complete-root-only';
   };
+  receipt: {
+    path: string;
+    sha256: string;
+    gitBlob: string;
+    dirtyInput: string;
+    sourceRevision: string;
+  };
   producer: {
     revision: typeof CED6DB3D_PRODUCER_REVISION;
     modulePath: string;
@@ -171,6 +206,10 @@ interface StableRailVisualWitnessReport {
     schemaIdentity: typeof LERM_HORDE_VISIBLE_BODY_SCHEMA_IDENTITY;
     path: string;
     sha256: string;
+    dirtyInput: string;
+    candidateId: 'procedural-squash-thief-v0';
+    candidateSchema: typeof RED_LERM_BODY_CANDIDATE_SCHEMA;
+    shapeSchema: typeof RED_LERM_PROCEDURAL_SHAPE_SCHEMA;
   };
   hill: {
     targetRevision: typeof LERM_HORDE_MOVING_LERM_HILL_REVISION;
@@ -182,6 +221,7 @@ interface StableRailVisualWitnessReport {
   metrics: RenderMetrics;
   claimBoundary: {
     rootRailMotionTruth: true;
+    liveCurrentHillTruth: false;
     liveContactTruth: false;
     bodyArticulationTruth: false;
     rejectedFittedContactConsumed: false;
@@ -200,17 +240,28 @@ interface CliArgs {
   image: string | null;
 }
 
+type CompleteCliArgs = { [Key in keyof CliArgs]: string };
+
+interface StableRailWitnessRuntime {
+  renderRailFilmstrip: typeof renderStableRailFilmstrip;
+}
+
 export function buildStableRailVisualWitness(
   input: StableRailVisualWitnessInput,
+  runtime: StableRailWitnessRuntime = {
+    renderRailFilmstrip: renderStableRailFilmstrip,
+  },
 ): { report: StableRailVisualWitnessReport; pixels: Uint8Array } {
   validateReceiptAndInputs(input.receipt, input.verifiedInputs);
 
   const composition = composeMovingLermOnHill(
     buildCompositionInput(input.receipt, input.verifiedInputs),
   );
-  const { pixels, metrics } = renderStableRailFilmstrip(
+  const visibleBodyCandidate = proceduralSquashThiefCandidate();
+  const { pixels, metrics } = runtime.renderRailFilmstrip(
     input.receipt.history.samples,
     RENDERED_SAMPLE_SEQUENCES,
+    visibleBodyCandidate,
   );
 
   const route = input.receipt.history.producer.route;
@@ -231,6 +282,13 @@ export function buildStableRailVisualWitness(
         staleStatus: 'fresh',
         partialStatus: 'complete-root-only',
       },
+      receipt: {
+        path: input.verifiedInputs.receiptPath,
+        sha256: input.verifiedInputs.receiptSha256,
+        gitBlob: input.verifiedInputs.receiptGitBlob,
+        dirtyInput: input.verifiedInputs.dirtyReceiptInput,
+        sourceRevision: input.receipt.lerms.revision,
+      },
       producer: {
         revision: CED6DB3D_PRODUCER_REVISION,
         modulePath: input.verifiedInputs.producerModulePath,
@@ -244,6 +302,10 @@ export function buildStableRailVisualWitness(
         schemaIdentity: LERM_HORDE_VISIBLE_BODY_SCHEMA_IDENTITY,
         path: input.verifiedInputs.bodyPath,
         sha256: input.verifiedInputs.bodySha256,
+        dirtyInput: input.verifiedInputs.dirtyBodyInput,
+        candidateId: 'procedural-squash-thief-v0',
+        candidateSchema: RED_LERM_BODY_CANDIDATE_SCHEMA,
+        shapeSchema: RED_LERM_PROCEDURAL_SHAPE_SCHEMA,
       },
       hill: {
         targetRevision: LERM_HORDE_MOVING_LERM_HILL_REVISION,
@@ -255,6 +317,7 @@ export function buildStableRailVisualWitness(
       metrics,
       claimBoundary: {
         rootRailMotionTruth: true,
+        liveCurrentHillTruth: false,
         liveContactTruth: false,
         bodyArticulationTruth: false,
         rejectedFittedContactConsumed: false,
@@ -269,31 +332,88 @@ export function buildStableRailVisualWitness(
   };
 }
 
-export function runStableRailVisualWitnessCli(argv = process.argv.slice(2)): number {
+export function runStableRailVisualWitnessCli(
+  argv = process.argv.slice(2),
+  runtime: StableRailWitnessRuntime = {
+    renderRailFilmstrip: renderStableRailFilmstrip,
+  },
+): number {
+  const knownReportPath = argumentValue(argv, '--report');
   let args: CliArgs;
   try {
     args = parseArgs(argv);
   } catch (error) {
-    process.stderr.write(`${errorMessage(error)}\n`);
+    writeFailureReport(knownReportPath, {
+      failurePhase: 'validate_arguments',
+      message: `argument validation failed: ${errorMessage(error)}`,
+      requested: requestedInputs(argv),
+    });
+    process.stderr.write(`argument validation failed: ${errorMessage(error)}\n`);
     return 1;
   }
 
-  if (!args.receipt || !args.producerRoot || !args.report || !args.image) {
-    process.stderr.write(
-      'missing required --receipt, --producer-root, --report, and --image paths\n',
-    );
+  const missingArgs = [
+    !args.receipt && '--receipt',
+    !args.producerRoot && '--producer-root',
+    !args.report && '--report',
+    !args.image && '--image',
+  ].filter(Boolean);
+  if (missingArgs.length > 0) {
+    const message = `missing required ${missingArgs.join(', ')}`;
+    writeFailureReport(args.report, {
+      failurePhase: 'validate_arguments',
+      message: `argument validation failed: ${message}`,
+      requested: requestedInputs(argv),
+    });
+    process.stderr.write(`${message}\n`);
     return 1;
   }
 
+  const completeArgs = args as CompleteCliArgs;
+  let failurePhase = 'validate_arguments';
+  let lastTrustworthyEvidence: Record<string, unknown> | undefined;
   try {
+    validatePathCustody(completeArgs);
+
+    failurePhase = 'read_receipt';
     const receipt = JSON.parse(
-      readFileSync(args.receipt, 'utf8'),
+      readFileSync(completeArgs.receipt, 'utf8'),
     ) as ProducerHistoryReceipt;
-    const producerModulePath = resolve(args.producerRoot, PRODUCER_MODULE_PATH);
-    const registrationPath = resolve(args.producerRoot, REGISTRATION_PATH);
-    const bodyPath = resolve('src/red-lerm-body-candidates.ts');
-    const producerRevision = gitText(args.producerRoot, ['rev-parse', 'HEAD']);
-    const dirtyProducerInputs = gitText(args.producerRoot, [
+
+    failurePhase = 'verify_receipt';
+    const receiptSha256 = sha256File(completeArgs.receipt);
+    const receiptGitBlob = gitText(process.cwd(), [
+      'hash-object',
+      completeArgs.receipt,
+    ]);
+    const dirtyReceiptInput = gitText(process.cwd(), [
+      'status',
+      '--short',
+      '--',
+      completeArgs.receipt,
+    ]);
+    lastTrustworthyEvidence = {
+      receipt: {
+        path: completeArgs.receipt,
+        sha256: receiptSha256,
+        gitBlob: receiptGitBlob,
+        dirtyInput: dirtyReceiptInput,
+        sourceRevision: receipt.lerms?.revision,
+      },
+    };
+
+    failurePhase = 'verify_producer_inputs';
+    const producerModulePath = resolve(completeArgs.producerRoot, PRODUCER_MODULE_PATH);
+    const registrationPath = resolve(completeArgs.producerRoot, REGISTRATION_PATH);
+    const bodyPath = resolve(VISIBLE_BODY_PATH);
+    const dirtyBodyInput = gitText(process.cwd(), [
+      'status',
+      '--short',
+      '--',
+      VISIBLE_BODY_PATH,
+    ]);
+    const producerRevision = gitText(completeArgs.producerRoot, ['rev-parse', 'HEAD']);
+    const dirtyProducerInputs = gitText(completeArgs.producerRoot, [
       'status',
       '--short',
       '--',
@@ -301,40 +421,83 @@ export function runStableRailVisualWitnessCli(argv = process.argv.slice(2)): num
       REGISTRATION_PATH,
     ]);
     const verifiedInputs: StableRailVerifiedInputs = {
-      producerRoot: resolve(args.producerRoot),
+      receiptPath: completeArgs.receipt,
+      receiptSha256,
+      receiptGitBlob,
+      dirtyReceiptInput,
+      producerRoot: resolve(completeArgs.producerRoot),
       producerRevision,
       producerModulePath: PRODUCER_MODULE_PATH,
       producerModuleSha256: sha256File(producerModulePath),
       registrationPath: REGISTRATION_PATH,
       registrationSha256: sha256File(registrationPath),
       dirtyProducerInputs,
-      bodyPath: 'src/red-lerm-body-candidates.ts',
+      bodyPath: VISIBLE_BODY_PATH,
       bodySha256: sha256File(bodyPath),
+      dirtyBodyInput,
     };
-    const { report, pixels } = buildStableRailVisualWitness({
-      receipt,
-      verifiedInputs,
-      imagePath: args.image,
-    });
-    writePpm(args.image, WIDTH, HEIGHT, pixels);
-    writeJson(args.report, report);
+    lastTrustworthyEvidence = {
+      receipt: {
+        path: completeArgs.receipt,
+        sha256: receiptSha256,
+        gitBlob: receiptGitBlob,
+        dirtyInput: dirtyReceiptInput,
+        sourceRevision: receipt.lerms?.revision,
+      },
+      producer: {
+        root: resolve(completeArgs.producerRoot),
+        revision: producerRevision,
+        moduleSha256: verifiedInputs.producerModuleSha256,
+        registrationSha256: verifiedInputs.registrationSha256,
+        dirtyInputs: dirtyProducerInputs,
+      },
+      visibleBody: {
+        path: VISIBLE_BODY_PATH,
+        sha256: verifiedInputs.bodySha256,
+        dirtyInput: dirtyBodyInput,
+      },
+    };
+
+    failurePhase = 'compose';
+    const { report, pixels } = buildStableRailVisualWitness(
+      {
+        receipt,
+        verifiedInputs,
+        imagePath: completeArgs.image,
+      },
+      {
+        renderRailFilmstrip(...renderArgs) {
+          failurePhase = 'render';
+          return runtime.renderRailFilmstrip(...renderArgs);
+        },
+      },
+    );
+
+    failurePhase = 'write_image';
+    writePpm(completeArgs.image, WIDTH, HEIGHT, pixels);
+    failurePhase = 'verify_image';
+    verifyPpm(completeArgs.image, WIDTH, HEIGHT);
+    failurePhase = 'write_report';
+    writeJson(completeArgs.report, report);
     return 0;
   } catch (error) {
-    const failedReport = {
-      ok: false,
-      schema: STABLE_RAIL_VISUAL_WITNESS_SCHEMA,
-      phase: 'failed',
-      failurePhase: 'verify_producer_inputs',
+    const prefix =
+      failurePhase === 'verify_producer_inputs'
+        ? 'producer verification failed'
+        : `${failurePhase.replaceAll('_', ' ')} failed`;
+    const message = `${prefix}: ${errorMessage(error)}`;
+    writeFailureReport(completeArgs.report, {
+      failurePhase,
+      message,
       requested: {
         producerRevision: CED6DB3D_PRODUCER_REVISION,
-        producerRoot: args.producerRoot,
-        receiptPath: args.receipt,
-        imagePath: args.image,
+        producerRoot: completeArgs.producerRoot,
+        receiptPath: completeArgs.receipt,
+        imagePath: completeArgs.image,
       },
-      message: `producer verification failed: ${errorMessage(error)}`,
-    };
-    writeJson(args.report, failedReport);
-    process.stderr.write(`${failedReport.message}\n`);
+      lastTrustworthyEvidence,
+    });
+    process.stderr.write(`${message}\n`);
     return 1;
   }
 }
@@ -361,7 +524,8 @@ function buildCompositionInput(
     hill: {
       revision: LERM_HORDE_MOVING_LERM_HILL_REVISION,
       route: receipt.route,
-      authority: 'live_simulation',
+      authority: 'historical_replay',
+      evidenceRevision: receipt.lerms.hillBaseRevision,
       fallbackStatus: 'none',
       staleStatus: 'fresh',
       replaySchema: PRODUCER_HISTORY_RECEIPT_SCHEMA,
@@ -435,11 +599,25 @@ function validateReceiptAndInputs(
   verified: StableRailVerifiedInputs,
 ): void {
   if (
+    verified.receiptPath !== REVIEWED_RECEIPT_PATH ||
+    verified.receiptSha256 !== REVIEWED_RECEIPT_SHA256 ||
+    verified.receiptGitBlob !== REVIEWED_RECEIPT_GIT_BLOB ||
+    verified.dirtyReceiptInput !== ''
+  ) {
+    throw new Error('receipt identity must match the reviewed clean producer-history artifact');
+  }
+  if (sha256Json(receipt) !== REVIEWED_RECEIPT_SHA256) {
+    throw new Error('receipt content does not match reviewed SHA-256');
+  }
+  if (
     receipt.schema !== PRODUCER_HISTORY_RECEIPT_SCHEMA ||
     receipt.ok !== true ||
     receipt.phase !== 'complete'
   ) {
     throw new Error('producer receipt must be a completed composition receipt');
+  }
+  if (receipt.lerms.revision !== REVIEWED_RECEIPT_SOURCE_REVISION) {
+    throw new Error('receipt source revision does not match the reviewed producer-history run');
   }
   if (
     receipt.fallbackStatus !== 'none' ||
@@ -459,6 +637,12 @@ function validateReceiptAndInputs(
   }
   if (verified.dirtyProducerInputs !== '') {
     throw new Error('producer module or registration has uncommitted changes');
+  }
+  if (verified.bodyPath !== VISIBLE_BODY_PATH) {
+    throw new Error(`visible body path must be ${VISIBLE_BODY_PATH}`);
+  }
+  if (verified.bodySha256 !== REVIEWED_VISIBLE_BODY_SHA256) {
+    throw new Error('visible body SHA-256 does not match the reviewed procedural source');
   }
   if (resolve(verified.producerRoot) !== resolve(receipt.sourceIdentity.effective.producerRepoRoot)) {
     throw new Error('effective producer root does not match reviewed receipt');
@@ -515,6 +699,7 @@ function validateReceiptAndInputs(
 function renderStableRailFilmstrip(
   samples: readonly ProducerHistorySample[],
   selectedSequences: readonly number[],
+  visibleBody: RedLermBodyCandidate,
 ): { pixels: Uint8Array; metrics: RenderMetrics } {
   const pixels = new Uint8Array(WIDTH * HEIGHT * 3);
   const metricsBuffer = new Uint8Array(WIDTH * HEIGHT);
@@ -523,7 +708,7 @@ function renderStableRailFilmstrip(
   selectedSequences.forEach((sequence, panelIndex) => {
     const sample = samples[sequence];
     if (!sample) throw new Error(`missing rendered sample sequence ${sequence}`);
-    renderPanel(pixels, metricsBuffer, samples, sample, panelIndex);
+    renderPanel(pixels, metricsBuffer, samples, sample, panelIndex, visibleBody);
   });
 
   const metrics: RenderMetrics = {
@@ -549,6 +734,7 @@ function renderPanel(
   allSamples: readonly ProducerHistorySample[],
   active: ProducerHistorySample,
   panelIndex: number,
+  visibleBody: RedLermBodyCandidate,
 ): void {
   const column = panelIndex % COLUMNS;
   const row = Math.floor(panelIndex / COLUMNS);
@@ -579,10 +765,51 @@ function renderPanel(
 
   const [bodyX, bodyY] = project(active.root.worldPosition);
   const direction = active.root.tangent[2] >= 0 ? 1 : -1;
-  drawLine(pixels, metrics, bodyX - 18, bodyY + 20, bodyX - 28, bodyY + 43, LEG, 1, 7);
-  drawLine(pixels, metrics, bodyX + 16, bodyY + 20, bodyX + 25, bodyY + 43, LEG, 1, 7);
-  fillEllipse(pixels, metrics, bodyX, bodyY, 39, 29, RED_BODY, 1);
-  fillEllipse(pixels, metrics, bodyX + direction * 33, bodyY + 2, 15, 11, DARK_RED, 1);
+  const shape = visibleBody.proceduralShape;
+  if (
+    !shape ||
+    shape !== RED_LERM_PROCEDURAL_SQUASH_THIEF_SHAPE ||
+    visibleBody.id !== shape.candidateId
+  ) {
+    throw new Error('visible body descriptor does not match the procedural shape');
+  }
+  const bodyRx = Math.round(shape.silhouette.bodyRadiusX * 1.56);
+  const bodyRy = Math.round(shape.silhouette.bodyRadiusY * 1.45);
+  const snoutRx = Math.round(shape.silhouette.faceRadius * 1.5);
+  const legThickness = Math.round(shape.feet.thickness * 1.75);
+  drawLine(
+    pixels,
+    metrics,
+    bodyX - 18,
+    bodyY + 20,
+    bodyX - 28,
+    bodyY + 43,
+    LEG,
+    1,
+    legThickness,
+  );
+  drawLine(
+    pixels,
+    metrics,
+    bodyX + 16,
+    bodyY + 20,
+    bodyX + 25,
+    bodyY + 43,
+    LEG,
+    1,
+    legThickness,
+  );
+  fillEllipse(pixels, metrics, bodyX, bodyY, bodyRx, bodyRy, RED_BODY, 1);
+  fillEllipse(
+    pixels,
+    metrics,
+    bodyX + direction * (bodyRx - 6),
+    bodyY + 2,
+    snoutRx,
+    11,
+    DARK_RED,
+    1,
+  );
 
   drawArrow(
     pixels,
@@ -635,6 +862,95 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
+function argumentValue(argv: readonly string[], key: string): string | null {
+  const index = argv.indexOf(key);
+  const value = index >= 0 ? argv[index + 1] : undefined;
+  return value && !value.startsWith('--') ? value : null;
+}
+
+function requestedInputs(argv: readonly string[]): Record<string, string | null> {
+  return {
+    producerRevision: CED6DB3D_PRODUCER_REVISION,
+    producerRoot: argumentValue(argv, '--producer-root'),
+    receiptPath: argumentValue(argv, '--receipt'),
+    imagePath: argumentValue(argv, '--image'),
+  };
+}
+
+function validatePathCustody(args: CompleteCliArgs): void {
+  const receiptPath = resolve(args.receipt);
+  const reportPath = resolve(args.report);
+  const imagePath = resolve(args.image);
+  if (reportPath === imagePath) {
+    throw new Error('report and image paths must be distinct');
+  }
+  if (receiptPath === reportPath || receiptPath === imagePath) {
+    throw new Error('receipt, report, and image paths must be distinct');
+  }
+  for (const [label, path] of [
+    ['report', args.report],
+    ['image output', args.image],
+  ] as const) {
+    if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
+      throw new Error(`${label} path must not be a symbolic link`);
+    }
+  }
+}
+
+function writeFailureReport(
+  reportPath: string | null,
+  details: {
+    failurePhase: string;
+    message: string;
+    requested: Record<string, unknown>;
+    lastTrustworthyEvidence?: Record<string, unknown>;
+  },
+): void {
+  if (!reportPath) return;
+  try {
+    const requestedReceipt =
+      typeof details.requested.receiptPath === 'string'
+        ? details.requested.receiptPath
+        : null;
+    if (requestedReceipt && resolve(reportPath) === resolve(requestedReceipt)) return;
+    if (existsSync(reportPath) && lstatSync(reportPath).isSymbolicLink()) return;
+    writeJson(reportPath, {
+      ok: false,
+      schema: STABLE_RAIL_VISUAL_WITNESS_SCHEMA,
+      phase: 'failed',
+      ...details,
+    });
+  } catch {
+    // A report-path failure cannot be reported through the same broken path.
+  }
+}
+
+function verifyPpm(path: string, width: number, height: number): void {
+  const bytes = readFileSync(path);
+  const header = Buffer.from(`P6\n${width} ${height}\n255\n`, 'ascii');
+  if (
+    bytes.byteLength !== header.byteLength + width * height * 3 ||
+    !bytes.subarray(0, header.byteLength).equals(header)
+  ) {
+    throw new Error('written image is not a complete expected PPM');
+  }
+}
+
+function proceduralSquashThiefCandidate(): RedLermBodyCandidate {
+  const bakeoff = buildRedLermBodyBakeoff();
+  const candidate = bakeoff.candidates.find(
+    (entry) => entry.id === bakeoff.selectedDefaultCandidateId,
+  );
+  if (
+    !candidate ||
+    candidate.schema !== RED_LERM_BODY_CANDIDATE_SCHEMA ||
+    candidate.sourceTruth.representationKind !== 'authored_procedural'
+  ) {
+    throw new Error('procedural squash-thief body descriptor is unavailable');
+  }
+  return candidate;
+}
+
 function gitText(cwd: string, args: readonly string[]): string {
   return execFileSync('git', args, {
     cwd,
@@ -645,6 +961,12 @@ function gitText(cwd: string, args: readonly string[]): string {
 
 function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function sha256Json(payload: unknown): string {
+  return createHash('sha256')
+    .update(`${JSON.stringify(payload, null, 2)}\n`)
+    .digest('hex');
 }
 
 function writeJson(path: string, payload: unknown): void {

@@ -215,6 +215,7 @@ assert.equal(
 );
 assert.ok(composition.assertions.stableActorIdentity);
 assert.ok(composition.assertions.exactLandedHill);
+assert.equal(composition.assertions.historicalRailReplay, false);
 assert.ok(composition.assertions.routeIdentityPreserved);
 assert.ok(composition.assertions.sourceIdentityDeclared);
 assert.ok(composition.assertions.rootSupportSamplesDeclared);

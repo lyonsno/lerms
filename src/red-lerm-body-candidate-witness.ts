@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  RED_LERM_PROCEDURAL_SQUASH_THIEF_SHAPE,
   buildRedLermBodyBakeoff,
   type RedLermBodyBakeoff,
   type RedLermBodyCandidate
@@ -195,19 +196,48 @@ function drawProceduralThief(
   metric: number
 ): void {
   const squash = index === 1 ? 0.75 : index === 5 ? 0.6 : 1;
+  const shape = RED_LERM_PROCEDURAL_SQUASH_THIEF_SHAPE;
   const lean = index >= 3 ? 10 : index === 4 ? -16 : 0;
-  const rx = Math.round(25 + (index === 2 || index === 3 ? 4 : 0));
-  const ry = Math.round(20 * squash);
-  const bodyY = y + (1 - squash) * 20 + (index === 5 ? -18 : 0);
+  const rx = Math.round(shape.silhouette.bodyRadiusX + (index === 2 || index === 3 ? 4 : 0));
+  const ry = Math.round(shape.silhouette.bodyRadiusY * squash);
+  const bodyY = y + (1 - squash) * shape.silhouette.bodyRadiusY + (index === 5 ? -18 : 0);
 
   fillEllipse(pixels, metricBuffer, x + lean, bodyY, rx, ry, RED, metric);
-  fillCircle(pixels, metricBuffer, x - 14 + lean, bodyY - 8, 10, DARK_RED, metric);
-  fillCircle(pixels, metricBuffer, x + 14 + lean, bodyY - 8, 4, WHITE, metric);
-  drawLine(pixels, metricBuffer, x - 14 + lean, bodyY + 16, x - 30 + lean, bodyY + 28, RED, metric, 4);
-  drawLine(pixels, metricBuffer, x + 15 + lean, bodyY + 16, x + 32 + lean, bodyY + 26, RED, metric, 4);
+  fillCircle(pixels, metricBuffer, x - 14 + lean, bodyY - 8, shape.silhouette.faceRadius, DARK_RED, metric);
+  fillCircle(pixels, metricBuffer, x + 14 + lean, bodyY - 8, shape.silhouette.eyeRadius, WHITE, metric);
+  drawLine(
+    pixels,
+    metricBuffer,
+    x + shape.feet.leftOffset[0] + lean,
+    bodyY + shape.feet.leftOffset[1],
+    x + shape.feet.leftOffset[2] + lean,
+    bodyY + shape.feet.leftOffset[3],
+    RED,
+    metric,
+    shape.feet.thickness,
+  );
+  drawLine(
+    pixels,
+    metricBuffer,
+    x + shape.feet.rightOffset[0] + lean,
+    bodyY + shape.feet.rightOffset[1],
+    x + shape.feet.rightOffset[2] + lean,
+    bodyY + shape.feet.rightOffset[3],
+    RED,
+    metric,
+    shape.feet.thickness,
+  );
 
   if (index >= 1 && index <= 3) {
-    fillCircle(pixels, metricBuffer, x + 28 + lean, bodyY + 2, 10, GOIN, metric);
+    fillCircle(
+      pixels,
+      metricBuffer,
+      x + shape.carrySocket.offset[0] + lean,
+      bodyY + shape.carrySocket.offset[1],
+      shape.carrySocket.radius,
+      GOIN,
+      metric,
+    );
     drawLine(pixels, metricBuffer, x + 14 + lean, bodyY + 2, x + 32 + lean, bodyY + 2, SOURCE, metric, 3);
   }
   if (index === 4 || index === 5) {
