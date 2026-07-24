@@ -36,6 +36,20 @@ assert.equal(replay.report.panels.length, 3);
 assert.equal(replay.report.panels[0].admittedEpisodeCount, 0);
 assert.equal(replay.report.panels[1].admittedEpisodeCount, 1);
 assert.equal(replay.report.panels[2].admittedEpisodeCount, 1);
+const presencePanels = replay.report.panels as unknown as Array<{
+  producerPresence: string;
+  retainedTrafficMemory: boolean;
+}>;
+assert.deepEqual(
+  presencePanels.map((panel) => panel.producerPresence),
+  ['absent', 'present', 'departed'],
+  'panel semantics must distinguish current producer presence from retained history'
+);
+assert.deepEqual(
+  presencePanels.map((panel) => panel.retainedTrafficMemory),
+  [false, true, true],
+  'admission and post-departure panels must both retain traffic memory'
+);
 assert.equal(
   replay.report.panels[1].trafficChecksum,
   replay.report.panels[2].trafficChecksum,
@@ -50,6 +64,27 @@ assert.equal(replay.report.panels[2].stanceContactCount, 0);
 assert.equal(replay.report.panels[2].supportedRootSampleCount, 14);
 assert.equal(replay.report.panels[2].supportShockResetCount, 0);
 assert.equal(replay.report.render.primaryOutputWritten, false);
+assert.equal(
+  replay.report.render.rootMarkerCount,
+  liveReceipt.history.samples.length,
+  'only the currently present producer panel may render the live root rail'
+);
+assert.match(
+  replay.svg,
+  /data-panel-id="history-admitted"[\s\S]*data-producer-presence-rail="live"/,
+  'admission panel must expose the live producer rail'
+);
+const afterDepartureSvg = replay.svg.split('data-panel-id="after-departure"')[1] ?? '';
+assert.doesNotMatch(
+  afterDepartureSvg,
+  /data-producer-presence-rail="live"/,
+  'post-departure panel must not render historical roots as current presence'
+);
+assert.match(
+  afterDepartureSvg,
+  /producer departed · blue = retained traffic memory/,
+  'post-departure legend must name absence and persistence explicitly'
+);
 
 assert.throws(
   () => createHillProducerHistoryOperatorReplay({

@@ -48,6 +48,8 @@ type ReplayFailurePhase =
 export interface HillProducerHistoryReplayPanel {
   id: 'no-history-control' | 'history-admitted' | 'after-departure';
   label: string;
+  producerPresence: 'absent' | 'present' | 'departed';
+  retainedTrafficMemory: boolean;
   frameId: string;
   sampleChecksum: string;
   topologyPossibilityChecksum: string;
@@ -211,7 +213,7 @@ export function createHillProducerHistoryOperatorReplay(
       cellCount: panels.length *
         REPLAY_TERRAIN_PARAMS.gridResolutionX *
         REPLAY_TERRAIN_PARAMS.gridResolutionZ,
-      rootMarkerCount: receipt.history.samples.length * 2,
+      rootMarkerCount: receipt.history.samples.length,
       svgSha256,
       primaryOutputWritten: false
     },
@@ -454,20 +456,42 @@ function replayTerrains(
 
 function createPanels(terrains: ReplayTerrains): readonly HillProducerHistoryReplayPanel[] {
   return [
-    panelFor('no-history-control', 'no-history control', terrains.control),
-    panelFor('history-admitted', 'history admitted', terrains.admitted),
-    panelFor('after-departure', 'after departure', terrains.afterDeparture)
+    panelFor(
+      'no-history-control',
+      'no-history control',
+      'absent',
+      false,
+      terrains.control
+    ),
+    panelFor(
+      'history-admitted',
+      'history admitted',
+      'present',
+      true,
+      terrains.admitted
+    ),
+    panelFor(
+      'after-departure',
+      'after departure',
+      'departed',
+      true,
+      terrains.afterDeparture
+    )
   ];
 }
 
 function panelFor(
   id: HillProducerHistoryReplayPanel['id'],
   label: string,
+  producerPresence: HillProducerHistoryReplayPanel['producerPresence'],
+  retainedTrafficMemory: boolean,
   terrain: HillOfHillsTerrain
 ): HillProducerHistoryReplayPanel {
   return {
     id,
     label,
+    producerPresence,
+    retainedTrafficMemory,
     frameId: terrain.source.frameId,
     sampleChecksum: terrain.witness.sampleChecksum,
     topologyPossibilityChecksum: terrain.witness.topologyPossibilityChecksum,
@@ -570,9 +594,9 @@ function renderReplaySvg(
         cellHeight + 0.2
       ).toFixed(2)}" fill="rgb(${r},${g},${b})"/>`;
     }).join('');
-    const roots = panel.id === 'no-history-control'
+    const roots = panel.producerPresence !== 'present'
       ? ''
-      : receipt.history.samples.map((sample) => {
+      : `<g data-producer-presence-rail="live">${receipt.history.samples.map((sample) => {
           const px = x0 + plot.x +
             (sample.root.worldPosition[0] + REPLAY_TERRAIN_PARAMS.width / 2) /
             REPLAY_TERRAIN_PARAMS.width * plot.width;
@@ -580,16 +604,21 @@ function renderReplaySvg(
             (sample.root.worldPosition[2] + REPLAY_TERRAIN_PARAMS.length / 2) /
             REPLAY_TERRAIN_PARAMS.length * plot.height;
           return `<circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="2.5" fill="#ffe06f" stroke="#07120f" stroke-width="0.8"/>`;
-        }).join('');
-    return `<g>
+        }).join('')}</g>`;
+    const legend = panel.producerPresence === 'present'
+      ? 'producer present · yellow = root rail · blue = memory'
+      : panel.producerPresence === 'departed'
+        ? 'producer departed · blue = retained traffic memory'
+        : 'producer absent · no admitted traffic memory';
+    return `<g data-panel-id="${panel.id}">
       <rect x="${x0}" y="0" width="${panelWidth}" height="${height}" fill="#06110d"/>
       <text x="${x0 + 24}" y="30" fill="#f4f0ca" font-family="monospace" font-size="17" font-weight="700">${escapeXml(panel.label)}</text>
-      <text x="${x0 + 24}" y="52" fill="#9fc7b0" font-family="monospace" font-size="11">frame ${escapeXml(panel.frameId)}</text>
+      <text x="${x0 + 24}" y="52" fill="#9fc7b0" font-family="monospace" font-size="11">presence ${panel.producerPresence} · frame ${escapeXml(panel.frameId)}</text>
       <text x="${x0 + 24}" y="69" fill="#9fc7b0" font-family="monospace" font-size="11">traffic ${panel.trafficChecksum} · max ${panel.trafficRange.max.toFixed(4)} · episodes ${panel.admittedEpisodeCount}</text>
       <text x="${x0 + 24}" y="86" fill="#9fc7b0" font-family="monospace" font-size="11">possibility ${panel.topologyPossibilityChecksum} · roots ${panel.supportedRootSampleCount} · contacts ${panel.stanceContactCount}</text>
       ${cells}${roots}
       <rect x="${x0 + plot.x}" y="${plot.y}" width="${plot.width}" height="${plot.height}" fill="none" stroke="#78a98e" stroke-width="1"/>
-      <text x="${x0 + 24}" y="567" fill="#f9e27d" font-family="monospace" font-size="11">yellow = live producer root/support rail</text>
+      <text x="${x0 + 24}" y="567" fill="#f9e27d" font-family="monospace" font-size="11">${legend}</text>
       <text x="${x0 + 24}" y="586" fill="#a8c9b6" font-family="monospace" font-size="10">receipt ${escapeXml(receipt.historySummary.checksum)} · source ${escapeXml(receipt.hill.effective.sourceLineageKey)} · shock ${panel.supportShockResetCount}</text>
     </g>`;
   }).join('');
