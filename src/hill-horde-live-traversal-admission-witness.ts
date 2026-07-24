@@ -617,7 +617,7 @@ function escapeXml(value: string): string {
 
 if (
   process.argv[1] &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
 ) {
   process.exitCode = runHillHordeLiveTraversalWitnessCli();
 }

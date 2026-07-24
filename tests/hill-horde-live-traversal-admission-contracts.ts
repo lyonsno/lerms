@@ -396,4 +396,18 @@ assert.equal(compiledCliReport.ok, false);
 assert.equal(compiledCliReport.failurePhase, 'argument-parse');
 assert.match(compiledCliRun.stderr, /missing required --horde-report/);
 
+const tmpAliasCli = compiledCli.replace(/^\/private\/tmp\//, '/tmp/');
+const aliasCliFailure = join(cliDir, 'alias-cli-failure.json');
+const aliasCliRun = spawnSync(
+  process.execPath,
+  [tmpAliasCli, '--report-out', aliasCliFailure],
+  { encoding: 'utf8' },
+);
+assert.equal(aliasCliRun.status, 1);
+assert.equal(
+  JSON.parse(readFileSync(aliasCliFailure, 'utf8')).failurePhase,
+  'argument-parse',
+  'the compiled witness must execute through the /tmp -> /private/tmp path alias',
+);
+
 console.log('Hill Horde live traversal admission contracts ok');
