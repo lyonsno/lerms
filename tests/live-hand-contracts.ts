@@ -322,11 +322,26 @@ const sample = {
   manoFaceCount: 1538,
   modelLatencyMs: 61,
   captureToWebglRenderReturnMs: 92,
+  captureToRenderCompleteMs: 92,
+  renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented' as const,
 };
 const summary = summarizeLiveHandLatency([
   sample,
-  { ...sample, frameId: 'frame-43', modelLatencyMs: 63, captureToWebglRenderReturnMs: 97 },
-  { ...sample, frameId: 'frame-44', effectiveRoute: LIVE_HAND_HYBRID_ROUTE, modelLatencyMs: 70, captureToWebglRenderReturnMs: 110 },
+  {
+    ...sample,
+    frameId: 'frame-43',
+    modelLatencyMs: 63,
+    captureToWebglRenderReturnMs: 97,
+    captureToRenderCompleteMs: 97,
+  },
+  {
+    ...sample,
+    frameId: 'frame-44',
+    effectiveRoute: LIVE_HAND_HYBRID_ROUTE,
+    modelLatencyMs: 70,
+    captureToWebglRenderReturnMs: 110,
+    captureToRenderCompleteMs: 110,
+  },
 ]);
 assert(summary.sampleCount === 3, 'counts live samples');
 assert(summary.modelLatencyMs.p50 === 63, 'reports model p50');
@@ -335,6 +350,10 @@ assert(summary.captureToWebglRenderReturnMs.p95 === 110, 'reports capture-to-Web
 assertThrows(
   () => summarizeLiveHandLatency([{ ...sample, effectiveRoute: 'unknown' }]),
   'effective route',
+);
+assertThrows(
+  () => summarizeLiveHandLatency([{ ...sample, captureToRenderCompleteMs: 93 }]),
+  'preserve the WebGL render-return measurement',
 );
 
 console.log('live hand contracts ok');
