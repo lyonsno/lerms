@@ -21,8 +21,13 @@ assert.equal(
 );
 assert.match(
   liveHandSource,
-  /const LERMS_LIVE_FLUID_PARTICLE_COUNT = 2_400;/,
-  'LERMS must own its 2,400-particle production target instead of inheriting a generic Kaminos bench default',
+  /const LERMS_LIVE_FLUID_PARTICLE_COUNT = resolveRequestedParticleCount\(params\.get\('fluid_particles'\), 2_400\);/,
+  'LERMS keeps 2,400 as its product starting coordinate while permitting explicit assay requests',
+);
+assert.match(
+  liveHandSource,
+  /if \(!Number\.isSafeInteger\(parsed\) \|\| parsed <= 0\)[\s\S]*return parsed;/,
+  'the assay validates caller input without silently capping it below the solver capacity',
 );
 assert.match(
   liveHandSource,

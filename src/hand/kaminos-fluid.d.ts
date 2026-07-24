@@ -27,6 +27,7 @@ declare module 'kaminos/finger-fluid-webgpu-core.js' {
         onSubmittedWorkDone(): Promise<void>;
       };
     };
+    requestDiagnostics(): Promise<Record<string, unknown> | null>;
     getDebugState(): Record<string, unknown>;
     destroy(): void;
   }
