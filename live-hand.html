@@ -40,9 +40,14 @@
       #status[data-state="error"] { color: #ef968b; }
       #route-truth { margin-top: 7px; color: #547879; font-size: 9px; line-height: 1.55; }
       #density-controls { display: grid; gap: 8px; margin-top: 10px; }
-      .density-control { display: grid; grid-template-columns: 72px 1fr 48px; align-items: center; gap: 8px; color: #9fc7c8; font-size: 9px; }
+      .density-control { display: grid; grid-template-columns: 78px 1fr 52px; align-items: center; gap: 8px; color: #9fc7c8; font-size: 9px; }
       .density-control input { width: 100%; accent-color: #70d6b8; }
       .density-value { color: #e2eeee; text-align: right; font-variant-numeric: tabular-nums; }
+      #fluid-juice-budget-state { padding-top: 2px; color: #6eaaa0; font-size: 9px; text-align: right; text-transform: uppercase; }
+      #fluid-juice-budget-state[data-state="full"] { color: #83d7bc; }
+      #fluid-juice-budget-state[data-state="redline"] { color: #ef968b; }
+      #fluid-juice-budget-state[data-state="custom"] { color: #d5ae78; }
+      #advanced-density-controls { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid rgba(102, 180, 181, 0.18); }
       #receipt { position: absolute; z-index: 2; left: 16px; bottom: 14px; color: #345354; font-size: 9px; }
       video { display: none; }
     </style>
@@ -53,11 +58,15 @@
     <section id="controls" aria-label="Live hand controls">
       <button id="hand-toggle" type="button">Start Hand</button>
       <div id="density-controls">
-        <label class="density-control">Flux <input id="fluid-flux" type="range" min="60" max="1440" step="20" value="360" /><span id="fluid-flux-value" class="density-value">360</span></label>
-        <label class="density-control">Active <input id="fluid-active-budget" type="range" min="120" max="1920" step="60" value="720" /><span id="fluid-active-budget-value" class="density-value">720</span></label>
-        <label class="density-control">Optics <input id="fluid-optical-density" type="range" min="0.5" max="5" step="0.1" value="2.2" /><span id="fluid-optical-density-value" class="density-value">2.2</span></label>
-        <label class="density-control">Radius <input id="fluid-reconstruction-radius" type="range" min="0.7" max="3" step="0.1" value="1.6" /><span id="fluid-reconstruction-radius-value" class="density-value">1.6</span></label>
-        <label class="density-control">Life <input id="fluid-lifetime" type="range" min="1" max="12" step="0.5" value="6" /><span id="fluid-lifetime-value" class="density-value">6.0</span></label>
+        <label class="density-control">Juice <input id="fluid-juice-budget" type="range" min="0" max="100" step="1" value="50" /><span id="fluid-juice-budget-value" class="density-value">50</span></label>
+        <div id="fluid-juice-budget-state" data-state="full">full</div>
+        <div id="advanced-density-controls">
+          <label class="density-control">Flux req <input id="fluid-flux" type="range" min="60" max="1440" step="20" value="360" /><span id="fluid-flux-value" class="density-value">360</span></label>
+          <label class="density-control">Active req <input id="fluid-active-budget" type="range" min="120" max="1920" step="60" value="720" /><span id="fluid-active-budget-value" class="density-value">720</span></label>
+          <label class="density-control">Speed req <input id="fluid-optical-density" type="range" min="0.5" max="5" step="0.1" value="1.7" /><span id="fluid-optical-density-value" class="density-value">1.7</span></label>
+          <label class="density-control">Aperture req <input id="fluid-reconstruction-radius" type="range" min="0.7" max="3" step="0.1" value="1.6" /><span id="fluid-reconstruction-radius-value" class="density-value">1.60</span></label>
+          <label class="density-control">Life req <input id="fluid-lifetime" type="range" min="1" max="12" step="0.5" value="6" /><span id="fluid-lifetime-value" class="density-value">6.0</span></label>
+        </div>
       </div>
       <div id="status" data-state="idle">runtime idle</div>
       <div id="route-truth">route unverified</div>

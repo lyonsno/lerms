@@ -54,6 +54,7 @@ let visualDelta = null;
 let population = null;
 let timing = null;
 let sourceFlux = null;
+let runtimeEconomicsAuthority = null;
 let debugPort = null;
 let browserWebSocketPath = null;
 let chromeExit = null;
@@ -64,6 +65,8 @@ let falseClosureChecks = {
   inconsistentPopulationAccounting: true,
   sourceFluxMismatch: true,
   economicsMismatch: true,
+  juiceBudgetAuthorityMismatch: true,
+  runtimeEconomicsAuthorityMismatch: true,
 };
 
 function delay(ms) {
@@ -110,6 +113,7 @@ function writeReport(extra = {}) {
     population,
     timing,
     sourceFlux,
+    runtimeEconomicsAuthority,
     startReceipt,
     debugState,
     output: primaryOutputWritten ? out : null,
@@ -391,6 +395,7 @@ async function main() {
       wallElapsedMs,
       authority: 'gpu_source_recirculation_counter_at_explicit_checkpoint',
     };
+    runtimeEconomicsAuthority = debugState?.fluid?.runtimeEconomicsAuthority || null;
     falseClosureChecks = {
       wrongOrFallbackRoute: debugState?.effectiveRoute !== ASSAY_ROUTE
         || debugState?.fluidEvidenceMode !== ASSAY_ROUTE
@@ -414,6 +419,27 @@ async function main() {
         || debugState?.fluid?.economics?.opticalDensityScale !== opticalDensityScale
         || debugState?.fluid?.economics?.reconstructionRadiusScale !== reconstructionRadiusScale
         || debugState?.fluid?.economics?.lifetimeSeconds !== lifetimeSeconds,
+      juiceBudgetAuthorityMismatch:
+        debugState?.fluid?.juiceBudget?.authority !== 'assay_explicit_profile'
+        || debugState?.fluid?.juiceBudget?.mapping !== null,
+      runtimeEconomicsAuthorityMismatch:
+        runtimeEconomicsAuthority?.schema !== 'lerms.live-finger-fluid-runtime-authority.v0'
+        || runtimeEconomicsAuthority?.pinnedRevision !== debugState?.fluid?.pinnedRevision
+        || runtimeEconomicsAuthority?.authority !== 'pinned_runtime_receipt'
+        || runtimeEconomicsAuthority?.complete !== true
+        || runtimeEconomicsAuthority?.effective?.packetId !== startReceipt?.fluid?.assayReceipt?.packetId
+        || runtimeEconomicsAuthority?.effective?.sourceRoute !== startReceipt?.fluid?.assayReceipt?.sourceRoute
+        || runtimeEconomicsAuthority?.effective?.particleCount !== effectiveParticleCount
+        || runtimeEconomicsAuthority?.effective?.inlets?.filter(inlet => inlet?.active === true).length !== emitterCount
+        || runtimeEconomicsAuthority?.requested?.effectiveActiveParticleBudget !== null
+        || runtimeEconomicsAuthority?.effective?.activeParticleBudget !== null
+        || runtimeEconomicsAuthority?.effective?.expectedParticleReleaseRate !== expectedParticleReleaseRate
+        || runtimeEconomicsAuthority?.effective?.opticalDensityScale !== null
+        || runtimeEconomicsAuthority?.effective?.reconstructionRadiusScale !== null
+        || runtimeEconomicsAuthority?.effective?.residenceSeconds !== 1.65
+        || runtimeEconomicsAuthority?.effective?.maximumTravelDistance !== 2.4
+        || runtimeEconomicsAuthority?.support?.sourceFlux !== 'derived_from_aperture_and_speed'
+        || runtimeEconomicsAuthority?.support?.lifetime !== 'unsupported_metadata_hard_recycle',
     };
     const failedChecks = Object.entries(falseClosureChecks).filter(([, failed]) => failed);
     if (failedChecks.length) {

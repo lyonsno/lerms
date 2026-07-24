@@ -41,12 +41,15 @@ import {
   KAMINOS_FLUID_REVISION,
   LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
   LIVE_FLUID_CAMERA,
+  createPinnedKaminosLiveInletRuntimeAuthority,
   createLiveFingerFluidEmitterPacket,
   isLiveFingerFluidPacketFresh,
   normalizeLiveFingerFluidEconomics,
+  resolveLiveFingerFluidJuiceBudget,
   resolveLiveFingerFluidRouteEconomics,
   type LiveFingerFluidEconomics,
   type LiveFingerFluidEconomicsOptions,
+  type LiveFingerFluidJuiceBudget,
   type LiveFingerFluidPacket,
 } from './live-finger-fluid.js';
 
@@ -81,6 +84,9 @@ const video = requiredElement<HTMLVideoElement>('camera');
 const toggle = requiredElement<HTMLButtonElement>('hand-toggle');
 const status = requiredElement<HTMLDivElement>('status');
 const routeTruth = requiredElement<HTMLDivElement>('route-truth');
+const juiceBudgetControl = requiredElement<HTMLInputElement>('fluid-juice-budget');
+const juiceBudgetValue = requiredElement<HTMLSpanElement>('fluid-juice-budget-value');
+const juiceBudgetState = requiredElement<HTMLDivElement>('fluid-juice-budget-state');
 const fluxControl = requiredElement<HTMLInputElement>('fluid-flux');
 const activeBudgetControl = requiredElement<HTMLInputElement>('fluid-active-budget');
 const opticalDensityControl = requiredElement<HTMLInputElement>('fluid-optical-density');
@@ -164,9 +170,9 @@ let fluidGpuBusy = false;
 let fluidGpuCompletionGeneration = 0;
 let fluidGpuCompletionError: string | null = null;
 let latestLiveInletReceipt: ReturnType<FingerFluidSolver['setLiveInletPacket']> | null = null;
-let liveFluidEconomics: LiveFingerFluidEconomics = normalizeLiveFingerFluidEconomics({
-  requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
-});
+let liveJuiceBudget: LiveFingerFluidJuiceBudget = resolveLiveFingerFluidJuiceBudget(50);
+let juiceBudgetAuthority: 'macro_control' | 'custom_advanced_controls' | 'route_query' | 'assay_explicit_profile' = 'macro_control';
+let liveFluidEconomics: LiveFingerFluidEconomics = normalizeLiveFingerFluidEconomics(liveJuiceBudget.economics);
 let lastAnimationFrameAt = 0;
 let fluidSimulationClockAt = 0;
 let lastFluidWallSubmitAt = 0;
@@ -254,10 +260,19 @@ function syncFluidEconomicsControls(economics: LiveFingerFluidEconomics): void {
   reconstructionRadiusControl.value = String(economics.reconstructionRadiusScale);
   lifetimeControl.value = String(economics.lifetimeSeconds);
   densityValueElements.flux.textContent = economics.sourceFluxParticlesPerSecond.toFixed(0);
-  densityValueElements.activeBudget.textContent = economics.effectiveActiveParticleBudget.toFixed(0);
+  densityValueElements.activeBudget.textContent = economics.requestedActiveParticleBudget.toFixed(0);
   densityValueElements.opticalDensity.textContent = economics.opticalDensityScale.toFixed(1);
-  densityValueElements.reconstructionRadius.textContent = economics.reconstructionRadiusScale.toFixed(1);
+  densityValueElements.reconstructionRadius.textContent = economics.reconstructionRadiusScale.toFixed(2);
   densityValueElements.lifetime.textContent = economics.lifetimeSeconds.toFixed(1);
+}
+
+function syncJuiceBudgetState(): void {
+  juiceBudgetValue.textContent = juiceBudgetAuthority === 'macro_control'
+    ? liveJuiceBudget.effectiveBudget.toFixed(0)
+    : 'custom';
+  const state = juiceBudgetAuthority === 'macro_control' ? liveJuiceBudget.zone : 'custom';
+  juiceBudgetState.dataset.state = state;
+  juiceBudgetState.textContent = state;
 }
 
 const routeFluidResolution = resolveLiveFingerFluidRouteEconomics(params, readFluidEconomicsControls());
@@ -265,8 +280,22 @@ const queryFluidEconomics = routeFluidResolution.economics;
 const routeConfigError = routeFluidResolution.error;
 
 function updateFluidEconomicsFromControls(): void {
+  juiceBudgetAuthority = 'custom_advanced_controls';
   liveFluidEconomics = normalizeLiveFingerFluidEconomics(readFluidEconomicsControls());
   syncFluidEconomicsControls(liveFluidEconomics);
+  syncJuiceBudgetState();
+  if (latestFluidFrame && fluidSolver?.available) {
+    publishFluidPacketForFrame(latestFluidFrame);
+  }
+  setRouteTruth();
+}
+
+function applyJuiceBudgetFromControl(): void {
+  liveJuiceBudget = resolveLiveFingerFluidJuiceBudget(readFiniteInput(juiceBudgetControl, Number.NaN));
+  juiceBudgetAuthority = 'macro_control';
+  liveFluidEconomics = normalizeLiveFingerFluidEconomics(liveJuiceBudget.economics);
+  syncFluidEconomicsControls(liveFluidEconomics);
+  syncJuiceBudgetState();
   if (latestFluidFrame && fluidSolver?.available) {
     publishFluidPacketForFrame(latestFluidFrame);
   }
@@ -306,7 +335,7 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
     ? Number(latestLiveInletReceipt?.expectedParticleReleaseRate)
     : fluidDebugNumber(liveInlets, 'expectedParticleReleaseRate');
   const fluid = fluidSolver?.available
-    ? ` | fluid ${effectiveParticleCount ?? 'unverified'}p effective / ${liveFluidEconomics.requestedParticleCount}p requested | flux ${liveFluidEconomics.sourceFluxParticlesPerSecond.toFixed(0)} -> ${effectiveReleaseRate?.toFixed(0) ?? 'unverified'}pps | active ${activeParticleCount ?? liveInlets?.initialActiveParticleCount ?? 'diag-pending'} / dormant ${dormantParticleCount ?? liveInlets?.initialDormantParticleCount ?? 'diag-pending'} @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
+    ? ` | juice ${juiceBudgetAuthority === 'macro_control' ? `${liveJuiceBudget.effectiveBudget.toFixed(0)} ${liveJuiceBudget.zone}` : 'custom'} | fluid ${effectiveParticleCount ?? 'unverified'}p effective / ${liveFluidEconomics.requestedParticleCount}p requested | release req ${liveFluidEconomics.sourceFluxParticlesPerSecond.toFixed(0)} / derived ${effectiveReleaseRate?.toFixed(0) ?? 'unverified'}pps | active ${activeParticleCount ?? liveInlets?.initialActiveParticleCount ?? 'diag-pending'} / dormant ${dormantParticleCount ?? liveInlets?.initialDormantParticleCount ?? 'diag-pending'} | residence 1.65s @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
     : fluidError ? ' | fluid error' : ' | fluid pending';
   routeTruth.textContent = `${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fluid}`;
 }
@@ -922,6 +951,7 @@ for (const control of [
 ]) {
   control.addEventListener('input', updateFluidEconomicsFromControls);
 }
+juiceBudgetControl.addEventListener('input', applyJuiceBudgetFromControl);
 
 function resize(): void {
   const width = Math.max(window.innerWidth, 1);
@@ -1059,6 +1089,17 @@ function collectLiveHandDebugState(): Record<string, unknown> {
   const dormantParticleCount = typeof solverDiagnostics?.dormantParticleCount === 'number'
     ? solverDiagnostics.dormantParticleCount
     : null;
+  const runtimeEconomicsAuthority = createPinnedKaminosLiveInletRuntimeAuthority(liveFluidEconomics, {
+    effectiveParticleCount,
+    expectedPacketId: latestFluidPacket?.packet_id ?? null,
+    expectedSourceRoute: latestFluidPacket?.source_route ?? null,
+    packetAuthority: latestFluidPacket?.authority ?? null,
+    packetEconomics: latestFluidPacket?.economics ?? null,
+    receipt: latestLiveInletReceipt,
+    liveInlets: solverState?.liveInlets && typeof solverState.liveInlets === 'object'
+      ? solverState.liveInlets as Record<string, unknown>
+      : null,
+  });
   return {
     schema: 'lerms.live-hand-viewer.v0',
     runtimeOwner: 'hand-state-runtime',
@@ -1101,6 +1142,12 @@ function collectLiveHandDebugState(): Record<string, unknown> {
       inletReleaseContract: KAMINOS_FINGER_FLUID_LIVE_INLET_RELEASE_CONTRACT,
       adapterContract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
       economics: liveFluidEconomics,
+      juiceBudget: {
+        authority: juiceBudgetAuthority,
+        mapping: juiceBudgetAuthority === 'macro_control' ? liveJuiceBudget : null,
+        lastMacroMapping: liveJuiceBudget,
+      },
+      runtimeEconomicsAuthority,
       requestedParticleCount: liveFluidEconomics.requestedParticleCount,
       effectiveParticleCount,
       requestedActiveParticleBudget: liveFluidEconomics.requestedActiveParticleBudget,
@@ -1193,7 +1240,9 @@ Object.assign(window, {
         reconstructionRadiusScale,
         lifetimeSeconds,
       });
+      juiceBudgetAuthority = 'assay_explicit_profile';
       syncFluidEconomicsControls(liveFluidEconomics);
+      syncJuiceBudgetState();
       const packet = createFluidEnvelopeAssayPacket({ emitterCount, radius, strength });
       latestFluidPacket = packet;
       latestLiveInletReceipt = solver.setLiveInletPacket(packet);
@@ -1224,6 +1273,9 @@ Object.assign(window, {
         authority: { simulation_safe: false, stale: true, reason: 'assay_stopped' },
         emitters: [],
       });
+      latestFluidPacket = null;
+      latestLiveInletReceipt = null;
+      fluidAssayDiagnostics = null;
       setStatus('synthetic fluid envelope assay stopped');
       return collectLiveHandDebugState();
     },
@@ -1232,10 +1284,12 @@ Object.assign(window, {
 
 resize();
 resetBenchmark();
-updateFluidEconomicsFromControls();
+applyJuiceBudgetFromControl();
 if (queryFluidEconomics) {
   liveFluidEconomics = queryFluidEconomics;
+  juiceBudgetAuthority = 'route_query';
   syncFluidEconomicsControls(queryFluidEconomics);
+  syncJuiceBudgetState();
 }
 if (routeConfigError) {
   toggle.disabled = true;
