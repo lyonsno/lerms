@@ -53,6 +53,9 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   fitResidualMax: number | null;
   maxJointCorrectionRad: number | null;
   maxAnchorJointDeviationRad: number | null;
+  jointStepIntervalMs: number | null;
+  jointStepLimitRad: number | null;
+  maxJointStepAppliedRad: number | null;
 }
 
 export interface ManoDisplayTransform {
@@ -204,6 +207,9 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let fitResidualMax: number | null = null;
   let maxJointCorrectionRad: number | null = null;
   let maxAnchorJointDeviationRad: number | null = null;
+  let jointStepIntervalMs: number | null = null;
+  let jointStepLimitRad: number | null = null;
+  let maxJointStepAppliedRad: number | null = null;
   if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
     if (source.rawSchema !== LIVE_HAND_FAST_LANDMARK_SCHEMA) {
       throw new Error(`hybrid frame must expose ${LIVE_HAND_FAST_LANDMARK_SCHEMA}`);
@@ -226,6 +232,15 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       diagnostics.maxAnchorJointDeviationRad,
       'maxAnchorJointDeviationRad',
     );
+    jointStepIntervalMs = finiteNonNegative(diagnostics.jointStepIntervalMs, 'jointStepIntervalMs');
+    jointStepLimitRad = finiteNonNegative(diagnostics.jointStepLimitRad, 'jointStepLimitRad');
+    maxJointStepAppliedRad = finiteNonNegative(
+      diagnostics.maxJointStepAppliedRad,
+      'maxJointStepAppliedRad',
+    );
+    if (maxJointStepAppliedRad > jointStepLimitRad + 1e-8) {
+      throw new Error('visible joint correction exceeds the cadence-scaled correction limit');
+    }
   }
   return {
     runtimeOwner: LIVE_HAND_RUNTIME_OWNER,
@@ -258,6 +273,9 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     fitResidualMax,
     maxJointCorrectionRad,
     maxAnchorJointDeviationRad,
+    jointStepIntervalMs,
+    jointStepLimitRad,
+    maxJointStepAppliedRad,
   };
 }
 

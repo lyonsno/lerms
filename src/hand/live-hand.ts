@@ -71,11 +71,38 @@ import {
 
 const params = new URLSearchParams(window.location.search);
 const runtimeUrl = params.get('runtime_url') || 'http://127.0.0.1:8766';
-const fixtureMode = params.get('fixture') === '1';
+const fixtureKind = params.get('fixture');
+const fixtureMode = fixtureKind === '1' || fixtureKind === 'articulated';
+const articulatedFixtureMode = fixtureKind === 'articulated';
 const fluidAssayMode = params.get('fluid_assay') === '1';
 const captureIntervalMs = 50;
 const maxFrameAgeMs = 750;
 const LIVE_FLUID_ENVELOPE_ASSAY_ROUTE = 'lerms.live-fluid-envelope.synthetic-assay.v0' as const;
+const ARTICULATED_FIXTURE_SCHEMA = 'lerms.articulated-mano-dense-fixture.v1' as const;
+const ARTICULATED_FIXTURE_ROUTE = 'hand-state-runtime/deterministic-articulated-replay-not-camera-v1' as const;
+
+interface ArticulatedFixtureFrame {
+  frameIndex: number;
+  vertices: unknown[];
+  keypoints3d: unknown[];
+  diagnostics: {
+    jointStepLimitRad: number;
+    maxJointStepAppliedRad: number;
+  };
+}
+
+interface ArticulatedFixture {
+  schema: typeof ARTICULATED_FIXTURE_SCHEMA;
+  sourceAuthority: 'deterministic_fixture_not_live_camera';
+  effectiveRoute: typeof ARTICULATED_FIXTURE_ROUTE;
+  geometryMode: 'native_mano_regeneration';
+  frameRate: number;
+  frameCount: number;
+  vertexCount: 778;
+  faceCount: 1538;
+  faces: unknown[];
+  frames: ArticulatedFixtureFrame[];
+}
 
 function resolveRequestedParticleCount(value: string | null, fallback: number): number {
   if (value === null || value === '') return fallback;
@@ -208,6 +235,10 @@ let landmarkerFramesDropped = 0;
 let landmarkerFramesSuppressed = 0;
 let latestLandmarkerFailure: Record<string, unknown> | null = null;
 let latestFastIngestReceipt: Record<string, unknown> | null = null;
+let articulatedFixture: ArticulatedFixture | null = null;
+let articulatedFixtureStartedAt = 0;
+let articulatedFixtureFrameIndex = -1;
+let articulatedFixturePresentedFrameCount = 0;
 let sourceMode: LiveHandSourceMode = params.get('hand_route') === 'hybrid_mano' ? 'hybrid_mano' : 'pure_wilor';
 routeModeControl.value = sourceMode;
 const animationFrameIntervalsMs: number[] = [];
@@ -263,6 +294,9 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   fitResidualMax: number | null;
   maxJointCorrectionRad: number | null;
   maxAnchorJointDeviationRad: number | null;
+  jointStepIntervalMs: number | null;
+  jointStepLimitRad: number | null;
+  maxJointStepAppliedRad: number | null;
   fallbackState: null;
   viewerReceiveToWebglRenderReturnMs?: number;
   handRenderCpuMs?: number;
@@ -554,6 +588,23 @@ function updateInterpolatedSurface(): boolean {
     handGeometry.computeBoundingSphere();
   }
   return maxDelta > 0.0002;
+}
+
+function presentArticulatedFixtureFrame(frameIndex: number): number {
+  if (!articulatedFixture) throw new Error('articulated MANO fixture is not loaded');
+  if (!Number.isSafeInteger(frameIndex)) throw new Error('articulated fixture frame index must be an integer');
+  const normalizedIndex = (
+    (frameIndex % articulatedFixture.frameCount) + articulatedFixture.frameCount
+  ) % articulatedFixture.frameCount;
+  const frame = articulatedFixture.frames[normalizedIndex];
+  updateSurface(normalizeManoSurface({
+    available: true,
+    vertices: frame.vertices,
+    faces: articulatedFixture.faces,
+  }));
+  articulatedFixtureFrameIndex = normalizedIndex;
+  articulatedFixturePresentedFrameCount += 1;
+  return normalizedIndex;
 }
 
 function resetBenchmark(): void {
@@ -1096,6 +1147,9 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     fitResidualMax: frame.fitResidualMax,
     maxJointCorrectionRad: frame.maxJointCorrectionRad,
     maxAnchorJointDeviationRad: frame.maxAnchorJointDeviationRad,
+    jointStepIntervalMs: frame.jointStepIntervalMs,
+    jointStepLimitRad: frame.jointStepLimitRad,
+    maxJointStepAppliedRad: frame.maxJointStepAppliedRad,
     fallbackState: null,
     captureToWebglRenderReturnMs: -1,
     captureToRenderCompleteMs: -1,
@@ -1320,6 +1374,13 @@ function distribution(values: readonly number[]): { p50: number; p90: number; p9
 function animate(now: number): void {
   requestAnimationFrame(animate);
   if (!running && !fixtureMode && !fluidAssayRunning) return;
+  if (articulatedFixtureMode && articulatedFixture && articulatedFixtureStartedAt > 0) {
+    const elapsedFrame = Math.floor((now - articulatedFixtureStartedAt) * articulatedFixture.frameRate / 1000);
+    const frameIndex = elapsedFrame % articulatedFixture.frameCount;
+    if (frameIndex !== articulatedFixtureFrameIndex) {
+      presentArticulatedFixtureFrame(frameIndex);
+    }
+  }
   const densityBenchActive = densityBenchAuthority === 'fixture_density_bench_not_live_hand';
   const cpuStartedAt = performance.now();
   const handStatePending = handPresentationPending;
@@ -1457,6 +1518,18 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     runtimeOwner: 'hand-state-runtime',
     runtimeUrl,
     fixtureMode,
+    fixtureKind,
+    articulatedFixture: articulatedFixture ? {
+      schema: articulatedFixture.schema,
+      sourceAuthority: articulatedFixture.sourceAuthority,
+      effectiveRoute: articulatedFixture.effectiveRoute,
+      geometryMode: articulatedFixture.geometryMode,
+      frameRate: articulatedFixture.frameRate,
+      frameCount: articulatedFixture.frameCount,
+      currentFrameIndex: articulatedFixtureFrameIndex,
+      presentedFrameCount: articulatedFixturePresentedFrameCount,
+      startedAt: articulatedFixtureStartedAt,
+    } : null,
     routeConfigError,
     fluidEvidenceMode: fluidAssayMode ? LIVE_FLUID_ENVELOPE_ASSAY_ROUTE : 'live_hand',
     running,
@@ -1466,7 +1539,9 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     faceCount: handGeometry.index ? handGeometry.index.count / 3 : 0,
     effectiveRoute: fluidAssayMode
       ? LIVE_FLUID_ENVELOPE_ASSAY_ROUTE
-      : fixtureMode
+      : articulatedFixtureMode
+        ? ARTICULATED_FIXTURE_ROUTE
+        : fixtureMode
         ? 'recorded_wilor_mano_fixture'
         : latestFluidPacket?.source_route || null,
     runtimeRoute,
@@ -1567,6 +1642,25 @@ function collectLiveHandDebugState(): Record<string, unknown> {
 Object.assign(window, {
   __lermsLiveHandApplyDensityBench: applyDensityBenchFixture,
   __lermsLiveHandDebugState: collectLiveHandDebugState,
+  __lermsArticulatedFixtureReplay: {
+    snapshot: collectLiveHandDebugState,
+    setFrame(frameIndex: number) {
+      if (!articulatedFixtureMode) throw new Error('articulated fixture route is not active');
+      articulatedFixtureStartedAt = 0;
+      const selectedFrameIndex = presentArticulatedFixtureFrame(frameIndex);
+      return {
+        authority: 'deterministic_source_frame_selection_not_realtime_cadence',
+        selectedFrameIndex,
+        state: collectLiveHandDebugState(),
+      };
+    },
+    resume() {
+      if (!articulatedFixture) throw new Error('articulated MANO fixture is not loaded');
+      articulatedFixtureStartedAt = performance.now()
+        - articulatedFixtureFrameIndex * 1000 / articulatedFixture.frameRate;
+      return collectLiveHandDebugState();
+    },
+  },
   __lermsLiveFluidEnvelopeAssay: {
     contract: LIVE_FLUID_ENVELOPE_ASSAY_ROUTE,
     async start({
@@ -1663,6 +1757,57 @@ if (routeConfigError) {
   toggle.disabled = true;
   setStatus(`invalid fluid route: ${routeConfigError}`, 'error');
   routeTruth.textContent = `route rejected | ${routeConfigError}`;
+} else if (articulatedFixtureMode) {
+  const fixtureUrl = new URL('../../tests/fixtures/articulated-mano-dense.json', import.meta.url);
+  fetch(fixtureUrl, { cache: 'no-store' })
+    .then(response => {
+      if (!response.ok) throw new Error(`articulated MANO fixture returned ${response.status}`);
+      return response.json() as Promise<ArticulatedFixture>;
+    })
+    .then(async fixture => {
+      if (
+        fixture.schema !== ARTICULATED_FIXTURE_SCHEMA
+        || fixture.sourceAuthority !== 'deterministic_fixture_not_live_camera'
+        || fixture.effectiveRoute !== ARTICULATED_FIXTURE_ROUTE
+        || fixture.geometryMode !== 'native_mano_regeneration'
+      ) {
+        throw new Error('articulated MANO fixture route identity mismatch');
+      }
+      if (
+        !Number.isFinite(fixture.frameRate)
+        || fixture.frameRate <= 0
+        || fixture.frameCount < 2
+        || fixture.vertexCount !== 778
+        || fixture.faceCount !== 1538
+        || !Array.isArray(fixture.faces)
+        || fixture.faces.length !== 1538
+        || !Array.isArray(fixture.frames)
+        || fixture.frames.length !== fixture.frameCount
+      ) {
+        throw new Error('articulated MANO fixture is partial or invalid');
+      }
+      for (const frame of fixture.frames) {
+        if (
+          !Array.isArray(frame.vertices)
+          || frame.vertices.length !== 778
+          || !Array.isArray(frame.keypoints3d)
+          || frame.keypoints3d.length !== 21
+          || !frame.diagnostics
+          || frame.diagnostics.maxJointStepAppliedRad > frame.diagnostics.jointStepLimitRad + 1e-8
+        ) {
+          throw new Error('articulated MANO fixture contains an invalid frame');
+        }
+      }
+      articulatedFixture = fixture;
+      await applyDensityBenchFixture('five-finger');
+      presentArticulatedFixtureFrame(0);
+      articulatedFixtureStartedAt = performance.now();
+      routeTruth.textContent = `${ARTICULATED_FIXTURE_ROUTE} | deterministic_fixture_not_live_camera | native MANO 778v / 1538f | five-finger Juice ${liveJuiceBudget.effectiveBudget.toFixed(0)}`;
+      setStatus('dense articulated MANO replay under fixture fluid load', 'live');
+      toggle.disabled = true;
+      routeModeControl.disabled = true;
+    })
+    .catch(error => setStatus(error instanceof Error ? error.message : String(error), 'error'));
 } else if (fixtureMode) {
   const fixtureUrl = new URL('../../tests/fixtures/wilor-mano-surface.json', import.meta.url);
   fetch(fixtureUrl, { cache: 'no-store' })
