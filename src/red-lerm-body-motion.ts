@@ -224,6 +224,11 @@ export function buildRedLermBodyMotionWitness(
   options: BuildRedLermBodyMotionWitnessOptions = {},
 ): RedLermBodyMotionWitness {
   const sourceTruth = resolveRedLermBodyMotionSource(options);
+  if (sourceTruth.effectiveMotionSource.kind !== 'fixture') {
+    throw new Error(
+      `${sourceTruth.effectiveMotionSource.kind} motion requires caller-supplied body and motion evidence through composeMovingLermOnHill`,
+    );
+  }
   const samples = buildFixtureSamples();
   const stateBuckets = STATE_BUCKETS.reduce<Record<RedLermStateBucket, number>>(
     (counts, bucket) => {
