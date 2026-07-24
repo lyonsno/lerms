@@ -1,11 +1,12 @@
 (() => {
 // This entry must remain self-contained: MediaPipe's WASM loader calls
 // importScripts(), which is available only when the worker is launched as classic.
-const LIVE_HAND_LANDMARKER_WORKER_ROUTE = 'browser-mediapipe-hand-landmarker-worker-mirrored-v1';
+const LIVE_HAND_LANDMARKER_WORKER_ROUTE = 'browser-mediapipe-hand-landmarker-worker-unmirrored-v2';
 const LIVE_HAND_LANDMARKER_RESULT_SCHEMA = 'lerms.live-hand-landmarker-result.v1';
 const LIVE_HAND_LANDMARKER_ERROR_SCHEMA = 'lerms.live-hand-landmarker-error.v1';
 const LIVE_HAND_LANDMARKER_DROP_SCHEMA = 'lerms.live-hand-landmarker-drop.v1';
 const LIVE_HAND_LANDMARKER_READY_SCHEMA = 'lerms.live-hand-landmarker-ready.v1';
+const LIVE_HAND_LANDMARKER_WORLD_BASIS = 'mediapipe-world-unmirrored-x-right-y-down-z-camera-depth-v1';
 
 const TASKS_VISION_VERSION = '0.10.20';
 const TASKS_VISION_MODULE_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}/vision_bundle.mjs`;
@@ -59,6 +60,13 @@ const initializationEvidence = {
   modelLoaded: false,
 };
 
+function normalizeUnmirroredHandedness(categoryName: string | undefined): 'left' | 'right' | 'unknown' {
+  const normalized = String(categoryName || '').toLowerCase();
+  if (normalized === 'left') return 'right';
+  if (normalized === 'right') return 'left';
+  return 'unknown';
+}
+
 function postFailure(
   failurePhase: string,
   error: unknown,
@@ -109,7 +117,8 @@ async function ensureHandLandmarker(config: WorkerConfig = {}): Promise<HandLand
         modelAssetPath: config.modelAssetPath || DEFAULT_MODEL_ASSET_PATH,
         wasmBase,
         delegate: config.delegate || 'CPU',
-        mirroredInput: true,
+        mirroredInput: false,
+        worldCoordinateBasis: LIVE_HAND_LANDMARKER_WORLD_BASIS,
       });
       return handLandmarker;
     })().catch(error => {
@@ -127,7 +136,7 @@ async function detectFrame(request: DetectRequest): Promise<void> {
   let frameClosed = false;
   try {
     const landmarker = await ensureHandLandmarker(request.config);
-    failurePhase = 'draw_mirrored_frame';
+    failurePhase = 'draw_unmirrored_frame';
     if (!canvas || canvas.width !== request.width || canvas.height !== request.height) {
       canvas = new OffscreenCanvas(request.width, request.height);
       context = canvas.getContext('2d', { alpha: false });
@@ -135,7 +144,7 @@ async function detectFrame(request: DetectRequest): Promise<void> {
     if (!canvas || !context) throw new Error('landmarker worker 2D context is unavailable');
     context.save();
     try {
-      context.setTransform(-1, 0, 0, 1, request.width, 0);
+      context.setTransform(1, 0, 0, 1, 0, 0);
       context.drawImage(frame as unknown as CanvasImageSource, 0, 0, request.width, request.height);
     } finally {
       context.restore();
@@ -160,7 +169,8 @@ async function detectFrame(request: DetectRequest): Promise<void> {
         reason: 'no_complete_hand_detected',
         workerLandmarkerMs: detectedAt - detectStartedAt,
         workerProcessingMs: detectedAt - workerStartedAt,
-        mirroredInput: true,
+        mirroredInput: false,
+        worldCoordinateBasis: LIVE_HAND_LANDMARKER_WORLD_BASIS,
         primaryOutputWritten: false,
         lastTrustworthyEvidence: { ...initializationEvidence },
       });
@@ -172,13 +182,14 @@ async function detectFrame(request: DetectRequest): Promise<void> {
       captureId: request.captureId,
       captureTimestampMs: request.captureTimestampMs,
       publishedAtMs: Date.now(),
-      handedness: handedness.categoryName || 'unknown',
+      handedness: normalizeUnmirroredHandedness(handedness.categoryName),
       confidence: Number(handedness.score ?? 0),
       imageLandmarks,
       worldLandmarks,
       workerLandmarkerMs: detectedAt - detectStartedAt,
       workerProcessingMs: detectedAt - workerStartedAt,
-      mirroredInput: true,
+      mirroredInput: false,
+      worldCoordinateBasis: LIVE_HAND_LANDMARKER_WORLD_BASIS,
     });
   } catch (error) {
     if (!frameClosed) frame.close();

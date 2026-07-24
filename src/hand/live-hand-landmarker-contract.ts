@@ -1,10 +1,11 @@
-export const LIVE_HAND_LANDMARKER_WORKER_ROUTE = 'browser-mediapipe-hand-landmarker-worker-mirrored-v1' as const;
+export const LIVE_HAND_LANDMARKER_WORKER_ROUTE = 'browser-mediapipe-hand-landmarker-worker-unmirrored-v2' as const;
 export const LIVE_HAND_LANDMARKER_RESULT_SCHEMA = 'lerms.live-hand-landmarker-result.v1' as const;
 export const LIVE_HAND_LANDMARKER_ERROR_SCHEMA = 'lerms.live-hand-landmarker-error.v1' as const;
 export const LIVE_HAND_LANDMARKER_DROP_SCHEMA = 'lerms.live-hand-landmarker-drop.v1' as const;
 export const LIVE_HAND_LANDMARKER_READY_SCHEMA = 'lerms.live-hand-landmarker-ready.v1' as const;
 export const LIVE_HAND_FAST_LANDMARK_SCHEMA = 'hand-state.browser-fast-landmarks.v1' as const;
 export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_live' as const;
+export const LIVE_HAND_LANDMARKER_WORLD_BASIS = 'mediapipe-world-unmirrored-x-right-y-down-z-camera-depth-v1' as const;
 
 type RecordLike = Record<string, unknown>;
 
@@ -20,7 +21,8 @@ export interface LiveHandLandmarkerWorkerResult {
   worldLandmarks: readonly RecordLike[];
   workerLandmarkerMs: number;
   workerProcessingMs: number;
-  mirroredInput: true;
+  mirroredInput: false;
+  worldCoordinateBasis: typeof LIVE_HAND_LANDMARKER_WORLD_BASIS;
 }
 
 export interface LiveHandLandmarkerWorkerError {
@@ -41,7 +43,10 @@ export function normalizeLandmarkerWorkerResult(
   if (result.schema !== LIVE_HAND_LANDMARKER_RESULT_SCHEMA) throw new Error('landmarker worker result schema is invalid');
   if (result.routeIdentity !== LIVE_HAND_LANDMARKER_WORKER_ROUTE) throw new Error('landmarker worker route is invalid');
   if (result.captureId !== expectedCaptureId) throw new Error('landmarker worker result does not match its request');
-  if (result.mirroredInput !== true) throw new Error('landmarker worker result lacks mirrored input authority');
+  if (result.mirroredInput !== false) throw new Error('landmarker worker result lacks unmirrored input authority');
+  if (result.worldCoordinateBasis !== LIVE_HAND_LANDMARKER_WORLD_BASIS) {
+    throw new Error('landmarker worker world-coordinate basis is invalid');
+  }
   const confidence = finite(result.confidence, 'landmarker confidence');
   if (confidence < 0 || confidence > 1) throw new Error('landmarker confidence must be between 0 and 1');
   return {
@@ -56,7 +61,8 @@ export function normalizeLandmarkerWorkerResult(
     worldLandmarks: landmarks(result.worldLandmarks, 'world landmarks'),
     workerLandmarkerMs: finiteNonNegative(result.workerLandmarkerMs, 'worker landmarker duration'),
     workerProcessingMs: finiteNonNegative(result.workerProcessingMs, 'worker processing duration'),
-    mirroredInput: true,
+    mirroredInput: false,
+    worldCoordinateBasis: LIVE_HAND_LANDMARKER_WORLD_BASIS,
   };
 }
 
@@ -93,6 +99,7 @@ export function createFastLandmarkPayload(result: LiveHandLandmarkerWorkerResult
       browserWorkerProcessingMs: result.workerProcessingMs,
       mirroredInput: result.mirroredInput,
       workerRoute: result.routeIdentity,
+      worldCoordinateBasis: result.worldCoordinateBasis,
     },
   };
 }

@@ -45,7 +45,7 @@ const hybridPacket = createLiveFingerFluidEmitterPacket({
   eventSequence: 171,
   frameId: 'frame-hybrid-17',
   captureTimestampMs: 1_000,
-  effectiveRoute: 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v1',
+  effectiveRoute: 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v2',
   confidence: 0.96,
   handedness: 'right',
   keypoints3d: keypoints,
@@ -62,7 +62,7 @@ assert(packet.route_identity === 'native_wilor_mini_mlx_detector_sidecar_live', 
 assert(packet.adapter_contract === LIVE_FINGER_FLUID_ADAPTER_CONTRACT, 'packet identifies the LERMS hand-to-fluid adapter separately');
 assert(packet.authority.simulation_safe === true && packet.authority.stale === false, 'fresh native frames pass the solver authority gate');
 assert(hybridPacket.simulation_authority === 'live_simulation', 'fresh hybrid frames carry live simulation authority');
-assert(hybridPacket.source_route === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v1', 'hybrid packet preserves fused source route');
+assert(hybridPacket.source_route === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v2', 'hybrid packet preserves fused source route');
 assert(hybridPacket.authority.simulation_safe === true && hybridPacket.authority.stale === false, 'fresh hybrid frames pass the solver authority gate');
 assert(packet.emitters.length === 5, 'publishes one emitter per finger');
 assert(packet.emitters.every(emitter => emitter.active && emitter.emission_state === 'jet'), 'fully extended fingers emit jets');

@@ -31,6 +31,7 @@ import {
   LIVE_HAND_LANDMARKER_READY_SCHEMA,
   LIVE_HAND_LANDMARKER_RESULT_SCHEMA,
   LIVE_HAND_LANDMARKER_WORKER_ROUTE,
+  LIVE_HAND_LANDMARKER_WORLD_BASIS,
   createFastLandmarkPayload,
   normalizeLandmarkerWorkerError,
   normalizeLandmarkerWorkerResult,
@@ -292,6 +293,10 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   fastPathLatencyMs: number | null;
   fitResidualMean: number | null;
   fitResidualMax: number | null;
+  calibrationDeterminant: number | null;
+  calibrationResidualMean: number | null;
+  calibrationResidualMax: number | null;
+  fastWorldBasisTransform: string | null;
   maxJointCorrectionRad: number | null;
   maxAnchorJointDeviationRad: number | null;
   jointStepIntervalMs: number | null;
@@ -800,7 +805,11 @@ function ensureLandmarkerWorker(): Promise<void> {
     worker.addEventListener('message', event => {
       const value = event.data as Record<string, unknown>;
       if (value.schema === LIVE_HAND_LANDMARKER_READY_SCHEMA) {
-        if (value.routeIdentity !== LIVE_HAND_LANDMARKER_WORKER_ROUTE || value.mirroredInput !== true) {
+        if (
+          value.routeIdentity !== LIVE_HAND_LANDMARKER_WORKER_ROUTE
+          || value.mirroredInput !== false
+          || value.worldCoordinateBasis !== LIVE_HAND_LANDMARKER_WORLD_BASIS
+        ) {
           failLandmarkerWorker(worker, new Error('landmarker worker initialization route is invalid'), value);
           return;
         }
@@ -1147,6 +1156,10 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     fastPathLatencyMs: frame.fastPathLatencyMs,
     fitResidualMean: frame.fitResidualMean,
     fitResidualMax: frame.fitResidualMax,
+    calibrationDeterminant: frame.calibrationDeterminant,
+    calibrationResidualMean: frame.calibrationResidualMean,
+    calibrationResidualMax: frame.calibrationResidualMax,
+    fastWorldBasisTransform: frame.fastWorldBasisTransform,
     maxJointCorrectionRad: frame.maxJointCorrectionRad,
     maxAnchorJointDeviationRad: frame.maxAnchorJointDeviationRad,
     jointStepIntervalMs: frame.jointStepIntervalMs,
