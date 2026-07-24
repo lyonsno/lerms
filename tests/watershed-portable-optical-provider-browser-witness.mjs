@@ -2,29 +2,57 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createServer } from 'node:net';
+import {
+  createLaunchReceipt,
+  resolveBrowserExecutable,
+  writeFailureReceipt
+} from './wet-border-browser-launch.mjs';
 
 const options = parseArguments(process.argv.slice(2));
-const chromeExecutable =
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const profileDirectory = await mkdtemp(join(tmpdir(), 'wet-border-portable-optics-'));
 const outputDirectory = resolve(options.outputDirectory);
 await mkdir(outputDirectory, { recursive: true });
+let resolution;
+let chrome;
+let launchReceipt;
+try {
+  resolution = await resolveBrowserExecutable({
+    explicit: options.chrome,
+    candidates: options.browserCandidates
+  });
+  const debugPort = await getFreePort();
+  launchReceipt = createLaunchReceipt({
+    resolution,
+    requestedUrl: options.url,
+    profileDirectory,
+    debugPort
+  });
+  chrome = spawn(resolution.effective, [
+    '--headless=new',
+    '--disable-background-networking',
+    '--disable-default-apps',
+    '--disable-extensions',
+    '--disable-sync',
+    '--hide-scrollbars',
+    '--no-first-run',
+    `--remote-debugging-port=${debugPort}`,
+    `--user-data-dir=${profileDirectory}`,
+    `--window-size=${options.width},${options.height}`,
+    options.url
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+} catch (error) {
+  const failurePath = await writeFailureReceipt(outputDirectory, {
+    phase: 'resolve_or_launch',
+    error: String(error),
+    requestedExecutable: options.chrome ?? null,
+    effectiveExecutable: resolution?.effective ?? null
+  });
+  console.error(JSON.stringify({ ok: false, failurePath }));
+  process.exitCode = 1;
+}
 
-const chrome = spawn(chromeExecutable, [
-  '--headless=new',
-  '--disable-background-networking',
-  '--disable-default-apps',
-  '--disable-extensions',
-  '--disable-sync',
-  '--hide-scrollbars',
-  '--no-first-run',
-  `--remote-debugging-port=${options.debugPort}`,
-  `--user-data-dir=${profileDirectory}`,
-  `--window-size=${options.width},${options.height}`,
-  options.url
-], {
-  stdio: ['ignore', 'ignore', 'pipe']
-});
+if (!chrome) process.exit();
 
 let chromeStderr = '';
 chrome.stderr.setEncoding('utf8');
@@ -33,7 +61,7 @@ chrome.stderr.on('data', (chunk) => {
 });
 
 try {
-  const target = await waitForTarget(options.debugPort, options.url, 15_000);
+  const target = await waitForTarget(launchReceipt.requestedDebugPort, options.url, options.launchTimeoutMs);
   const cdp = await createCdpClient(target.webSocketDebuggerUrl);
   const browserEvents = [];
   cdp.onEvent((event) => {
@@ -90,6 +118,11 @@ try {
     schema: 'lerms.hill-of-hills.portable-macro-optical-browser-receipt.v1',
     status: 'complete',
     runId: options.runId,
+    launch: {
+      ...launchReceipt,
+      effectiveDebugPort: launchReceipt.requestedDebugPort,
+      status: 'complete'
+    },
     url: options.url,
     viewport: {
       width: options.width,
@@ -132,6 +165,13 @@ try {
   if (chrome.exitCode && chrome.exitCode !== 0 && !chrome.killed) {
     process.stderr.write(chromeStderr);
   }
+  await writeFailureReceipt(outputDirectory, {
+    phase: 'cleanup',
+    status: 'cleanup_complete',
+    launchId: launchReceipt.launchId,
+    effectiveExecutable: resolution.effective,
+    pid: chrome.pid
+  }, 'browser-cleanup-receipt.json');
 }
 
 function parseArguments(argumentsList) {
@@ -155,7 +195,21 @@ function parseArguments(argumentsList) {
     preStep: Number(values.get('--pre-step') ?? 12),
     postStep: Number(values.get('--post-step') ?? 84),
     timeoutMs: Number(values.get('--timeout-ms') ?? 30_000)
+    ,launchTimeoutMs: Number(values.get('--launch-timeout-ms') ?? 10_000)
+    ,chrome: values.get('--chrome') ?? null
+    ,browserCandidates: (values.get('--browser-candidates') ?? '').split(',').filter(Boolean)
   };
+}
+
+async function getFreePort() {
+  const server = createServer();
+  await new Promise((resolveListen, rejectListen) => {
+    server.once('error', rejectListen);
+    server.listen(0, '127.0.0.1', resolveListen);
+  });
+  const port = server.address().port;
+  await new Promise((resolveClose) => server.close(resolveClose));
+  return port;
 }
 
 async function waitForTarget(port, expectedUrl, timeoutMs) {
