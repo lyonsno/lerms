@@ -1,10 +1,11 @@
-import {
-  LIVE_HAND_LANDMARKER_DROP_SCHEMA,
-  LIVE_HAND_LANDMARKER_ERROR_SCHEMA,
-  LIVE_HAND_LANDMARKER_READY_SCHEMA,
-  LIVE_HAND_LANDMARKER_RESULT_SCHEMA,
-  LIVE_HAND_LANDMARKER_WORKER_ROUTE,
-} from './live-hand-landmarker-contract.js';
+(() => {
+// This entry must remain self-contained: MediaPipe's WASM loader calls
+// importScripts(), which is available only when the worker is launched as classic.
+const LIVE_HAND_LANDMARKER_WORKER_ROUTE = 'browser-mediapipe-hand-landmarker-worker-mirrored-v1';
+const LIVE_HAND_LANDMARKER_RESULT_SCHEMA = 'lerms.live-hand-landmarker-result.v1';
+const LIVE_HAND_LANDMARKER_ERROR_SCHEMA = 'lerms.live-hand-landmarker-error.v1';
+const LIVE_HAND_LANDMARKER_DROP_SCHEMA = 'lerms.live-hand-landmarker-drop.v1';
+const LIVE_HAND_LANDMARKER_READY_SCHEMA = 'lerms.live-hand-landmarker-ready.v1';
 
 const TASKS_VISION_VERSION = '0.10.20';
 const TASKS_VISION_MODULE_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}/vision_bundle.mjs`;
@@ -201,3 +202,4 @@ self.addEventListener('message', event => {
   }
   postFailure('validate_request', new Error('landmarker worker received an invalid request'), null);
 });
+})();
