@@ -45,9 +45,21 @@ import {
 const params = new URLSearchParams(window.location.search);
 const runtimeUrl = params.get('runtime_url') || 'http://127.0.0.1:8766';
 const fixtureMode = params.get('fixture') === '1';
+const fluidAssayMode = params.get('fluid_assay') === '1';
 const captureIntervalMs = 50;
 const maxFrameAgeMs = 750;
-const LERMS_LIVE_FLUID_PARTICLE_COUNT = 2_400;
+const LIVE_FLUID_ENVELOPE_ASSAY_ROUTE = 'lerms.live-fluid-envelope.synthetic-assay.v0' as const;
+
+function resolveRequestedParticleCount(value: string | null, fallback: number): number {
+  if (value === null || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new RangeError(`fluid_particles must be a positive safe integer, received ${value}`);
+  }
+  return parsed;
+}
+
+const LERMS_LIVE_FLUID_PARTICLE_COUNT = resolveRequestedParticleCount(params.get('fluid_particles'), 2_400);
 
 function requiredElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -117,6 +129,9 @@ let fluidSolver: FingerFluidSolver | null = null;
 let fluidInitialization: Promise<FingerFluidSolver> | null = null;
 let fluidError: string | null = null;
 let latestFluidPacket: LiveFingerFluidPacket | null = null;
+let fluidAssayRunning = false;
+let fluidAssayReceipt: Record<string, unknown> | null = null;
+let fluidAssayDiagnostics: Record<string, unknown> | null = null;
 let fluidStepCount = 0;
 let fluidSubmitCount = 0;
 let fluidCompletedSubmitCount = 0;
@@ -196,6 +211,14 @@ function setStatus(message: string, state: 'idle' | 'live' | 'error' = 'idle'): 
 }
 
 function setRouteTruth(frame?: NormalizedManoFrame): void {
+  if (fluidAssayMode) {
+    const fluidState = fluidSolver?.available ? fluidSolver.getDebugState() : null;
+    const effectiveParticleCount = typeof fluidState?.baseParticleCount === 'number'
+      ? fluidState.baseParticleCount
+      : null;
+    routeTruth.textContent = `${LIVE_FLUID_ENVELOPE_ASSAY_ROUTE} | synthetic assay, not live hand authority | fluid ${effectiveParticleCount ?? 'unverified'}p effective / ${LERMS_LIVE_FLUID_PARTICLE_COUNT}p requested`;
+    return;
+  }
   if (!runtimeRoute) {
     routeTruth.textContent = 'route unverified';
     return;
@@ -238,7 +261,7 @@ function updateSurface(surface: NormalizedManoSurface): void {
 function updateHandSurface(frame: NormalizedManoFrame): void {
   updateSurface(frame);
   handPresentationPending = true;
-  if (fluidSolver?.available) {
+  if (fluidSolver?.available && !fluidAssayMode) {
     latestFluidPacket = createLiveFingerFluidEmitterPacket({
       eventSequence: frame.eventSequence,
       frameId: frame.frameId,
@@ -329,6 +352,75 @@ function resetBenchmark(): void {
   captureWorkerEncodeMs.length = 0;
   if (latencyFlushTimer !== null) window.clearTimeout(latencyFlushTimer);
   latencyFlushTimer = null;
+}
+
+function resetFluidEnvelopeMetrics(): void {
+  fluidStepCount = 0;
+  fluidSubmitCount = 0;
+  fluidCompletedSubmitCount = 0;
+  fluidSubmittedSimulationAdvanceMs = 0;
+  fluidCompletedSimulationAdvanceMs = 0;
+  fluidClockStartedAt = 0;
+  fluidGpuBusy = false;
+  fluidGpuCompletionGeneration += 1;
+  fluidGpuCompletionError = null;
+  lastAnimationFrameAt = 0;
+  fluidSimulationClockAt = 0;
+  lastFluidWallSubmitAt = 0;
+  animationFrameIntervalsMs.length = 0;
+  fluidSubmitIntervalsMs.length = 0;
+  combinedCpuSubmitMs.length = 0;
+  handRenderCpuMs.length = 0;
+  fluidStepCpuMs.length = 0;
+  fluidRenderCpuMs.length = 0;
+  fluidGpuQueueDrainMs.length = 0;
+  for (const reason of Object.keys(fluidFrameDecisionCounts) as LiveHandFrameWorkReason[]) {
+    fluidFrameDecisionCounts[reason] = 0;
+  }
+}
+
+function createFluidEnvelopeAssayPacket({
+  emitterCount,
+  radius,
+  strength,
+}: {
+  emitterCount: 1 | 5;
+  radius: number;
+  strength: number;
+}): LiveFingerFluidPacket {
+  if (emitterCount !== 1 && emitterCount !== 5) {
+    throw new RangeError(`fluid envelope emitter count must be 1 or 5, received ${emitterCount}`);
+  }
+  if (!Number.isFinite(radius) || radius <= 0) {
+    throw new RangeError(`fluid envelope radius must be finite and positive, received ${radius}`);
+  }
+  if (!Number.isFinite(strength) || strength <= 0) {
+    throw new RangeError(`fluid envelope strength must be finite and positive, received ${strength}`);
+  }
+  const xPositions = emitterCount === 1 ? [0] : [-0.48, -0.24, 0, 0.24, 0.48];
+  const timestampMs = Date.now();
+  return {
+    packet_id: `lerms-fluid-envelope-${emitterCount}-${timestampMs}`,
+    route_identity: LIVE_FLUID_ENVELOPE_ASSAY_ROUTE,
+    adapter_contract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
+    source_route: LIVE_FLUID_ENVELOPE_ASSAY_ROUTE,
+    source_frame_id: `synthetic-assay-${timestampMs}`,
+    timestamp_ms: timestampMs,
+    sample_age_ms: 0,
+    simulation_authority: 'live_simulation',
+    authority: { simulation_safe: true, stale: false, reason: null },
+    emitters: xPositions.map((x, index) => ({
+      id: `assay-${index}`,
+      origin_world: [x, 0.72, -0.8] as const,
+      aim_world: [0, -0.18, -0.983666] as const,
+      extension: 1,
+      emission_state: 'jet' as const,
+      chemistry: index === 0 ? 'knockback' : index === 1 ? 'pooling' : 'weird',
+      radius,
+      strength,
+      active: true,
+    })),
+  };
 }
 
 async function flushLatencySamples(): Promise<void> {
@@ -578,6 +670,7 @@ async function streamState(): Promise<void> {
 async function start(): Promise<void> {
   if (running) return;
   if (fixtureMode) throw new Error('recorded fixture mode is visual-only');
+  if (fluidAssayMode) throw new Error('synthetic fluid envelope assay cannot start live hand capture');
   setStatus('initializing current Kaminos fluid');
   await ensureFluidSolver();
   captureWorkerError = null;
@@ -684,7 +777,7 @@ function distribution(values: readonly number[]): { p50: number; p90: number; p9
 
 function animate(now: number): void {
   requestAnimationFrame(animate);
-  if (!running && !fixtureMode) return;
+  if (!running && !fixtureMode && !fluidAssayRunning) return;
   const cpuStartedAt = performance.now();
   const handStatePending = handPresentationPending;
   if (fluidClockStartedAt <= 0) fluidClockStartedAt = now;
@@ -725,8 +818,8 @@ function animate(now: number): void {
     unflushedLatencySamples.push(sample);
     scheduleLatencyFlush();
   }
-  if (running && fluidSolver?.available && frameDecision.runFluid) {
-    if (latestFluidPacket && !isLiveFingerFluidPacketFresh(latestFluidPacket)) {
+  if ((running || fluidAssayRunning) && fluidSolver?.available && frameDecision.runFluid) {
+    if (!fluidAssayRunning && latestFluidPacket && !isLiveFingerFluidPacketFresh(latestFluidPacket)) {
       deactivateFluidInlets('hand_state_packet_expired');
     }
     const catchUp = planLiveFluidSimulationCatchUp(frameDecision.fluidAgeMs);
@@ -775,6 +868,7 @@ function animate(now: number): void {
 window.addEventListener('resize', resize);
 window.addEventListener('beforeunload', () => {
   running = false;
+  fluidAssayRunning = false;
   fluidGpuCompletionGeneration += 1;
   fluidGpuBusy = false;
   captureRunGeneration += 1;
@@ -786,19 +880,35 @@ window.addEventListener('beforeunload', () => {
   fluidSolver?.destroy();
 });
 
-Object.assign(window, {
-  __lermsLiveHandDebugState: () => ({
+function collectLiveHandDebugState(): Record<string, unknown> {
+  const solverState = fluidSolver?.available ? fluidSolver.getDebugState() : null;
+  const solverDiagnostics = solverState?.diagnostics && typeof solverState.diagnostics === 'object'
+    ? solverState.diagnostics as Record<string, unknown>
+    : fluidAssayDiagnostics;
+  const effectiveParticleCount = typeof solverState?.baseParticleCount === 'number'
+    ? solverState.baseParticleCount
+    : null;
+  const activeParticleCount = typeof solverDiagnostics?.activeParticleCount === 'number'
+    ? solverDiagnostics.activeParticleCount
+    : null;
+  const dormantParticleCount = typeof solverDiagnostics?.dormantParticleCount === 'number'
+    ? solverDiagnostics.dormantParticleCount
+    : null;
+  return {
     schema: 'lerms.live-hand-viewer.v0',
     runtimeOwner: 'hand-state-runtime',
     runtimeUrl,
     fixtureMode,
+    fluidEvidenceMode: fluidAssayMode ? LIVE_FLUID_ENVELOPE_ASSAY_ROUTE : 'live_hand',
     running,
     meshVisible: handMesh.visible,
     vertexCount: handGeometry.getAttribute('position')?.count || 0,
     faceCount: handGeometry.index ? handGeometry.index.count / 3 : 0,
-    effectiveRoute: fixtureMode
-      ? 'recorded_wilor_mano_fixture'
-      : latestFluidPacket?.source_route || null,
+    effectiveRoute: fluidAssayMode
+      ? LIVE_FLUID_ENVELOPE_ASSAY_ROUTE
+      : fixtureMode
+        ? 'recorded_wilor_mano_fixture'
+        : latestFluidPacket?.source_route || null,
     runtimeRoute,
     eventSequence: lastStateSequence,
     deliveryMode: 'long_poll',
@@ -822,6 +932,12 @@ Object.assign(window, {
       inletReleaseContract: KAMINOS_FINGER_FLUID_LIVE_INLET_RELEASE_CONTRACT,
       adapterContract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
       requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
+      effectiveParticleCount,
+      activeParticleCount,
+      dormantParticleCount,
+      occupancyAuthority: solverDiagnostics ? 'explicit_gpu_diagnostics_checkpoint' : 'missing',
+      assayRunning: fluidAssayRunning,
+      assayReceipt: fluidAssayReceipt,
       submittedStepCount: fluidStepCount,
       submittedBatchCount: fluidSubmitCount,
       completedBatchCount: fluidCompletedSubmitCount,
@@ -839,7 +955,9 @@ Object.assign(window, {
       gpuBatchPending: fluidGpuBusy,
       gpuCompletionError: fluidGpuCompletionError,
       gpuQueueDrainMs: distribution(fluidGpuQueueDrainMs),
-      activeEmitterCount: latestFluidPacket?.emitters.filter(emitter => emitter.active).length || 0,
+      activeEmitterCount: fluidAssayRunning
+        ? Number(fluidAssayReceipt?.activeInletCount || 0)
+        : latestFluidPacket?.emitters.filter(emitter => emitter.active).length || 0,
       animationFrameIntervalMs: distribution(animationFrameIntervalsMs),
       fluidSubmitIntervalMs: distribution(fluidSubmitIntervalsMs),
       cpuSubmitMs: distribution(combinedCpuSubmitMs),
@@ -848,9 +966,66 @@ Object.assign(window, {
       fluidRenderCpuMs: distribution(fluidRenderCpuMs),
       frameDecisionCounts: { ...fluidFrameDecisionCounts },
       pixelRatioCap: LIVE_HAND_FLUID_PIXEL_RATIO_CAP,
-      solver: fluidSolver.getDebugState(),
+      solver: solverState,
     } : { available: false, error: fluidError },
-  }),
+  };
+}
+
+Object.assign(window, {
+  __lermsLiveHandDebugState: collectLiveHandDebugState,
+  __lermsLiveFluidEnvelopeAssay: {
+    contract: LIVE_FLUID_ENVELOPE_ASSAY_ROUTE,
+    async start({
+      emitterCount = 1,
+      radius = 0.044,
+      strength = 1.15,
+      requestedParticleCount = LERMS_LIVE_FLUID_PARTICLE_COUNT,
+    }: {
+      emitterCount?: 1 | 5;
+      radius?: number;
+      strength?: number;
+      requestedParticleCount?: number;
+    } = {}) {
+      if (!fluidAssayMode) throw new Error('fluid envelope assay requires fluid_assay=1');
+      if (requestedParticleCount !== LERMS_LIVE_FLUID_PARTICLE_COUNT) {
+        throw new Error(`fluid envelope requested ${requestedParticleCount} particles but the effective solver was initialized with ${LERMS_LIVE_FLUID_PARTICLE_COUNT}`);
+      }
+      const solver = await ensureFluidSolver();
+      resetFluidEnvelopeMetrics();
+      fluidAssayDiagnostics = null;
+      latestFluidPacket = null;
+      const packet = createFluidEnvelopeAssayPacket({ emitterCount, radius, strength });
+      fluidAssayReceipt = solver.setLiveInletPacket(packet);
+      fluidAssayRunning = true;
+      setRouteTruth();
+      setStatus(`${emitterCount}-emitter synthetic fluid envelope assay`, 'live');
+      return collectLiveHandDebugState();
+    },
+    async snapshot() {
+      if (!fluidAssayMode || !fluidAssayRunning || !fluidSolver?.available) {
+        throw new Error('fluid envelope assay is not running');
+      }
+      await fluidSolver.getLiquidFireContactDescriptor().queue.onSubmittedWorkDone();
+      fluidAssayDiagnostics = await fluidSolver.requestDiagnostics();
+      return collectLiveHandDebugState();
+    },
+    async stop() {
+      fluidAssayRunning = false;
+      fluidGpuCompletionGeneration += 1;
+      fluidGpuBusy = false;
+      fluidSolver?.setLiveInletPacket({
+        packet_id: `lerms-fluid-envelope-stop-${Date.now()}`,
+        route_identity: LIVE_FLUID_ENVELOPE_ASSAY_ROUTE,
+        adapter_contract: LIVE_FINGER_FLUID_ADAPTER_CONTRACT,
+        source_route: LIVE_FLUID_ENVELOPE_ASSAY_ROUTE,
+        simulation_authority: 'invalid',
+        authority: { simulation_safe: false, stale: true, reason: 'assay_stopped' },
+        emitters: [],
+      });
+      setStatus('synthetic fluid envelope assay stopped');
+      return collectLiveHandDebugState();
+    },
+  },
 });
 
 resize();
