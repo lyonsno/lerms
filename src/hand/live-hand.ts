@@ -756,6 +756,7 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     publishToViewerReceiveMs: Math.max(0, captureToViewerReceiveMs - frame.captureToSidecarPublishMs),
     captureToViewerReceiveMs,
     captureToWebglRenderReturnMs: -1,
+    captureToRenderCompleteMs: -1,
     renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented',
   };
 }
@@ -973,6 +974,7 @@ function animate(now: number): void {
     const sample = pendingLatencySample;
     pendingLatencySample = null;
     sample.captureToWebglRenderReturnMs = Math.max(0, Date.now() - sample.captureTimestampMs);
+    sample.captureToRenderCompleteMs = sample.captureToWebglRenderReturnMs;
     sample.viewerReceiveToWebglRenderReturnMs = Math.max(0, Date.now() - sample.viewerReceiveTimestampMs);
     sample.handRenderCpuMs = handRenderDurationMs;
     sample.interactionFrameIntervalMs = frameDecision.animationFrameIntervalMs;

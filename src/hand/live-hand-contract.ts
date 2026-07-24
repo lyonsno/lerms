@@ -60,6 +60,8 @@ export interface LiveHandLatencySample {
   manoFaceCount: number;
   modelLatencyMs: number;
   captureToWebglRenderReturnMs: number;
+  captureToRenderCompleteMs: number;
+  renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented';
 }
 
 export interface Distribution {
@@ -297,6 +299,13 @@ export function summarizeLiveHandLatency(samples: readonly LiveHandLatencySample
     }
     finiteNonNegative(sample.modelLatencyMs, 'modelLatencyMs');
     finiteNonNegative(sample.captureToWebglRenderReturnMs, 'captureToWebglRenderReturnMs');
+    finiteNonNegative(sample.captureToRenderCompleteMs, 'captureToRenderCompleteMs');
+    if (sample.captureToRenderCompleteMs !== sample.captureToWebglRenderReturnMs) {
+      throw new Error('captureToRenderCompleteMs must preserve the WebGL render-return measurement');
+    }
+    if (sample.renderCompletionAuthority !== 'webgl_render_call_complete_not_compositor_presented') {
+      throw new Error('sample lacks explicit WebGL render-return authority');
+    }
   }
   return {
     schema: 'lerms.live-hand-latency-summary.v0',
