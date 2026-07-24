@@ -144,6 +144,8 @@ assert.deepEqual(motion.claimBoundary, {
   topologyResponseTruth: true,
   bodyArticulationTruth: true,
   articulationClass: 'authored_procedural_presentation',
+  sameSceneConsumerExerciseTruth: false,
+  perFrameIncrementalAdmissionTruth: false,
   liveContactTruth: false,
   producerRigMotionTruth: false,
   morphologyPortability: false,
