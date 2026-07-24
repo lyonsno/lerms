@@ -66,6 +66,7 @@ interface WitnessRuntime {
     head: string;
     dirty: string;
     hordeAncestor: (revision: string) => boolean;
+    hillAncestor: (revision: string) => boolean;
   };
 }
 
@@ -88,6 +89,7 @@ export interface LermHordeLiveBodyMotionWitnessReport {
       producerReceipt: string;
       hordeRevision: string;
       hillRevision: string;
+      presenterRevision: string;
     };
     hordeReportSha256: string;
     producerReceiptSha256: string;
@@ -264,9 +266,9 @@ export function runLermHordeLiveBodyMotionWitnessCli(
 
     phase = 'source-verification';
     const sourceIdentity = runtime.sourceIdentity?.() ?? inspectSourceIdentity();
-    if (sourceIdentity.head !== complete.hillRevision) {
+    if (!sourceIdentity.hillAncestor(complete.hillRevision)) {
       throw new Error(
-        `requested Hill revision ${complete.hillRevision} does not match current source ${sourceIdentity.head}`,
+        `reviewed Hill revision ${complete.hillRevision} is not an ancestor of current source ${sourceIdentity.head}`,
       );
     }
     if (sourceIdentity.dirty) {
@@ -279,9 +281,11 @@ export function runLermHordeLiveBodyMotionWitnessCli(
     }
     evidence.source = {
       requestedHordeRevision: complete.hordeRevision,
-      effectiveHillRevision: sourceIdentity.head,
+      requestedHillRevision: complete.hillRevision,
+      effectivePresenterRevision: sourceIdentity.head,
       dirty: sourceIdentity.dirty,
       hordeAncestor: true,
+      hillAncestor: true,
     };
 
     phase = 'hill-composition';
@@ -334,6 +338,7 @@ export function runLermHordeLiveBodyMotionWitnessCli(
           producerReceipt: effective.producerReceipt,
           hordeRevision: complete.hordeRevision,
           hillRevision: complete.hillRevision,
+          presenterRevision: sourceIdentity.head,
         },
         hordeReportSha256,
         producerReceiptSha256,
@@ -580,24 +585,27 @@ function inspectSourceIdentity(): {
   head: string;
   dirty: string;
   hordeAncestor: (revision: string) => boolean;
+  hillAncestor: (revision: string) => boolean;
 } {
   const git = (args: readonly string[]) =>
     execFileSync('git', args, { encoding: 'utf8' }).trim();
+  const isAncestor = (revision: string) => {
+    try {
+      execFileSync(
+        'git',
+        ['merge-base', '--is-ancestor', revision, 'HEAD'],
+        { stdio: 'ignore' },
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  };
   return {
     head: git(['rev-parse', 'HEAD']),
     dirty: git(['status', '--porcelain=v1']),
-    hordeAncestor: (revision: string) => {
-      try {
-        execFileSync(
-          'git',
-          ['merge-base', '--is-ancestor', revision, 'HEAD'],
-          { stdio: 'ignore' },
-        );
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    hordeAncestor: isAncestor,
+    hillAncestor: isAncestor,
   };
 }
 

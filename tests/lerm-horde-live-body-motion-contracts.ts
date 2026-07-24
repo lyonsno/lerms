@@ -17,6 +17,7 @@ import {
 } from '../src/hill-horde-live-traversal-admission.js';
 import {
   LERM_HORDE_LIVE_BODY_MOTION_SCHEMA,
+  LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
   composeLermHordeLiveBodyMotion,
 } from '../src/lerm-horde-live-body-motion.js';
 import {
@@ -38,7 +39,8 @@ const producerReceiptSha256 = fileSha256(producerReceiptPath);
 const bodyPath = 'src/red-lerm-body-candidates.ts';
 const bodySha256 = fileSha256(bodyPath);
 const bodySourceRevision = gitText(['log', '-1', '--format=%H', '--', bodyPath]);
-const hillRevision = gitText(['rev-parse', 'HEAD']);
+const presenterRevision = gitText(['rev-parse', 'HEAD']);
+const hillRevision = LERM_HORDE_REVIEWED_LIVE_HILL_REVISION;
 
 const hordeReport: ReviewedHordeTraversalReport = {
   ok: true,
@@ -212,9 +214,10 @@ writeFileSync(
   `${JSON.stringify(producerReceipt, null, 2)}\n`,
 );
 const cleanSourceIdentity = {
-  head: hillRevision,
+  head: presenterRevision,
   dirty: '',
   hordeAncestor: () => true,
+  hillAncestor: () => true,
 };
 assert.equal(
   runLermHordeLiveBodyMotionWitnessCli(
@@ -247,6 +250,11 @@ assert.equal(
 );
 assert.equal(cliReport.outputs.imageSha256, fileSha256(imageOut));
 assert.equal(cliReport.inputs.effective.hillRevision, hillRevision);
+assert.equal(
+  cliReport.inputs.effective.presenterRevision,
+  presenterRevision,
+  'the Horde presenter revision must not impersonate the Hill target revision',
+);
 assert.equal(cliReport.motion.claimBoundary.liveContactTruth, false);
 
 const blankImageOut = join(cliDir, 'blank.svg');
@@ -303,6 +311,7 @@ assert.equal(
       sourceIdentity: () => ({
         ...cleanSourceIdentity,
         head: '0'.repeat(40),
+        hillAncestor: () => false,
       }),
     },
   ),

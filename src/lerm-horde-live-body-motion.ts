@@ -7,6 +7,8 @@ export const LERM_HORDE_LIVE_BODY_MOTION_SCHEMA =
   'lerms.lerm-horde.live-hill-body-motion.v0' as const;
 export const LERM_HORDE_LIVE_BODY_MOTION_ROUTE =
   'lerms/hill-of-hills/horde-live-body-motion-presentation' as const;
+export const LERM_HORDE_REVIEWED_LIVE_HILL_REVISION =
+  'f6458e5bd74d9305c4149e6a2ee3844bf4613150' as const;
 
 const PROCEDURAL_BODY_CANDIDATE_ID = 'procedural-squash-thief-v0' as const;
 const PROCEDURAL_BODY_CANDIDATE_SCHEMA =
@@ -296,6 +298,11 @@ function validateAdmission(
   ) {
     throw new Error(
       'body motion requires the fresh complete non-fallback live-Hill admission',
+    );
+  }
+  if (admission.hill.targetRevision !== LERM_HORDE_REVIEWED_LIVE_HILL_REVISION) {
+    throw new Error(
+      `body motion requires reviewed live-Hill revision ${LERM_HORDE_REVIEWED_LIVE_HILL_REVISION}`,
     );
   }
   if (
