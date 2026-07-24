@@ -1,0 +1,991 @@
+{
+  "ok": true,
+  "schema": "lerms.lerm-horde.producer-history-composition-receipt.v0",
+  "phase": "complete",
+  "route": "lerms/lerm-horde/live-producer-history-composition",
+  "evidenceClass": "live_producer_composition",
+  "lerms": {
+    "branch": "cc/lerm-horde-live-producer-history-0723",
+    "revision": "9dbe0452476b451c1a23f0a999bcda19d7fa40ff",
+    "hillBaseRevision": "653175725ed695094a7420247ef4b9f96b988125"
+  },
+  "producer": {
+    "repository": "kaminos",
+    "branch": "cc/mushfinger-motion-ready-719024-0720",
+    "revision": "ced6db3d",
+    "moduleSha256": "ffce984721d00468856e70bd0805961a852d8690bcd402d1dc5ae96ad1ec88f0",
+    "creatureId": "motion-ready-719024",
+    "bodyRevision": "motion-ready-719024-registration-cb519913",
+    "motionRevision": "ced6db3d",
+    "routeId": "lerm-horde-719024-control-crossing-v0-left-longitudinal-short",
+    "railId": "lerm-horde-719024-control-crossing-v0-left-longitudinal-short-rail",
+    "railSchema": "kaminos.creature-scale-locomotion-rail.v0",
+    "supportSchema": "kaminos.axial-terrain-support-envelope.v0",
+    "routeSelection": {
+      "candidateId": "left-longitudinal-short",
+      "attemptedCandidateCount": 7,
+      "rejectedCandidates": [
+        {
+          "id": "left-longitudinal-wide",
+          "reason": "producer route preflight rejected segment 0->1"
+        },
+        {
+          "id": "right-longitudinal-wide",
+          "reason": "producer route preflight rejected segment 1->2"
+        },
+        {
+          "id": "center-longitudinal-wide",
+          "reason": "producer route preflight rejected segment 0->1"
+        },
+        {
+          "id": "left-longitudinal-mid",
+          "reason": "producer route preflight rejected segment 0->1"
+        },
+        {
+          "id": "right-longitudinal-mid",
+          "reason": "producer route preflight rejected segment 0->1"
+        },
+        {
+          "id": "center-longitudinal-mid",
+          "reason": "producer route preflight rejected segment 1->2"
+        }
+      ]
+    }
+  },
+  "hill": {
+    "requested": {
+      "route": "hill-of-hills/lerm-horde-live-producer-history",
+      "authority": "live_simulation",
+      "backend": "deterministic-cpu-heightfield",
+      "configId": "lerm-horde-live-producer-history-v0"
+    },
+    "effective": {
+      "route": "hill-of-hills/lerm-horde-live-producer-history",
+      "authority": "live_simulation",
+      "backend": "deterministic-cpu-heightfield",
+      "configId": "lerm-horde-live-producer-history-v0",
+      "priorFrameId": "lerm-horde-hill-prior",
+      "admittedFrameId": "lerm-horde-hill-admitted",
+      "postDepartureFrameId": "lerm-horde-hill-post-departure",
+      "sourceLineageKey": "da972cd9"
+    }
+  },
+  "history": {
+    "schema": "lerms.hill-of-hills.producer-contact-history.v0",
+    "episodeId": "lerm-horde-719024-live-control-crossing-0001",
+    "producer": {
+      "repository": "kaminos",
+      "revision": "ced6db3d",
+      "route": "motion-ready-719024/creature-scale-locomotion-rail",
+      "creatureId": "motion-ready-719024",
+      "bodyRevision": "motion-ready-719024-registration-cb519913",
+      "motionRevision": "ced6db3d",
+      "routeId": "lerm-horde-719024-control-crossing-v0-left-longitudinal-short",
+      "railSchema": "kaminos.creature-scale-locomotion-rail.v0",
+      "railId": "lerm-horde-719024-control-crossing-v0-left-longitudinal-short-rail",
+      "supportSchema": "kaminos.axial-terrain-support-envelope.v0"
+    },
+    "hill": {
+      "sourceId": "lerm-horde-hill-prior",
+      "sampleChecksum": "4550e6ef",
+      "topologyChecksum": "9a914b75"
+    },
+    "coordinateSpace": {
+      "axes": "x-y-z",
+      "up": "y",
+      "units": "world"
+    },
+    "samples": [
+      {
+        "sequence": 0,
+        "timestampMs": 0,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.6810031011905359,
+            -1.5
+          ],
+          "sourceDistance": 0,
+          "routeProgress": 0,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.1616452430475553,
+              0.986848932410679
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.05987463172681229,
+            "minimumComplianceMargin": 0.17348884832886882,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 1,
+        "timestampMs": 174,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.6162993998222225,
+            -1.2924698373613608
+          ],
+          "sourceDistance": 0.21747146629580857,
+          "routeProgress": 0.07142857142857142,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.1813365233793075,
+              0.9834211027269579
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.035204205271318526,
+            "minimumComplianceMargin": 0.17249706155035047,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 2,
+        "timestampMs": 348,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.559825581299427,
+            -1.0824915051152706
+          ],
+          "sourceDistance": 0.43494293259161715,
+          "routeProgress": 0.14285714285714285,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.2009802808534921,
+              0.9795952872018379
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.021058996064724264,
+            "minimumComplianceMargin": 0.21707339371586337,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 3,
+        "timestampMs": 522,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.5120264527889012,
+            -0.8704978260077173
+          ],
+          "sourceDistance": 0.6524143988874257,
+          "routeProgress": 0.21428571428571427,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.22049167547041537,
+              0.975388856327695
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.054830991957632205,
+            "minimumComplianceMargin": 0.3305426013892338,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 4,
+        "timestampMs": 696,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.4872271368641137,
+            -0.6544834094631722
+          ],
+          "sourceDistance": 0.8698858651832343,
+          "routeProgress": 0.2857142857142857,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.23684233461745885,
+              0.9715480989292046
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.09103091390941666,
+            "minimumComplianceMargin": 0.35937794816301183,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 5,
+        "timestampMs": 870,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.4748439579535314,
+            -0.4374093616484628
+          ],
+          "sourceDistance": 1.0873573314790428,
+          "routeProgress": 0.3571428571428571,
+          "tangent": [
+            1.321898579409771e-15,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              1.321898579409771e-15,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              1.321898579409771e-15
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.25196295786540573,
+              0.9677368794583141
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.11045872223901221,
+            "minimumComplianceMargin": 0.1889585768507701,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 6,
+        "timestampMs": 1044,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.48024578807201623,
+            -0.22017870091977032
+          ],
+          "sourceDistance": 1.3048287977748514,
+          "routeProgress": 0.42857142857142855,
+          "tangent": [
+            -4.06849745046906e-16,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              -4.06849745046906e-16,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              -4.06849745046906e-16
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.2643622671657272,
+              0.9644234504091015
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.11305643622045068,
+            "minimumComplianceMargin": 0.1661716121013098,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 7,
+        "timestampMs": 1218,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.504799081961393,
+            -0.004386590654253036
+          ],
+          "sourceDistance": 1.52230026407066,
+          "routeProgress": 0.5,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.27318477073874553,
+              0.9619615798130501
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.10363049626897966,
+            "minimumComplianceMargin": 0.24885529588614336,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 8,
+        "timestampMs": 1392,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.5442953592488297,
+            0.2093894029357412
+          ],
+          "sourceDistance": 1.7397717303664686,
+          "routeProgress": 0.5714285714285714,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.27890872384205656,
+              0.9603176160858424
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.08705476613863274,
+            "minimumComplianceMargin": 0.3942564373804146,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 9,
+        "timestampMs": 1566,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.5910008535716386,
+            0.42178511511216815
+          ],
+          "sourceDistance": 1.9572431966622772,
+          "routeProgress": 0.6428571428571429,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.28321047631229707,
+              0.9590577803797653
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.06831119483890162,
+            "minimumComplianceMargin": 0.5586737294833191,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 10,
+        "timestampMs": 1740,
+        "root": {
+          "worldPosition": [
+            -1.2499999999999998,
+            0.6356217138233045,
+            0.6346174949580211
+          ],
+          "sourceDistance": 2.1747146629580856,
+          "routeProgress": 0.7142857142857142,
+          "tangent": [
+            2.0753762053481875e-16,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              2.0753762053481875e-16,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              2.0753762053481875e-16
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              -7.418997070496542e-17,
+              0.28880773640552443,
+              0.9573871167883538
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.05378077032669781,
+            "minimumComplianceMargin": 0.6861335936254578,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 11,
+        "timestampMs": 1914,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.6698452410524113,
+            0.849365775748956
+          ],
+          "sourceDistance": 2.3921861292538944,
+          "routeProgress": 0.7857142857142858,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.2988756749857996,
+              0.9542920574445659
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.048857384930802605,
+            "minimumComplianceMargin": 0.7293211848175211,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 12,
+        "timestampMs": 2088,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.6922373356709135,
+            1.0656142525438792
+          ],
+          "sourceDistance": 2.609657595549703,
+          "routeProgress": 0.8571428571428571,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.3149294366717833,
+              0.9491150878147461
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.052061815364771474,
+            "minimumComplianceMargin": 0.7012121459230573,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 13,
+        "timestampMs": 2262,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.7053000157812179,
+            1.2826386010388107
+          ],
+          "sourceDistance": 2.827129061845511,
+          "routeProgress": 0.9285714285714285,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.3373848670646345,
+              0.9413667996460141
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.05970978561668777,
+            "minimumComplianceMargin": 0.6341246875729143,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      },
+      {
+        "sequence": 14,
+        "timestampMs": 2436,
+        "root": {
+          "worldPosition": [
+            -1.25,
+            0.7111659923440228,
+            1.5
+          ],
+          "sourceDistance": 3.04460052814132,
+          "routeProgress": 1,
+          "tangent": [
+            0,
+            0,
+            1
+          ],
+          "locomotionFrame": {
+            "forward": [
+              0,
+              0,
+              1
+            ],
+            "right": [
+              -1,
+              0,
+              0
+            ],
+            "up": [
+              0,
+              1,
+              0
+            ]
+          },
+          "attention": {
+            "direction": [
+              0,
+              0.3669090995720743,
+              0.9302567993039395
+            ],
+            "authority": "producer:target-relative|horde:composition-validation"
+          },
+          "support": {
+            "schema": "kaminos.axial-terrain-support-envelope.v0",
+            "disposition": "local-support",
+            "rootLift": 0.0697833826903389,
+            "minimumComplianceMargin": 0.5457598009619395,
+            "provenance": {
+              "hillSourceId": "lerm-horde-hill-prior",
+              "revision": "653175725ed695094a7420247ef4b9f96b988125",
+              "freshnessMs": 0
+            }
+          }
+        }
+      }
+    ]
+  },
+  "historySummary": {
+    "checksum": "b76a6a5b",
+    "episodeId": "lerm-horde-719024-live-control-crossing-0001",
+    "orderedSampleCount": 15,
+    "supportedRootCount": 14,
+    "stanceContactCount": 0,
+    "firstTimestampMs": 0,
+    "lastTimestampMs": 2436,
+    "firstSourceDistance": 0,
+    "lastSourceDistance": 3.04460052814132,
+    "firstRouteProgress": 0,
+    "lastRouteProgress": 1
+  },
+  "admission": {
+    "trafficChecksum": "29d7310d",
+    "trafficRange": {
+      "min": 0,
+      "max": 0.14369582505347486
+    },
+    "exposureSeconds": 2.044712588913678,
+    "admittedEpisodeCount": 1,
+    "preHistoryTopologyPossibilityChecksum": "inherited",
+    "postDepartureTopologyPossibilityChecksum": "3e34b040",
+    "noHistoryTopologyPossibilityChecksum": "26349850",
+    "integrationOriginMs": 120,
+    "supportShockResetCount": 0
+  },
+  "persistence": {
+    "producerTrafficChecksumAtAdmission": "29d7310d",
+    "producerTrafficChecksumAfterDeparture": "29d7310d",
+    "cacheGenerationBefore": 1,
+    "cacheGenerationAtAdmission": 2,
+    "cacheGenerationAfterDeparture": 3
+  },
+  "assertions": {
+    "strictMonotonicHistory": true,
+    "exactPriorHillTarget": true,
+    "absentContactLawful": true,
+    "historyAdmittedOnce": true,
+    "persistedAfterDeparture": true,
+    "changedTopologyPossibility": true,
+    "identicalReplayIdempotent": true,
+    "sourceIdentityPreserved": true,
+    "zeroShockResets": true
+  },
+  "hordeSemanticOverlay": {
+    "actorId": "motion-ready-719024",
+    "speciesIdentity": "producer-control-non-lerm",
+    "behavior": "route-probe",
+    "motive": "composition-validation",
+    "contactInference": "none"
+  },
+  "fallbackStatus": "none",
+  "staleStatus": "fresh",
+  "partialStatus": "complete-root-only",
+  "failurePhase": null,
+  "sourceIdentity": {
+    "requested": {
+      "lermsRepoRoot": "/private/tmp/lerms-lerm-horde-live-producer-history-0723",
+      "producerRepoRoot": "/private/tmp/kaminos-lerm-horde-producer-ced6db3d",
+      "producerModule": "motion-ready-719024-core.js",
+      "registration": "artifacts/motion-ready-719024/registration.json"
+    },
+    "effective": {
+      "lermsRepoRoot": "/private/tmp/lerms-lerm-horde-live-producer-history-0723",
+      "producerRepoRoot": "/private/tmp/kaminos-lerm-horde-producer-ced6db3d",
+      "producerModulePath": "/private/tmp/kaminos-lerm-horde-producer-ced6db3d/motion-ready-719024-core.js",
+      "registrationPath": "/private/tmp/kaminos-lerm-horde-producer-ced6db3d/artifacts/motion-ready-719024/registration.json"
+    },
+    "git": {
+      "lermsBranch": "cc/lerm-horde-live-producer-history-0723",
+      "lermsRevision": "9dbe0452476b451c1a23f0a999bcda19d7fa40ff",
+      "lermsDirty": "",
+      "producerBranch": "cc/mushfinger-motion-ready-719024-0720",
+      "producerRevision": "ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58",
+      "expectedProducerRevision": "ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58",
+      "dirtyProducerInputs": ""
+    },
+    "producerModuleSha256": "ffce984721d00468856e70bd0805961a852d8690bcd402d1dc5ae96ad1ec88f0"
+  }
+}
