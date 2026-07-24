@@ -98,6 +98,15 @@ assert.equal(writtenReport.ok, true);
 assert.equal(writtenReport.render.primaryOutputWritten, true);
 assert.equal(writtenReport.input.path, liveReceiptPath);
 assert.match(writtenReport.input.sha256, /^[a-f0-9]{64}$/);
+assert.deepEqual(writtenReport.outputs.requested, {
+  imageOut: imagePath,
+  reportOut: reportPath
+});
+assert.deepEqual(writtenReport.outputs.effective, {
+  imageOut: imagePath,
+  reportOut: reportPath
+});
+assert.equal(writtenReport.outputs.imageSha256, writtenReport.render.svgSha256);
 
 const subprocessImagePath = join(cliDir, 'subprocess-strip.svg');
 const subprocessReportPath = join(cliDir, 'subprocess-strip.json');
@@ -156,6 +165,42 @@ assert.equal(
   readFileSync(staleImagePath, 'utf8'),
   '<svg>stale</svg>',
   'failed replay must not mutate a pre-existing image into ambiguous partial output'
+);
+
+const protectedInputPath = join(cliDir, 'protected-receipt.json');
+const protectedInputBytes = `${JSON.stringify(liveReceipt, null, 2)}\n`;
+writeFileSync(protectedInputPath, protectedInputBytes);
+const collidingInputStatus = runHillProducerHistoryOperatorReplayCli([
+  '--input',
+  protectedInputPath,
+  '--image-out',
+  join(cliDir, 'unused-collision-image.svg'),
+  '--report-out',
+  protectedInputPath
+]);
+assert.equal(collidingInputStatus, 1);
+assert.equal(
+  readFileSync(protectedInputPath, 'utf8'),
+  protectedInputBytes,
+  'a failure report path collision must not overwrite the immutable input receipt'
+);
+
+const protectedImagePath = join(cliDir, 'protected-image.svg');
+const protectedImageBytes = '<svg>protected pre-existing image</svg>';
+writeFileSync(protectedImagePath, protectedImageBytes);
+const collidingImageStatus = runHillProducerHistoryOperatorReplayCli([
+  '--input',
+  liveReceiptPath,
+  '--image-out',
+  protectedImagePath,
+  '--report-out',
+  protectedImagePath
+]);
+assert.equal(collidingImageStatus, 1);
+assert.equal(
+  readFileSync(protectedImagePath, 'utf8'),
+  protectedImageBytes,
+  'a failure report path collision must not overwrite a protected image'
 );
 
 console.log('hill of hills producer history operator replay contracts ok');

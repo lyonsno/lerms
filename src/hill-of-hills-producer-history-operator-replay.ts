@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -102,6 +102,17 @@ export interface HillProducerHistoryOperatorReplayReport {
     rootMarkerCount: number;
     svgSha256: string;
     primaryOutputWritten: boolean;
+  };
+  outputs?: {
+    requested: {
+      imageOut: string;
+      reportOut: string;
+    };
+    effective: {
+      imageOut: string;
+      reportOut: string;
+    };
+    imageSha256: string;
   };
   failurePhase: null;
 }
@@ -232,7 +243,11 @@ export function runHillProducerHistoryOperatorReplayCli(
     const inputPath = resolve(args.input);
     const imageOut = resolve(args.imageOut);
     const reportOut = resolve(args.reportOut);
-    if (new Set([inputPath, imageOut, reportOut]).size !== 3) {
+    if (
+      pathsAlias(inputPath, imageOut) ||
+      pathsAlias(inputPath, reportOut) ||
+      pathsAlias(imageOut, reportOut)
+    ) {
       throw new Error('input, image output, and report output paths must be distinct');
     }
     evidence.requested = { input: args.input, imageOut: args.imageOut, reportOut: args.reportOut };
@@ -276,6 +291,17 @@ export function runHillProducerHistoryOperatorReplayCli(
     phase = 'write-report';
     writeJson(reportOut, {
       ...replay.report,
+      outputs: {
+        requested: {
+          imageOut: args.imageOut,
+          reportOut: args.reportOut
+        },
+        effective: {
+          imageOut,
+          reportOut
+        },
+        imageSha256: replay.report.render.svgSha256
+      },
       render: {
         ...replay.report.render,
         primaryOutputWritten: true
@@ -284,9 +310,10 @@ export function runHillProducerHistoryOperatorReplayCli(
     return 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (args.reportOut) {
+    const failureReportOut = safeFailureReportPath(args);
+    if (failureReportOut) {
       try {
-        writeJson(resolve(args.reportOut), {
+        writeJson(failureReportOut, {
           ok: false,
           schema: HILL_PRODUCER_HISTORY_OPERATOR_REPLAY_SCHEMA,
           phase: 'failed',
@@ -600,6 +627,37 @@ function inspectPreexistingOutput(path: string): Record<string, unknown> {
     sha256: sha256(bytes),
     disposition: 'stale-preexisting-not-evidence-for-this-run'
   };
+}
+
+function safeFailureReportPath(args: CliArgs): string | null {
+  if (!args.reportOut) return null;
+  const reportOut = resolve(args.reportOut);
+  const protectedPaths = [args.input, args.imageOut]
+    .filter((path): path is string => path !== null)
+    .map((path) => resolve(path));
+  return protectedPaths.some((path) => pathsAlias(path, reportOut))
+    ? null
+    : reportOut;
+}
+
+function pathsAlias(left: string, right: string): boolean {
+  if (canonicalPathIdentity(left) === canonicalPathIdentity(right)) return true;
+  if (!existsSync(left) || !existsSync(right)) return false;
+  const leftStat = statSync(left);
+  const rightStat = statSync(right);
+  return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+}
+
+function canonicalPathIdentity(path: string): string {
+  let cursor = resolve(path);
+  const suffix: string[] = [];
+  while (!existsSync(cursor)) {
+    const parent = dirname(cursor);
+    if (parent === cursor) return resolve(path);
+    suffix.unshift(basename(cursor));
+    cursor = parent;
+  }
+  return join(realpathSync(cursor), ...suffix);
 }
 
 function atomicWrite(path: string, content: string): void {
