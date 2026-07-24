@@ -103,16 +103,17 @@ export interface MovingLermTimelineFrame {
 
 export interface MovingLermOnHillComposition {
   schema: typeof LERM_HORDE_MOVING_LERM_ON_HILL_SCHEMA;
-  evidenceClass: 'producer_fitted_moving_lerm';
+  evidenceClass: 'caller_supplied_moving_lerm_composition';
+  sourceVerification: 'declared_unverified';
   identity: MovingLermIdentity;
   sources: {
     lermsRevision: typeof LERM_HORDE_MOVING_LERM_HILL_REVISION;
     hillRevision: typeof LERM_HORDE_MOVING_LERM_HILL_REVISION;
     hillReplaySchema: string;
-    body: MovingLermArtifactHandle;
-    rig: MovingLermArtifactHandle;
-    support: MovingLermArtifactHandle;
-    motion: MovingLermArtifactHandle;
+    body: MovingLermOnHillInput['body'];
+    rig: MovingLermOnHillInput['rig'];
+    support: MovingLermOnHillInput['support'];
+    motion: Omit<MovingLermOnHillInput['motion'], 'samples'>;
   };
   timeline: readonly MovingLermTimelineFrame[];
   assertions: {
@@ -121,9 +122,9 @@ export interface MovingLermOnHillComposition {
     stableActorIdentity: true;
     dynamicRootMotion: true;
     dynamicPoseMotion: true;
-    sourceIdentityPreserved: true;
+    sourceIdentityDeclared: true;
     routeIdentityPreserved: true;
-    rootSupportAligned: true;
+    rootSupportSamplesPreserved: true;
   };
 }
 
@@ -138,16 +139,35 @@ export function composeMovingLermOnHill(
 
   return {
     schema: LERM_HORDE_MOVING_LERM_ON_HILL_SCHEMA,
-    evidenceClass: 'producer_fitted_moving_lerm',
+    evidenceClass: 'caller_supplied_moving_lerm_composition',
+    sourceVerification: 'declared_unverified',
     identity: { ...input.identity },
     sources: {
       lermsRevision: input.lermsRevision,
       hillRevision: input.hill.revision,
       hillReplaySchema: input.hill.replaySchema,
-      body: artifactHandle(input.body),
-      rig: artifactHandle(input.rig),
-      support: artifactHandle(input.support),
-      motion: artifactHandle(input.motion),
+      body: {
+        ...artifactHandle(input.body),
+        representationKind: input.body.representationKind,
+        assetIdentity: input.body.assetIdentity,
+        registrationId: input.body.registrationId,
+      },
+      rig: {
+        ...artifactHandle(input.rig),
+        assetIdentity: input.rig.assetIdentity,
+        registrationId: input.rig.registrationId,
+      },
+      support: {
+        ...artifactHandle(input.support),
+        assetIdentity: input.support.assetIdentity,
+        registrationId: input.support.registrationId,
+        hillRevision: input.support.hillRevision,
+      },
+      motion: {
+        ...artifactHandle(input.motion),
+        assetIdentity: input.motion.assetIdentity,
+        registrationId: input.motion.registrationId,
+      },
     },
     timeline,
     assertions: {
@@ -156,9 +176,9 @@ export function composeMovingLermOnHill(
       stableActorIdentity: true,
       dynamicRootMotion: true,
       dynamicPoseMotion: true,
-      sourceIdentityPreserved: true,
+      sourceIdentityDeclared: true,
       routeIdentityPreserved: true,
-      rootSupportAligned: true,
+      rootSupportSamplesPreserved: true,
     },
   };
 }

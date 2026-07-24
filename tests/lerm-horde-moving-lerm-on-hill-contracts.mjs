@@ -173,8 +173,17 @@ const input = {
 const composition = composeMovingLermOnHill(input);
 
 assert.equal(composition.schema, LERM_HORDE_MOVING_LERM_ON_HILL_SCHEMA);
-assert.equal(composition.evidenceClass, 'producer_fitted_moving_lerm');
+assert.equal(
+  composition.evidenceClass,
+  'caller_supplied_moving_lerm_composition',
+  'a manifest-only adapter must not claim it verified producer files',
+);
+assert.equal(composition.sourceVerification, 'declared_unverified');
 assert.equal(composition.identity.speciesIdentity, 'lerms.red-lerm.v0');
+assert.equal(composition.sources.body.assetIdentity, input.identity.assetIdentity);
+assert.equal(composition.sources.rig.registrationId, input.identity.registrationId);
+assert.equal(composition.sources.support.hillRevision, LERM_HORDE_MOVING_LERM_HILL_REVISION);
+assert.equal(composition.sources.motion.assetIdentity, input.identity.assetIdentity);
 assert.equal(composition.timeline.length, 3);
 assert.deepEqual(
   composition.timeline.map((frame) => frame.lerm.id),
@@ -194,7 +203,13 @@ assert.ok(composition.assertions.dynamicPoseMotion);
 assert.ok(composition.assertions.stableActorIdentity);
 assert.ok(composition.assertions.exactLandedHill);
 assert.ok(composition.assertions.routeIdentityPreserved);
-assert.ok(composition.assertions.sourceIdentityPreserved);
+assert.ok(composition.assertions.sourceIdentityDeclared);
+assert.ok(composition.assertions.rootSupportSamplesPreserved);
+assert.equal(
+  composition.assertions.sourceIdentityPreserved,
+  undefined,
+  'the manifest cannot claim file identity verification without reading the files',
+);
 
 assert.throws(
   () => composeMovingLermOnHill({
