@@ -1,4 +1,5 @@
 import {
+  LIVE_HAND_HYBRID_ROUTE,
   LIVE_HAND_ROUTE,
   assertLiveRuntimeHealth,
   normalizeLiveManoFrame,
@@ -234,6 +235,33 @@ assert(normalized.positions[0] < 0 && normalized.positions[3] > 0, 'preserves di
 assert(normalized.positions[7] > normalized.positions[10], 'inverts camera y into display y');
 assert(normalized.burstMode === 'chunked' && normalized.chunkSegments === 7, 'carries chunk identity with the frame');
 
+const hybrid = normalizeLiveManoFrame({
+  ...state,
+  frame: {
+    ...state.frame,
+    source: {
+      ...state.frame.source,
+      effectiveRoute: LIVE_HAND_HYBRID_ROUTE,
+      model: 'WiLoR-MLX+HandDetector-MLX anchor + browser MediaPipe landmarks',
+      deviceRoute: 'mlx+browser',
+    },
+    diagnostics: {
+      ...state.frame.diagnostics,
+      fusionMode: 'wilor_anchor_browser_fast_delta',
+      anchorSource: LIVE_HAND_ROUTE,
+      fastPathSource: 'browser_mediapipe_hand_landmarker_live',
+      fallbackState: null,
+      anchorAgeMs: 84,
+      fastPathAgeMs: 12,
+      residualMean: 0.024,
+    },
+  },
+});
+assert(hybrid.effectiveRoute === LIVE_HAND_HYBRID_ROUTE, 'accepts the explicit WiLoR-anchor/browser-fast hybrid route');
+assert(hybrid.fusionMode === 'wilor_anchor_browser_fast_delta', 'preserves the effective fusion mode');
+assert(hybrid.anchorSource === LIVE_HAND_ROUTE, 'preserves the WiLoR MANO anchor source');
+assert(hybrid.fastPathSource === 'browser_mediapipe_hand_landmarker_live', 'preserves the browser fast-path source');
+
 assertThrows(
   () => normalizeLiveManoFrame({
     ...state,
@@ -269,7 +297,7 @@ const sample = {
 const summary = summarizeLiveHandLatency([
   sample,
   { ...sample, frameId: 'frame-43', modelLatencyMs: 63, captureToWebglRenderReturnMs: 97 },
-  { ...sample, frameId: 'frame-44', modelLatencyMs: 70, captureToWebglRenderReturnMs: 110 },
+  { ...sample, frameId: 'frame-44', effectiveRoute: LIVE_HAND_HYBRID_ROUTE, modelLatencyMs: 70, captureToWebglRenderReturnMs: 110 },
 ]);
 assert(summary.sampleCount === 3, 'counts live samples');
 assert(summary.modelLatencyMs.p50 === 63, 'reports model p50');

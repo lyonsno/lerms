@@ -1,4 +1,5 @@
 export const LIVE_HAND_ROUTE = 'native_wilor_mini_mlx_detector_sidecar_live' as const;
+export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-v0' as const;
 export const LIVE_HAND_RUNTIME_OWNER = 'hand-state-runtime' as const;
 export const MANO_VERTEX_COUNT = 778 as const;
 export const MANO_FACE_COUNT = 1538 as const;
@@ -16,7 +17,7 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   frameId: string;
   captureTimestampMs: number;
   requestedRoute: string;
-  effectiveRoute: typeof LIVE_HAND_ROUTE;
+  effectiveRoute: LiveHandEffectiveRoute;
   model: string;
   deviceRoute: string;
   dtypeRoute: string;
@@ -31,6 +32,9 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   faceCount: typeof MANO_FACE_COUNT;
   manoTransform: ManoDisplayTransform;
   orientationContract: typeof MANO_DISPLAY_ORIENTATION;
+  fusionMode: string | null;
+  anchorSource: string | null;
+  fastPathSource: string | null;
 }
 
 export interface ManoDisplayTransform {
@@ -71,12 +75,14 @@ export interface Distribution {
 export interface LiveHandLatencySummary {
   schema: 'lerms.live-hand-latency-summary.v0';
   sampleCount: number;
-  effectiveRoute: typeof LIVE_HAND_ROUTE;
+  effectiveRoute: LiveHandEffectiveRoute | 'mixed_live_hand_routes';
   manoVertexCount: typeof MANO_VERTEX_COUNT;
   manoFaceCount: typeof MANO_FACE_COUNT;
   modelLatencyMs: Distribution;
   captureToWebglRenderReturnMs: Distribution;
 }
+
+export type LiveHandEffectiveRoute = typeof LIVE_HAND_ROUTE | typeof LIVE_HAND_HYBRID_ROUTE;
 
 type RecordLike = Record<string, unknown>;
 
@@ -100,6 +106,14 @@ function finiteNonNegative(value: unknown, label: string): number {
 function text(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error(`${label} is missing`);
   return value;
+}
+
+function optionalText(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function isLiveHandEffectiveRoute(value: string): value is LiveHandEffectiveRoute {
+  return value === LIVE_HAND_ROUTE || value === LIVE_HAND_HYBRID_ROUTE;
 }
 
 function vec3(value: unknown, label: string): readonly [number, number, number] {
@@ -138,7 +152,9 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   }
   const source = record(frame.source, 'frame source');
   const effectiveRoute = text(source.effectiveRoute, 'effective route');
-  if (effectiveRoute !== LIVE_HAND_ROUTE) throw new Error(`effective route must be ${LIVE_HAND_ROUTE}, got ${effectiveRoute}`);
+  if (!isLiveHandEffectiveRoute(effectiveRoute)) {
+    throw new Error(`effective route must be ${LIVE_HAND_ROUTE} or ${LIVE_HAND_HYBRID_ROUTE}, got ${effectiveRoute}`);
+  }
   const mano = record(frame.mano, 'MANO surface');
   const surface = normalizeManoSurface(mano);
   const diagnostics = record(frame.diagnostics, 'frame diagnostics');
@@ -149,6 +165,18 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   if (!Array.isArray(keypoints) || keypoints.length < 21) throw new Error('live hand state must contain 21 3D keypoints');
   const burstMode = text(diagnostics.burstMode, 'burstMode');
   if (burstMode !== 'monolithic' && burstMode !== 'chunked') throw new Error(`unsupported burstMode: ${burstMode}`);
+  const fusionMode = optionalText(diagnostics.fusionMode);
+  const anchorSource = optionalText(diagnostics.anchorSource);
+  const fastPathSource = optionalText(diagnostics.fastPathSource);
+  if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
+    if (fusionMode !== 'wilor_anchor_browser_fast_delta') throw new Error('hybrid frame must expose the active fusion mode');
+    if (anchorSource !== LIVE_HAND_ROUTE) throw new Error(`hybrid frame must name ${LIVE_HAND_ROUTE} as its anchor source`);
+    if (!fastPathSource) throw new Error('hybrid frame must name its fast-path source');
+    if (diagnostics.fallbackState !== null) throw new Error('hybrid frame must not carry an active fallback state');
+    finiteNonNegative(diagnostics.anchorAgeMs, 'anchorAgeMs');
+    finiteNonNegative(diagnostics.fastPathAgeMs, 'fastPathAgeMs');
+    finiteNonNegative(diagnostics.residualMean, 'residualMean');
+  }
   return {
     runtimeOwner: LIVE_HAND_RUNTIME_OWNER,
     burstMode,
@@ -158,7 +186,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     frameId: text(frameIdentity.frameId, 'frameId'),
     captureTimestampMs: finiteNonNegative(frameIdentity.captureTimestampMs, 'captureTimestampMs'),
     requestedRoute: text(source.requestedRoute, 'requested route'),
-    effectiveRoute: LIVE_HAND_ROUTE,
+    effectiveRoute,
     model: text(source.model, 'model'),
     deviceRoute: text(source.deviceRoute, 'device route'),
     dtypeRoute: text(source.dtypeRoute, 'dtype route'),
@@ -168,6 +196,9 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     modelLatencyMs: finiteNonNegative(timing.modelLatencyMs, 'modelLatencyMs'),
     captureToSidecarPublishMs: finiteNonNegative(timing.cameraFrameAgeMs, 'cameraFrameAgeMs'),
     ...surface,
+    fusionMode,
+    anchorSource,
+    fastPathSource,
   };
 }
 
@@ -258,7 +289,9 @@ export function summarizeLiveHandLatency(samples: readonly LiveHandLatencySample
     frameIds.add(sample.frameId);
     if (sample.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER) throw new Error(`runtime owner must be ${LIVE_HAND_RUNTIME_OWNER}`);
     if (sample.sourceAuthority !== 'live_simulation') throw new Error('sample lacks live authority');
-    if (sample.effectiveRoute !== LIVE_HAND_ROUTE) throw new Error(`effective route must be ${LIVE_HAND_ROUTE}`);
+    if (!isLiveHandEffectiveRoute(sample.effectiveRoute)) {
+      throw new Error(`effective route must be ${LIVE_HAND_ROUTE} or ${LIVE_HAND_HYBRID_ROUTE}`);
+    }
     if (sample.manoVertexCount !== MANO_VERTEX_COUNT || sample.manoFaceCount !== MANO_FACE_COUNT) {
       throw new Error(`sample lacks ${MANO_VERTEX_COUNT}/${MANO_FACE_COUNT} MANO topology`);
     }
@@ -268,7 +301,10 @@ export function summarizeLiveHandLatency(samples: readonly LiveHandLatencySample
   return {
     schema: 'lerms.live-hand-latency-summary.v0',
     sampleCount: samples.length,
-    effectiveRoute: LIVE_HAND_ROUTE,
+    effectiveRoute: (() => {
+      const routes = new Set(samples.map(sample => sample.effectiveRoute as LiveHandEffectiveRoute));
+      return routes.size === 1 ? routes.values().next().value as LiveHandEffectiveRoute : 'mixed_live_hand_routes';
+    })(),
     manoVertexCount: MANO_VERTEX_COUNT,
     manoFaceCount: MANO_FACE_COUNT,
     modelLatencyMs: distribution(samples.map(sample => sample.modelLatencyMs)),
