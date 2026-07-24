@@ -55,6 +55,26 @@ assert.match(
 );
 assert.match(
   liveHandSource,
+  /resolveLiveFingerFluidRouteEconomics\(params,\s*readFluidEconomicsControls\(\)\)/,
+  'live smoke URLs must carry the complete fluid economics profile instead of relying on prior slider state',
+);
+assert.match(
+  liveHandSource,
+  /syncFluidEconomicsControls\(queryFluidEconomics\)/,
+  'query-owned live fluid economics must immediately become the effective controls shown to the operator',
+);
+assert.match(
+  liveHandSource,
+  /routeConfigError[\s\S]*toggle\.disabled\s*=\s*true[\s\S]*setStatus\(`invalid fluid route:[^`]*`,\s*'error'\)[\s\S]*route rejected/,
+  'invalid route economics must disable live capture and fail loudly in the operator-visible HUD',
+);
+assert.match(
+  liveHandSource,
+  /function collectLiveHandDebugState[\s\S]*routeConfigError/,
+  'invalid route economics must remain visible in the machine-readable debug receipt',
+);
+assert.match(
+  liveHandSource,
   /requestDiagnostics/,
   'the assay must request GPU diagnostics at explicit checkpoints',
 );

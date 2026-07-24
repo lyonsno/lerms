@@ -40,6 +40,7 @@ import {
   createLiveFingerFluidEmitterPacket,
   isLiveFingerFluidPacketFresh,
   normalizeLiveFingerFluidEconomics,
+  resolveLiveFingerFluidRouteEconomics,
   type LiveFingerFluidEconomics,
   type LiveFingerFluidEconomicsOptions,
   type LiveFingerFluidPacket,
@@ -236,7 +237,7 @@ function readFiniteInput(input: HTMLInputElement, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function readFluidEconomicsControls(): LiveFingerFluidEconomicsOptions {
+function readFluidEconomicsControls(): Required<LiveFingerFluidEconomicsOptions> {
   return {
     requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
     requestedActiveParticleBudget: readFiniteInput(activeBudgetControl, 720),
@@ -259,6 +260,10 @@ function syncFluidEconomicsControls(economics: LiveFingerFluidEconomics): void {
   densityValueElements.reconstructionRadius.textContent = economics.reconstructionRadiusScale.toFixed(1);
   densityValueElements.lifetime.textContent = economics.lifetimeSeconds.toFixed(1);
 }
+
+const routeFluidResolution = resolveLiveFingerFluidRouteEconomics(params, readFluidEconomicsControls());
+const queryFluidEconomics = routeFluidResolution.economics;
+const routeConfigError = routeFluidResolution.error;
 
 function updateFluidEconomicsFromControls(): void {
   liveFluidEconomics = normalizeLiveFingerFluidEconomics(readFluidEconomicsControls());
@@ -802,6 +807,7 @@ async function streamState(): Promise<void> {
 
 async function start(): Promise<void> {
   if (running) return;
+  if (routeConfigError) throw new Error(`invalid fluid route: ${routeConfigError}`);
   if (fixtureMode) throw new Error('recorded fixture mode is visual-only');
   if (fluidAssayMode) throw new Error('synthetic fluid envelope assay cannot start live hand capture');
   setStatus('initializing current Kaminos fluid');
@@ -1043,6 +1049,7 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     runtimeOwner: 'hand-state-runtime',
     runtimeUrl,
     fixtureMode,
+    routeConfigError,
     fluidEvidenceMode: fluidAssayMode ? LIVE_FLUID_ENVELOPE_ASSAY_ROUTE : 'live_hand',
     running,
     meshVisible: handMesh.visible,
@@ -1209,7 +1216,15 @@ Object.assign(window, {
 resize();
 resetBenchmark();
 updateFluidEconomicsFromControls();
-if (fixtureMode) {
+if (queryFluidEconomics) {
+  liveFluidEconomics = queryFluidEconomics;
+  syncFluidEconomicsControls(queryFluidEconomics);
+}
+if (routeConfigError) {
+  toggle.disabled = true;
+  setStatus(`invalid fluid route: ${routeConfigError}`, 'error');
+  routeTruth.textContent = `route rejected | ${routeConfigError}`;
+} else if (fixtureMode) {
   const fixtureUrl = new URL('../../tests/fixtures/wilor-mano-surface.json', import.meta.url);
   fetch(fixtureUrl, { cache: 'no-store' })
     .then(response => {

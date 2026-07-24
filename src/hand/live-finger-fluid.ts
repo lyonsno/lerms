@@ -57,6 +57,12 @@ export interface LiveFingerFluidEconomics {
   fallbackReason: string | null;
 }
 
+export interface LiveFingerFluidRouteResolution {
+  provided: boolean;
+  economics: LiveFingerFluidEconomics | null;
+  error: string | null;
+}
+
 export interface LiveFingerFluidFrontierProfile extends Omit<Required<LiveFingerFluidEconomicsOptions>, 'requestedParticleCount'> {
   label: string;
 }
@@ -147,6 +153,61 @@ function clampNumber(value: number | undefined, fallback: number, minimum: numbe
     value: Math.max(minimum, Math.min(maximum, finiteValue)),
     substituted: finiteValue < minimum || finiteValue > maximum,
   };
+}
+
+const LIVE_FLUID_ROUTE_CONTROLS = Object.freeze([
+  { query: 'fluid_active', option: 'requestedActiveParticleBudget', minimum: 120, maximum: 1920, step: 60 },
+  { query: 'fluid_flux', option: 'sourceFluxParticlesPerSecond', minimum: 60, maximum: 1440, step: 20 },
+  { query: 'fluid_optics', option: 'opticalDensityScale', minimum: 0.5, maximum: 5, step: 0.1 },
+  { query: 'fluid_radius', option: 'reconstructionRadiusScale', minimum: 0.7, maximum: 3, step: 0.1 },
+  { query: 'fluid_lifetime', option: 'lifetimeSeconds', minimum: 1, maximum: 12, step: 0.5 },
+] as const);
+
+export function resolveLiveFingerFluidRouteEconomics(
+  params: Pick<URLSearchParams, 'get' | 'has'>,
+  defaults: Required<LiveFingerFluidEconomicsOptions>,
+): LiveFingerFluidRouteResolution {
+  const provided = LIVE_FLUID_ROUTE_CONTROLS.some(control => params.has(control.query));
+  if (!provided) return { provided: false, economics: null, error: null };
+
+  const options: LiveFingerFluidEconomicsOptions = { ...defaults };
+  for (const control of LIVE_FLUID_ROUTE_CONTROLS) {
+    if (!params.has(control.query)) continue;
+    const raw = params.get(control.query);
+    if (raw === null || raw === '') {
+      return { provided: true, economics: null, error: `${control.query} must not be empty` };
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      return { provided: true, economics: null, error: `${control.query} must be finite, received ${raw}` };
+    }
+    if (parsed < control.minimum || parsed > control.maximum) {
+      return {
+        provided: true,
+        economics: null,
+        error: `${control.query} must be between ${control.minimum} and ${control.maximum}, received ${raw}`,
+      };
+    }
+    const stepOffset = (parsed - control.minimum) / control.step;
+    if (Math.abs(stepOffset - Math.round(stepOffset)) > 1e-8) {
+      return {
+        provided: true,
+        economics: null,
+        error: `${control.query} must align to step ${control.step}, received ${raw}`,
+      };
+    }
+    options[control.option] = parsed;
+  }
+
+  const economics = normalizeLiveFingerFluidEconomics(options);
+  if (economics.fallbackActive) {
+    return {
+      provided: true,
+      economics: null,
+      error: `route fluid economics rejected: ${economics.fallbackReason || 'invalid economics'}`,
+    };
+  }
+  return { provided: true, economics, error: null };
 }
 
 export function normalizeLiveFingerFluidEconomics(
