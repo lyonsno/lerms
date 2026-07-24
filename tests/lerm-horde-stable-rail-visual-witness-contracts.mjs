@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  linkSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   symlinkSync,
   writeFileSync,
@@ -21,6 +24,8 @@ const receipt = JSON.parse(
 );
 const fileSha256 = (path) =>
   createHash('sha256').update(readFileSync(path)).digest('hex');
+const gitText = (args) =>
+  execFileSync('git', args, { encoding: 'utf8' }).trim();
 const verifiedInputs = {
   receiptPath: 'artifacts/lerm-horde-producer-history/receipt.json',
   receiptSha256: fileSha256('artifacts/lerm-horde-producer-history/receipt.json'),
@@ -35,6 +40,14 @@ const verifiedInputs = {
   dirtyProducerInputs: '',
   bodyPath: 'src/red-lerm-body-candidates.ts',
   bodySha256: fileSha256('src/red-lerm-body-candidates.ts'),
+  bodyGitBlob: gitText(['hash-object', 'src/red-lerm-body-candidates.ts']),
+  bodySourceRevision: gitText([
+    'log',
+    '-1',
+    '--format=%H',
+    '--',
+    'src/red-lerm-body-candidates.ts',
+  ]),
   dirtyBodyInput: '',
 };
 
@@ -60,7 +73,22 @@ assert.equal(report.visibleBody.assetIdentity, 'lerms.red-lerm-body.procedural-s
 assert.equal(report.visibleBody.candidateId, 'procedural-squash-thief-v0');
 assert.equal(report.visibleBody.candidateSchema, 'lerms.red-lerm-body-candidate.v0');
 assert.equal(report.visibleBody.shapeSchema, 'lerms.red-lerm-procedural-shape.v0');
+assert.equal(report.visibleBody.gitBlob, verifiedInputs.bodyGitBlob);
+assert.equal(report.visibleBody.sourceRevision, verifiedInputs.bodySourceRevision);
 assert.equal(report.visibleBody.dirtyInput, '');
+const bodySourceBytes = execFileSync(
+  'git',
+  [
+    'show',
+    `${report.composition.sources.body.sourceRevision}:${report.composition.sources.body.path}`,
+  ],
+  { encoding: null },
+);
+assert.equal(
+  createHash('sha256').update(bodySourceBytes).digest('hex'),
+  report.composition.sources.body.sha256,
+  'the reported body source revision must reproduce the verified source bytes',
+);
 assert.equal(report.composition.sourceVerification, 'declared_unverified');
 assert.equal(report.composition.assertions.declaredPoseVariation, false);
 assert.equal(report.composition.assertions.rootSupportSamplesDeclared, false);
@@ -208,6 +236,52 @@ assert.equal(
 const aliasReport = JSON.parse(readFileSync(aliasPath, 'utf8'));
 assert.equal(aliasReport.failurePhase, 'validate_arguments');
 assert.match(aliasReport.message, /report and image paths must be distinct/);
+
+const hardLinkReportPath = join(failedRunDir, 'hard-link-report.json');
+const hardLinkImagePath = join(failedRunDir, 'hard-link-image.ppm');
+writeFileSync(hardLinkReportPath, 'preexisting output object');
+linkSync(hardLinkReportPath, hardLinkImagePath);
+assert.equal(
+  runStableRailVisualWitnessCli([
+    '--receipt',
+    'artifacts/lerm-horde-producer-history/receipt.json',
+    '--producer-root',
+    '/private/tmp/kaminos-lerm-horde-producer-ced6db3d',
+    '--report',
+    hardLinkReportPath,
+    '--image',
+    hardLinkImagePath,
+  ]),
+  1,
+  'hard-linked report and image outputs must not yield a successful witness',
+);
+const hardLinkReport = JSON.parse(readFileSync(hardLinkReportPath, 'utf8'));
+assert.equal(hardLinkReport.failurePhase, 'validate_arguments');
+assert.match(hardLinkReport.message, /same filesystem object/);
+
+const realOutputParent = join(failedRunDir, 'real-output-parent');
+const aliasOutputParent = join(failedRunDir, 'alias-output-parent');
+mkdirSync(realOutputParent);
+symlinkSync(realOutputParent, aliasOutputParent);
+const parentAliasReportPath = join(realOutputParent, 'parent-alias-output');
+const parentAliasImagePath = join(aliasOutputParent, 'parent-alias-output');
+assert.equal(
+  runStableRailVisualWitnessCli([
+    '--receipt',
+    'artifacts/lerm-horde-producer-history/receipt.json',
+    '--producer-root',
+    '/private/tmp/kaminos-lerm-horde-producer-ced6db3d',
+    '--report',
+    parentAliasReportPath,
+    '--image',
+    parentAliasImagePath,
+  ]),
+  1,
+  'outputs through symlinked parent aliases must not yield a successful witness',
+);
+const parentAliasReport = JSON.parse(readFileSync(parentAliasReportPath, 'utf8'));
+assert.equal(parentAliasReport.failurePhase, 'validate_arguments');
+assert.match(parentAliasReport.message, /same canonical target/);
 
 const protectedReceiptPath = join(failedRunDir, 'protected-receipt.json');
 const protectedReceiptBytes = readFileSync(

@@ -5,9 +5,11 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -154,6 +156,8 @@ export interface StableRailVerifiedInputs {
   dirtyProducerInputs: string;
   bodyPath: string;
   bodySha256: string;
+  bodyGitBlob: string;
+  bodySourceRevision: string;
   dirtyBodyInput: string;
 }
 
@@ -206,6 +210,8 @@ interface StableRailVisualWitnessReport {
     schemaIdentity: typeof LERM_HORDE_VISIBLE_BODY_SCHEMA_IDENTITY;
     path: string;
     sha256: string;
+    gitBlob: string;
+    sourceRevision: string;
     dirtyInput: string;
     candidateId: 'procedural-squash-thief-v0';
     candidateSchema: typeof RED_LERM_BODY_CANDIDATE_SCHEMA;
@@ -302,6 +308,8 @@ export function buildStableRailVisualWitness(
         schemaIdentity: LERM_HORDE_VISIBLE_BODY_SCHEMA_IDENTITY,
         path: input.verifiedInputs.bodyPath,
         sha256: input.verifiedInputs.bodySha256,
+        gitBlob: input.verifiedInputs.bodyGitBlob,
+        sourceRevision: input.verifiedInputs.bodySourceRevision,
         dirtyInput: input.verifiedInputs.dirtyBodyInput,
         candidateId: 'procedural-squash-thief-v0',
         candidateSchema: RED_LERM_BODY_CANDIDATE_SCHEMA,
@@ -434,6 +442,14 @@ export function runStableRailVisualWitnessCli(
       dirtyProducerInputs,
       bodyPath: VISIBLE_BODY_PATH,
       bodySha256: sha256File(bodyPath),
+      bodyGitBlob: gitText(process.cwd(), ['hash-object', VISIBLE_BODY_PATH]),
+      bodySourceRevision: gitText(process.cwd(), [
+        'log',
+        '-1',
+        '--format=%H',
+        '--',
+        VISIBLE_BODY_PATH,
+      ]),
       dirtyBodyInput,
     };
     lastTrustworthyEvidence = {
@@ -454,6 +470,8 @@ export function runStableRailVisualWitnessCli(
       visibleBody: {
         path: VISIBLE_BODY_PATH,
         sha256: verifiedInputs.bodySha256,
+        gitBlob: verifiedInputs.bodyGitBlob,
+        sourceRevision: verifiedInputs.bodySourceRevision,
         dirtyInput: dirtyBodyInput,
       },
     };
@@ -479,6 +497,8 @@ export function runStableRailVisualWitnessCli(
     verifyPpm(completeArgs.image, WIDTH, HEIGHT);
     failurePhase = 'write_report';
     writeJson(completeArgs.report, report);
+    failurePhase = 'verify_final_outputs';
+    verifyPpm(completeArgs.image, WIDTH, HEIGHT);
     return 0;
   } catch (error) {
     const prefix =
@@ -545,7 +565,7 @@ function buildCompositionInput(
       schema: LERM_HORDE_VISIBLE_BODY_SCHEMA,
       path: verified.bodyPath,
       sha256: verified.bodySha256,
-      sourceRevision: LERM_HORDE_MOVING_LERM_HILL_REVISION,
+      sourceRevision: verified.bodySourceRevision,
       routeIdentity: completeRoute(bodyRoute, 'lerms-authored-procedural', 'squash-thief-v0'),
       representationKind: 'authored_procedural',
       assetIdentity: LERM_HORDE_VISIBLE_BODY_ASSET_IDENTITY,
@@ -643,6 +663,28 @@ function validateReceiptAndInputs(
   }
   if (verified.bodySha256 !== REVIEWED_VISIBLE_BODY_SHA256) {
     throw new Error('visible body SHA-256 does not match the reviewed procedural source');
+  }
+  if (verified.dirtyBodyInput !== '') {
+    throw new Error('visible body source has uncommitted changes');
+  }
+  const bodySourceBytes = execFileSync(
+    'git',
+    ['show', `${verified.bodySourceRevision}:${verified.bodyPath}`],
+    {
+      cwd: process.cwd(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  if (createHash('sha256').update(bodySourceBytes).digest('hex') !== verified.bodySha256) {
+    throw new Error('visible body source revision does not reproduce the reviewed bytes');
+  }
+  if (
+    gitText(process.cwd(), [
+      'rev-parse',
+      `${verified.bodySourceRevision}:${verified.bodyPath}`,
+    ]) !== verified.bodyGitBlob
+  ) {
+    throw new Error('visible body Git blob does not match its source revision');
   }
   if (resolve(verified.producerRoot) !== resolve(receipt.sourceIdentity.effective.producerRepoRoot)) {
     throw new Error('effective producer root does not match reviewed receipt');
@@ -895,6 +937,27 @@ function validatePathCustody(args: CompleteCliArgs): void {
       throw new Error(`${label} path must not be a symbolic link`);
     }
   }
+  const receiptCanonicalPath = canonicalTargetPath(receiptPath);
+  const reportCanonicalPath = canonicalTargetPath(reportPath);
+  const imageCanonicalPath = canonicalTargetPath(imagePath);
+  if (reportCanonicalPath === imageCanonicalPath) {
+    throw new Error('report and image paths resolve to the same canonical target');
+  }
+  if (
+    receiptCanonicalPath === reportCanonicalPath ||
+    receiptCanonicalPath === imageCanonicalPath
+  ) {
+    throw new Error('receipt, report, and image paths resolve to the same canonical target');
+  }
+  if (sameExistingObject(reportPath, imagePath)) {
+    throw new Error('report and image paths identify the same filesystem object');
+  }
+  if (
+    sameExistingObject(receiptPath, reportPath) ||
+    sameExistingObject(receiptPath, imagePath)
+  ) {
+    throw new Error('receipt, report, and image paths identify the same filesystem object');
+  }
 }
 
 function writeFailureReport(
@@ -912,7 +975,13 @@ function writeFailureReport(
       typeof details.requested.receiptPath === 'string'
         ? details.requested.receiptPath
         : null;
-    if (requestedReceipt && resolve(reportPath) === resolve(requestedReceipt)) return;
+    if (
+      requestedReceipt &&
+      (canonicalTargetPath(reportPath) === canonicalTargetPath(requestedReceipt) ||
+        sameExistingObject(reportPath, requestedReceipt))
+    ) {
+      return;
+    }
     if (existsSync(reportPath) && lstatSync(reportPath).isSymbolicLink()) return;
     writeJson(reportPath, {
       ok: false,
@@ -923,6 +992,25 @@ function writeFailureReport(
   } catch {
     // A report-path failure cannot be reported through the same broken path.
   }
+}
+
+function canonicalTargetPath(path: string): string {
+  const suffix: string[] = [];
+  let cursor = resolve(path);
+  while (!existsSync(cursor)) {
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    suffix.unshift(basename(cursor));
+    cursor = parent;
+  }
+  return resolve(realpathSync(cursor), ...suffix);
+}
+
+function sameExistingObject(left: string, right: string): boolean {
+  if (!existsSync(left) || !existsSync(right)) return false;
+  const leftStat = statSync(left);
+  const rightStat = statSync(right);
+  return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
 }
 
 function verifyPpm(path: string, width: number, height: number): void {
