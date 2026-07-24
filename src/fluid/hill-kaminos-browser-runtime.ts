@@ -25,6 +25,11 @@ import {
   type HillFluidPackageAdapterFrame,
   type KaminosTerrainFluidFrame
 } from '../terrain/hill-of-hills-fluid-package-adapter.js';
+import {
+  PORTABLE_MACRO_SUPPORT_GEOMETRY_CAPABILITY,
+  createHillPortableMacroOpticalGeometryAdapterFrame,
+  type HillPortableMacroOpticalGeometryAdapterFrame
+} from '../terrain/hill-of-hills-portable-optical-geometry-adapter.js';
 import type { HillOfHillsTerrainBuffer } from '../terrain/hill-of-hills.js';
 
 export const HILL_KAMINOS_BROWSER_WITNESS_SCHEMA =
@@ -43,7 +48,35 @@ export interface HillKaminosBrowserRuntime {
   ): KaminosTerrainRemapReceipt;
   readonly feedback: KaminosFluidTerrainFeedbackFrame;
   readonly representation: KaminosFluidRepresentationFrame;
+  readonly portableOpticalGeometry: HillPortableMacroOpticalGeometryAdapterFrame;
   readonly witness: HillKaminosBrowserWitness;
+}
+
+export interface HillPortableMacroOpticalGeometryWitness {
+  schema: HillPortableMacroOpticalGeometryAdapterFrame['schema'];
+  frameId: string;
+  descriptorIdentity: string;
+  conversion: HillPortableMacroOpticalGeometryAdapterFrame['conversion'];
+  providerBinding: HillPortableMacroOpticalGeometryAdapterFrame['providerBinding'];
+  source: HillPortableMacroOpticalGeometryAdapterFrame['source'];
+  terrain: HillPortableMacroOpticalGeometryAdapterFrame['terrain'];
+  epochs: HillPortableMacroOpticalGeometryAdapterFrame['epochs'];
+  motion: HillPortableMacroOpticalGeometryAdapterFrame['motion'];
+  supportGeometry: HillPortableMacroOpticalGeometryAdapterFrame['supportGeometry'];
+  macroState: HillPortableMacroOpticalGeometryAdapterFrame['macroState'];
+  ownership: HillPortableMacroOpticalGeometryAdapterFrame['ownership'];
+  conservationReceiptIds: readonly string[];
+  lineageIds: readonly string[];
+  sourceHandles: Readonly<Record<string, {
+    handleId: string;
+    owner: string;
+    access: 'read_only';
+    lifetime: 'frame_scoped';
+    elementType: string;
+    length: number;
+    sampleCount: number;
+    componentsPerSample: number;
+  }>>;
 }
 
 export interface HillKaminosBrowserWitness {
@@ -105,6 +138,7 @@ export interface HillKaminosBrowserWitness {
   dynamicFrameDelta: number;
   stepCount: number;
   conservationReceiptIds: readonly string[];
+  portableOpticalGeometry: HillPortableMacroOpticalGeometryWitness;
   falseClosureRejections: readonly [];
 }
 
@@ -199,6 +233,12 @@ export async function createHillKaminosBrowserRuntime(
   let previousSampleChecksum: string | null = null;
   let remapReceipt: KaminosTerrainRemapReceipt | null = null;
   let remapCount = 0;
+  let portableOpticalGeometry = createPortableOpticalGeometryFrame(
+    adapterFrame,
+    terrainFrame,
+    representation,
+    remapReceipt
+  );
 
   const controller: HillKaminosBrowserRuntime = {
     advance(timestampMs: number): void {
@@ -219,6 +259,12 @@ export async function createHillKaminosBrowserRuntime(
         requestedRoute: loaded.requested.representationRoute,
         effectiveRoute: loaded.requested.representationRoute
       });
+      portableOpticalGeometry = createPortableOpticalGeometryFrame(
+        adapterFrame,
+        terrainFrame,
+        representation,
+        remapReceipt
+      );
       assertOutputEvidence(
         request,
         loaded.effective,
@@ -293,6 +339,12 @@ export async function createHillKaminosBrowserRuntime(
         requestedRoute: loaded.requested.representationRoute,
         effectiveRoute: loaded.requested.representationRoute
       });
+      portableOpticalGeometry = createPortableOpticalGeometryFrame(
+        adapterFrame,
+        terrainFrame,
+        representation,
+        remapReceipt
+      );
       assertOutputEvidence(
         request,
         loaded.effective,
@@ -318,6 +370,9 @@ export async function createHillKaminosBrowserRuntime(
     },
     get representation(): KaminosFluidRepresentationFrame {
       return representation;
+    },
+    get portableOpticalGeometry(): HillPortableMacroOpticalGeometryAdapterFrame {
+      return portableOpticalGeometry;
     },
     get witness(): HillKaminosBrowserWitness {
       const outwardWave = summarizeWave(
@@ -380,11 +435,90 @@ export async function createHillKaminosBrowserRuntime(
         dynamicFrameDelta: runtime.identity.fluidEpoch - receipt.fluidEpoch,
         stepCount,
         conservationReceiptIds: feedback.conservationReceiptIds,
+        portableOpticalGeometry: summarizePortableOpticalGeometry(portableOpticalGeometry),
         falseClosureRejections: []
       };
     }
   };
   return controller;
+}
+
+function createPortableOpticalGeometryFrame(
+  adapterFrame: HillFluidPackageAdapterFrame,
+  terrainFrame: KaminosTerrainFluidFrame,
+  representation: KaminosFluidRepresentationFrame,
+  remapReceipt: KaminosTerrainRemapReceipt | null
+): HillPortableMacroOpticalGeometryAdapterFrame {
+  return createHillPortableMacroOpticalGeometryAdapterFrame(
+    adapterFrame,
+    terrainFrame,
+    representation,
+    remapReceipt,
+    {
+      frameId: [
+        'hill-portable-optics',
+        adapterFrame.terrain.sampleChecksum,
+        representation.terrainEpoch,
+        representation.fluidEpoch
+      ].join(':'),
+      requestedCapability: PORTABLE_MACRO_SUPPORT_GEOMETRY_CAPABILITY
+    }
+  );
+}
+
+function summarizePortableOpticalGeometry(
+  frame: HillPortableMacroOpticalGeometryAdapterFrame
+): HillPortableMacroOpticalGeometryWitness {
+  const handles = {
+    bedHeight: frame.sourceHandles.bedHeight,
+    jacobian: frame.sourceHandles.jacobian,
+    gradient: frame.sourceHandles.gradient,
+    tangentU: frame.sourceHandles.tangentU,
+    tangentV: frame.sourceHandles.tangentV,
+    normal: frame.sourceHandles.normal,
+    supportVelocity: frame.sourceHandles.supportVelocity,
+    valid: frame.sourceHandles.valid,
+    mappedDepth: frame.sourceHandles.mappedDepth,
+    mappedMomentumU: frame.sourceHandles.mappedMomentumU,
+    mappedMomentumV: frame.sourceHandles.mappedMomentumV,
+    ...Object.fromEntries(
+      Object.entries(frame.sourceHandles.materialMasses).map(([name, handle]) => [
+        `materialMasses.${name}`,
+        handle
+      ])
+    )
+  };
+  return {
+    schema: frame.schema,
+    frameId: frame.frameId,
+    descriptorIdentity: frame.descriptorIdentity,
+    conversion: frame.conversion,
+    providerBinding: frame.providerBinding,
+    source: frame.source,
+    terrain: frame.terrain,
+    epochs: frame.epochs,
+    motion: frame.motion,
+    supportGeometry: frame.supportGeometry,
+    macroState: frame.macroState,
+    ownership: frame.ownership,
+    conservationReceiptIds: frame.conservationReceiptIds,
+    lineageIds: frame.lineageIds,
+    sourceHandles: Object.freeze(Object.fromEntries(
+      Object.entries(handles).map(([name, handle]) => [
+        name,
+        {
+          handleId: handle.handleId,
+          owner: handle.owner,
+          access: handle.access,
+          lifetime: handle.lifetime,
+          elementType: handle.elementType,
+          length: handle.length,
+          sampleCount: handle.sampleCount,
+          componentsPerSample: handle.componentsPerSample
+        }
+      ])
+    ))
+  };
 }
 
 function assertRuntime(
