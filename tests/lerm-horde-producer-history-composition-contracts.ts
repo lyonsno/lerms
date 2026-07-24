@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -137,5 +138,31 @@ assert.equal(failureReport.phase, 'failed');
 assert.equal(failureReport.failurePhase, 'input-validation');
 assert.equal(failureReport.partialStatus, 'failed-before-complete-receipt');
 assert.match(failureReport.error, /producer-repo-root/);
+
+const subprocessFailurePath = join(failureDir, 'subprocess-receipt.json');
+const witnessModulePath = new URL(
+  '../src/lerm-horde-producer-history-witness.js',
+  import.meta.url
+);
+const subprocessFailure = spawnSync(
+  process.execPath,
+  [
+    witnessModulePath.pathname,
+    '--out',
+    subprocessFailurePath,
+    '--lerms-repo-root',
+    process.cwd()
+  ],
+  { encoding: 'utf8' }
+);
+assert.equal(subprocessFailure.status, 1, 'the compiled CLI must run its failure path');
+assert.equal(
+  existsSync(subprocessFailurePath),
+  true,
+  'the compiled CLI must not exit without its requested report'
+);
+const subprocessFailureReport = JSON.parse(readFileSync(subprocessFailurePath, 'utf8'));
+assert.equal(subprocessFailureReport.ok, false);
+assert.equal(subprocessFailureReport.failurePhase, 'input-validation');
 
 console.log('lerm horde producer history composition contracts ok');

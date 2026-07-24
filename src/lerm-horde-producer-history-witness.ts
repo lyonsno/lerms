@@ -213,6 +213,9 @@ function writeJson(path: string, payload: unknown): void {
 
 const currentModulePath = fileURLToPath(import.meta.url);
 
-if (process.argv[1] === currentModulePath) {
+if (
+  process.argv[1] &&
+  realpathSync(process.argv[1]) === realpathSync(currentModulePath)
+) {
   process.exitCode = await runLermHordeProducerHistoryWitnessCli();
 }
