@@ -13,6 +13,15 @@ import {
   normalizeCaptureWorkerResult,
 } from '../src/hand/live-hand-capture-contract.js';
 import { LiveHandLatencyReceiptJoiner } from '../src/hand/live-hand-latency-receipt.js';
+import { planLiveHandSourceFrame } from '../src/hand/live-hand-source-scheduler.js';
+import {
+  LIVE_HAND_LANDMARKER_ERROR_SCHEMA,
+  LIVE_HAND_LANDMARKER_RESULT_SCHEMA,
+  LIVE_HAND_LANDMARKER_WORKER_ROUTE,
+  createFastLandmarkPayload,
+  normalizeLandmarkerWorkerError,
+  normalizeLandmarkerWorkerResult,
+} from '../src/hand/live-hand-landmarker-contract.js';
 import {
   LIVE_HAND_FLUID_FRAME_INTERVAL_MS,
   LIVE_HAND_FLUID_MAX_CATCH_UP_MS,
@@ -48,11 +57,15 @@ const faces = Array.from({ length: 1538 }, (_, index) => [index % 778, (index + 
 const health = {
   runtimeOwner: 'hand-state-runtime',
   sidecarRuntimeConfig: { burstMode: 'chunked', chunkSegments: 7, chunkYieldMs: 0.2 },
+  manoRegeneratorAvailable: true,
+  hybridGeometryMode: 'native_mano_regeneration',
 };
 const healthTruth = assertLiveRuntimeHealth(health);
 assert(healthTruth.burstMode === 'chunked', 'preserves chunked route identity');
 assert(healthTruth.chunkSegments === 7, 'preserves effective chunk segment count');
 assert(healthTruth.chunkYieldMs === 0.2, 'preserves effective chunk yield');
+assert(healthTruth.manoRegeneratorAvailable, 'preserves MANO regenerator availability');
+assert(healthTruth.hybridGeometryMode === 'native_mano_regeneration', 'preserves effective hybrid geometry identity');
 
 assertThrows(
   () => assertLiveRuntimeHealth({ ...health, runtimeOwner: 'perceptasia' }),
@@ -98,9 +111,9 @@ assert(receiptJoiner.snapshot().pendingFrameCount === 1, 'an unmatched live fram
 const stateFirstJoin = receiptJoiner.registerCapture('capture-state-first', {
   capturedAtMs: 1_000,
   captureAcquireMs: 1.5,
-  workerEncodeMs: 4.5,
-  clientEncodeMs: 6,
-  nativePostMs: 75,
+  captureRoute: LIVE_HAND_CAPTURE_WORKER_ROUTE,
+  captureWorkerMs: 4.5,
+  producerPostMs: 75,
 });
 assert(stateFirstJoin?.frame.route === LIVE_HAND_ROUTE, 'capture timing completes a state-first receipt');
 assert(stateFirstJoin?.viewerReceiveTimestampMs === 1_100, 'state-first receipt preserves viewer arrival time');
@@ -226,6 +239,104 @@ assert(
   shouldKeepHandPresentationPriority({ handStatePending: true, interpolationUnsettled: true }),
   'hand presentation priority survives until the received state has visibly converged',
 );
+
+const firstHybridCameraFrame = planLiveHandSourceFrame({
+  mode: 'hybrid_mano',
+  nowMs: 1_000,
+  lastAnchorCaptureAtMs: null,
+  anchorIntervalMs: 50,
+  fastPathAvailable: true,
+  fastPathInFlight: false,
+  anchorInFlight: false,
+});
+assert(firstHybridCameraFrame.submitFastPath && firstHybridCameraFrame.submitAnchor, 'the first hybrid frame feeds both paired routes');
+const interAnchorCameraFrame = planLiveHandSourceFrame({
+  mode: 'hybrid_mano',
+  nowMs: 1_016,
+  lastAnchorCaptureAtMs: 1_000,
+  anchorIntervalMs: 50,
+  fastPathAvailable: true,
+  fastPathInFlight: false,
+  anchorInFlight: false,
+});
+assert(interAnchorCameraFrame.submitFastPath, 'MediaPipe preserves camera cadence between WiLoR anchors');
+assert(!interAnchorCameraFrame.submitAnchor, 'WiLoR remains on its lower-cadence correction schedule');
+const blockedHybridAnchor = planLiveHandSourceFrame({
+  mode: 'hybrid_mano',
+  nowMs: 1_064,
+  lastAnchorCaptureAtMs: 1_000,
+  anchorIntervalMs: 50,
+  fastPathAvailable: true,
+  fastPathInFlight: true,
+  anchorInFlight: false,
+});
+assert(
+  !blockedHybridAnchor.submitFastPath && !blockedHybridAnchor.submitAnchor,
+  'a hybrid anchor waits for a frame admitted to MediaPipe so paired capture identity cannot lie',
+);
+const pureAnchor = planLiveHandSourceFrame({
+  mode: 'pure_wilor',
+  nowMs: 1_064,
+  lastAnchorCaptureAtMs: 1_000,
+  anchorIntervalMs: 50,
+  fastPathAvailable: false,
+  fastPathInFlight: false,
+  anchorInFlight: false,
+});
+assert(!pureAnchor.submitFastPath && pureAnchor.submitAnchor, 'pure WiLoR remains independent of browser-landmarker availability');
+
+const imageLandmarks = Array.from({ length: 21 }, (_, index) => ({ x: index / 20, y: 1 - index / 20, z: -index / 100 }));
+const worldLandmarks = imageLandmarks.map(point => ({ x: point.x - 0.5, y: 0.5 - point.y, z: point.z }));
+assert(
+  String(LIVE_HAND_LANDMARKER_WORKER_ROUTE) === 'browser-mediapipe-hand-landmarker-worker-mirrored-v1',
+  'the worker route declares the shared mirrored camera coordinate contract',
+);
+const landmarkerResult = normalizeLandmarkerWorkerResult({
+  schema: LIVE_HAND_LANDMARKER_RESULT_SCHEMA,
+  routeIdentity: 'browser-mediapipe-hand-landmarker-worker-mirrored-v1',
+  captureId: 'run-8-1000-1',
+  captureTimestampMs: 1_000,
+  publishedAtMs: 1_011,
+  handedness: 'Right',
+  confidence: 0.93,
+  imageLandmarks,
+  worldLandmarks,
+  workerLandmarkerMs: 8.5,
+  workerProcessingMs: 10.25,
+  mirroredInput: true,
+}, 'run-8-1000-1');
+const fastPayload = createFastLandmarkPayload(landmarkerResult);
+assert(fastPayload.schema === 'hand-state.browser-fast-landmarks.v1', 'emits the runtime v1 fast-landmark schema');
+assert(
+  fastPayload.captureId === 'run-8-1000-1' && fastPayload.frameId === 'fast:run-8-1000-1',
+  'preserves shared capture identity while keeping fast and anchor frame ids independently attributable',
+);
+assert(
+  (fastPayload.timing as Record<string, unknown>).browserLandmarkerMs === 8.5
+    && (fastPayload.timing as Record<string, unknown>).browserWorkerProcessingMs === 10.25,
+  'preserves worker inference and total processing timing',
+);
+assertThrows(
+  () => normalizeLandmarkerWorkerResult({ ...landmarkerResult, captureId: 'wrong-capture' }, 'run-8-1000-1'),
+  'does not match',
+);
+
+const landmarkerFailure = normalizeLandmarkerWorkerError({
+  schema: LIVE_HAND_LANDMARKER_ERROR_SCHEMA,
+  routeIdentity: 'browser-mediapipe-hand-landmarker-worker-mirrored-v1',
+  captureId: null,
+  failurePhase: 'initialize_model',
+  error: 'model fetch failed',
+  primaryOutputWritten: false,
+  lastTrustworthyEvidence: {
+    tasksVisionModuleLoaded: true,
+    wasmLoaded: true,
+    modelLoaded: false,
+  },
+});
+assert(landmarkerFailure.failurePhase === 'initialize_model', 'pre-output failure names its exact phase');
+assert(!landmarkerFailure.primaryOutputWritten, 'pre-output failure cannot imply a landmark result');
+assert(landmarkerFailure.lastTrustworthyEvidence.modelLoaded === false, 'failure preserves the last trustworthy initialization evidence');
 assert(
   !shouldKeepHandPresentationPriority({ handStatePending: true, interpolationUnsettled: false }),
   'hand presentation priority clears once the received state has visibly converged',
@@ -273,23 +384,62 @@ const hybrid = normalizeLiveManoFrame({
       effectiveRoute: LIVE_HAND_HYBRID_ROUTE,
       model: 'WiLoR-MLX+HandDetector-MLX anchor + browser MediaPipe landmarks',
       deviceRoute: 'mlx+browser',
+      rawSchema: 'hand-state.browser-fast-landmarks.v1',
     },
+    mano: { ...state.frame.mano, diagnostic: 'native_mano_regeneration' },
     diagnostics: {
       ...state.frame.diagnostics,
-      fusionMode: 'wilor_anchor_browser_fast_delta',
+      fusionMode: 'wilor_anchor_mediapipe_mano_pose',
+      geometryMode: 'native_mano_regeneration',
       anchorSource: LIVE_HAND_ROUTE,
+      anchorCaptureId: 'run-8-1000-1',
       fastPathSource: 'browser_mediapipe_hand_landmarker_live',
       fallbackState: null,
       anchorAgeMs: 84,
       fastPathAgeMs: 12,
-      residualMean: 0.024,
+      fitResidualMean: 0.024,
+      fitResidualMax: 0.041,
+      maxJointCorrectionRad: 0.18,
+      maxAnchorJointDeviationRad: 0.42,
+    },
+    timing: {
+      ...state.frame.timing,
+      fastPathLatencyMs: 8.5,
     },
   },
 });
 assert(hybrid.effectiveRoute === LIVE_HAND_HYBRID_ROUTE, 'accepts the explicit WiLoR-anchor/browser-fast hybrid route');
-assert(hybrid.fusionMode === 'wilor_anchor_browser_fast_delta', 'preserves the effective fusion mode');
+assert(
+  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v1',
+  'the consumer accepts only the articulated MANO route',
+);
+assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_pose', 'preserves the parameter-space fusion mode');
+assert(hybrid.geometryMode === 'native_mano_regeneration', 'requires native MANO surface regeneration');
+assert(hybrid.anchorCaptureId === 'run-8-1000-1', 'preserves the exact paired WiLoR/MediaPipe capture identity');
+assert(hybrid.fitResidualMean === 0.024, 'preserves the articulated fit residual');
+assert(hybrid.fastPathLatencyMs === 8.5, 'preserves MediaPipe inference timing separately from WiLoR anchor timing');
+assert(hybrid.maxAnchorJointDeviationRad === 0.42, 'preserves absolute anchor-relative joint authority');
 assert(hybrid.anchorSource === LIVE_HAND_ROUTE, 'preserves the WiLoR MANO anchor source');
 assert(hybrid.fastPathSource === 'browser_mediapipe_hand_landmarker_live', 'preserves the browser fast-path source');
+
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...state,
+    frame: {
+      ...state.frame,
+      source: {
+        ...state.frame.source,
+        effectiveRoute: 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-v0',
+      },
+      diagnostics: {
+        ...state.frame.diagnostics,
+        fusionMode: 'wilor_anchor_browser_fast_delta',
+        fallbackState: null,
+      },
+    },
+  }),
+  'effective route',
+);
 
 assertThrows(
   () => normalizeLiveManoFrame({

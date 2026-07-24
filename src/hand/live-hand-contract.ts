@@ -1,5 +1,9 @@
 export const LIVE_HAND_ROUTE = 'native_wilor_mini_mlx_detector_sidecar_live' as const;
-export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-v0' as const;
+export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v1' as const;
+export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_live' as const;
+export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_pose' as const;
+export const LIVE_HAND_HYBRID_GEOMETRY_MODE = 'native_mano_regeneration' as const;
+export const LIVE_HAND_FAST_LANDMARK_SCHEMA = 'hand-state.browser-fast-landmarks.v1' as const;
 export const LIVE_HAND_RUNTIME_OWNER = 'hand-state-runtime' as const;
 export const MANO_VERTEX_COUNT = 778 as const;
 export const MANO_FACE_COUNT = 1538 as const;
@@ -10,6 +14,11 @@ export interface RuntimeRouteTruth {
   burstMode: 'monolithic' | 'chunked';
   chunkSegments: number;
   chunkYieldMs: number;
+}
+
+export interface RuntimeHealthTruth extends RuntimeRouteTruth {
+  manoRegeneratorAvailable: boolean;
+  hybridGeometryMode: string;
 }
 
 export interface NormalizedManoFrame extends RuntimeRouteTruth {
@@ -33,8 +42,17 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   manoTransform: ManoDisplayTransform;
   orientationContract: typeof MANO_DISPLAY_ORIENTATION;
   fusionMode: string | null;
+  geometryMode: string | null;
   anchorSource: string | null;
+  anchorCaptureId: string | null;
+  anchorAgeMs: number | null;
   fastPathSource: string | null;
+  fastPathAgeMs: number | null;
+  fastPathLatencyMs: number | null;
+  fitResidualMean: number | null;
+  fitResidualMax: number | null;
+  maxJointCorrectionRad: number | null;
+  maxAnchorJointDeviationRad: number | null;
 }
 
 export interface ManoDisplayTransform {
@@ -129,7 +147,7 @@ function vec3(value: unknown, label: string): readonly [number, number, number] 
   throw new Error(`${label} must be a vec3`);
 }
 
-export function assertLiveRuntimeHealth(value: unknown): RuntimeRouteTruth {
+export function assertLiveRuntimeHealth(value: unknown): RuntimeHealthTruth {
   const health = record(value, 'runtime health');
   if (health.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER) {
     throw new Error(`runtime owner must be ${LIVE_HAND_RUNTIME_OWNER}`);
@@ -141,7 +159,14 @@ export function assertLiveRuntimeHealth(value: unknown): RuntimeRouteTruth {
   if (burstMode !== 'monolithic' && burstMode !== 'chunked') throw new Error(`unsupported burstMode: ${burstMode}`);
   if (burstMode === 'chunked' && chunkSegments < 2) throw new Error('chunked runtime must expose at least 2 segments');
   if (burstMode === 'monolithic' && chunkSegments !== 0) throw new Error('monolithic runtime must expose 0 segments');
-  return { runtimeOwner: LIVE_HAND_RUNTIME_OWNER, burstMode, chunkSegments, chunkYieldMs };
+  return {
+    runtimeOwner: LIVE_HAND_RUNTIME_OWNER,
+    burstMode,
+    chunkSegments,
+    chunkYieldMs,
+    manoRegeneratorAvailable: health.manoRegeneratorAvailable === true,
+    hybridGeometryMode: text(health.hybridGeometryMode, 'hybrid geometry mode'),
+  };
 }
 
 export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
@@ -168,16 +193,39 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   const burstMode = text(diagnostics.burstMode, 'burstMode');
   if (burstMode !== 'monolithic' && burstMode !== 'chunked') throw new Error(`unsupported burstMode: ${burstMode}`);
   const fusionMode = optionalText(diagnostics.fusionMode);
+  const geometryMode = optionalText(diagnostics.geometryMode);
   const anchorSource = optionalText(diagnostics.anchorSource);
+  const anchorCaptureId = optionalText(diagnostics.anchorCaptureId);
   const fastPathSource = optionalText(diagnostics.fastPathSource);
+  let anchorAgeMs: number | null = null;
+  let fastPathAgeMs: number | null = null;
+  let fastPathLatencyMs: number | null = null;
+  let fitResidualMean: number | null = null;
+  let fitResidualMax: number | null = null;
+  let maxJointCorrectionRad: number | null = null;
+  let maxAnchorJointDeviationRad: number | null = null;
   if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
-    if (fusionMode !== 'wilor_anchor_browser_fast_delta') throw new Error('hybrid frame must expose the active fusion mode');
+    if (source.rawSchema !== LIVE_HAND_FAST_LANDMARK_SCHEMA) {
+      throw new Error(`hybrid frame must expose ${LIVE_HAND_FAST_LANDMARK_SCHEMA}`);
+    }
+    if (fusionMode !== LIVE_HAND_HYBRID_FUSION_MODE) throw new Error('hybrid frame must expose the MANO pose fusion mode');
+    if (geometryMode !== LIVE_HAND_HYBRID_GEOMETRY_MODE || mano.diagnostic !== LIVE_HAND_HYBRID_GEOMETRY_MODE) {
+      throw new Error('hybrid frame must expose native MANO regeneration');
+    }
     if (anchorSource !== LIVE_HAND_ROUTE) throw new Error(`hybrid frame must name ${LIVE_HAND_ROUTE} as its anchor source`);
-    if (!fastPathSource) throw new Error('hybrid frame must name its fast-path source');
+    if (!anchorCaptureId) throw new Error('hybrid frame must expose its paired anchor capture id');
+    if (fastPathSource !== LIVE_HAND_FAST_PATH_SOURCE) throw new Error('hybrid frame must name the browser MediaPipe fast-path source');
     if (diagnostics.fallbackState !== null) throw new Error('hybrid frame must not carry an active fallback state');
-    finiteNonNegative(diagnostics.anchorAgeMs, 'anchorAgeMs');
-    finiteNonNegative(diagnostics.fastPathAgeMs, 'fastPathAgeMs');
-    finiteNonNegative(diagnostics.residualMean, 'residualMean');
+    anchorAgeMs = finiteNonNegative(diagnostics.anchorAgeMs, 'anchorAgeMs');
+    fastPathAgeMs = finiteNonNegative(diagnostics.fastPathAgeMs, 'fastPathAgeMs');
+    fastPathLatencyMs = finiteNonNegative(timing.fastPathLatencyMs, 'fastPathLatencyMs');
+    fitResidualMean = finiteNonNegative(diagnostics.fitResidualMean, 'fitResidualMean');
+    fitResidualMax = finiteNonNegative(diagnostics.fitResidualMax, 'fitResidualMax');
+    maxJointCorrectionRad = finiteNonNegative(diagnostics.maxJointCorrectionRad, 'maxJointCorrectionRad');
+    maxAnchorJointDeviationRad = finiteNonNegative(
+      diagnostics.maxAnchorJointDeviationRad,
+      'maxAnchorJointDeviationRad',
+    );
   }
   return {
     runtimeOwner: LIVE_HAND_RUNTIME_OWNER,
@@ -199,8 +247,17 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     captureToSidecarPublishMs: finiteNonNegative(timing.cameraFrameAgeMs, 'cameraFrameAgeMs'),
     ...surface,
     fusionMode,
+    geometryMode,
     anchorSource,
+    anchorCaptureId,
+    anchorAgeMs,
     fastPathSource,
+    fastPathAgeMs,
+    fastPathLatencyMs,
+    fitResidualMean,
+    fitResidualMax,
+    maxJointCorrectionRad,
+    maxAnchorJointDeviationRad,
   };
 }
 

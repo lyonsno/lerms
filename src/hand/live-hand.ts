@@ -6,6 +6,7 @@ import {
   type FingerFluidSolver,
 } from 'kaminos/finger-fluid-webgpu-core.js';
 import {
+  LIVE_HAND_HYBRID_ROUTE,
   LIVE_HAND_ROUTE,
   MANO_DISPLAY_ORIENTATION,
   assertLiveRuntimeHealth,
@@ -15,7 +16,7 @@ import {
   type LiveHandLatencySample,
   type NormalizedManoFrame,
   type NormalizedManoSurface,
-  type RuntimeRouteTruth,
+  type RuntimeHealthTruth,
 } from './live-hand-contract.js';
 import {
   LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
@@ -24,6 +25,21 @@ import {
   normalizeCaptureWorkerResult,
   type LiveHandCaptureWorkerResult,
 } from './live-hand-capture-contract.js';
+import {
+  LIVE_HAND_LANDMARKER_DROP_SCHEMA,
+  LIVE_HAND_LANDMARKER_ERROR_SCHEMA,
+  LIVE_HAND_LANDMARKER_READY_SCHEMA,
+  LIVE_HAND_LANDMARKER_RESULT_SCHEMA,
+  LIVE_HAND_LANDMARKER_WORKER_ROUTE,
+  createFastLandmarkPayload,
+  normalizeLandmarkerWorkerError,
+  normalizeLandmarkerWorkerResult,
+  type LiveHandLandmarkerWorkerResult,
+} from './live-hand-landmarker-contract.js';
+import {
+  planLiveHandSourceFrame,
+  type LiveHandSourceMode,
+} from './live-hand-source-scheduler.js';
 import {
   LiveHandLatencyReceiptJoiner,
   type LiveHandLatencyReceipt,
@@ -82,6 +98,7 @@ const canvas = requiredElement<HTMLCanvasElement>('hand-canvas');
 const fluidCanvas = requiredElement<HTMLCanvasElement>('fluid-canvas');
 const video = requiredElement<HTMLVideoElement>('camera');
 const toggle = requiredElement<HTMLButtonElement>('hand-toggle');
+const routeModeControl = requiredElement<HTMLSelectElement>('hand-route-mode');
 const status = requiredElement<HTMLDivElement>('status');
 const routeTruth = requiredElement<HTMLDivElement>('route-truth');
 const juiceBudgetControl = requiredElement<HTMLInputElement>('fluid-juice-budget');
@@ -140,13 +157,15 @@ let stream: MediaStream | null = null;
 let running = false;
 let captureRunGeneration = 0;
 let captureInFlightGeneration: number | null = null;
-let captureTimer: number | null = null;
+let cameraFrameCallbackId: number | null = null;
+let cameraFrameFallbackTimer: number | null = null;
 let capturePostAbortController: AbortController | null = null;
 let stateAbortController: AbortController | null = null;
 let lastStateSequence = 0;
 let frameSequence = 0;
+let lastAnchorCaptureAtMs: number | null = null;
 let lastLiveAt = 0;
-let runtimeRoute: RuntimeRouteTruth | null = null;
+let runtimeRoute: RuntimeHealthTruth | null = null;
 let targetPositions: Float32Array | null = null;
 let currentPositions: Float32Array | null = null;
 let topologySignature = '';
@@ -170,7 +189,7 @@ let fluidGpuBusy = false;
 let fluidGpuCompletionGeneration = 0;
 let fluidGpuCompletionError: string | null = null;
 let latestLiveInletReceipt: ReturnType<FingerFluidSolver['setLiveInletPacket']> | null = null;
-let liveJuiceBudget: LiveFingerFluidJuiceBudget = resolveLiveFingerFluidJuiceBudget(50);
+let liveJuiceBudget: LiveFingerFluidJuiceBudget = resolveLiveFingerFluidJuiceBudget(80);
 let juiceBudgetAuthority: 'macro_control' | 'custom_advanced_controls' | 'route_query' | 'assay_explicit_profile' = 'macro_control';
 let liveFluidEconomics: LiveFingerFluidEconomics = normalizeLiveFingerFluidEconomics(liveJuiceBudget.economics);
 let lastAnimationFrameAt = 0;
@@ -178,6 +197,19 @@ let fluidSimulationClockAt = 0;
 let lastFluidWallSubmitAt = 0;
 let captureWorker: Worker | null = null;
 let captureWorkerError: string | null = null;
+let landmarkerWorker: Worker | null = null;
+let landmarkerWorkerReady = false;
+let landmarkerWorkerError: string | null = null;
+let landmarkerInitialization: Promise<void> | null = null;
+let rejectLandmarkerInitialization: ((error: Error) => void) | null = null;
+let landmarkerInFlightCaptureId: string | null = null;
+let landmarkerFramesSubmitted = 0;
+let landmarkerFramesDropped = 0;
+let landmarkerFramesSuppressed = 0;
+let latestLandmarkerFailure: Record<string, unknown> | null = null;
+let latestFastIngestReceipt: Record<string, unknown> | null = null;
+let sourceMode: LiveHandSourceMode = params.get('hand_route') === 'hybrid_mano' ? 'hybrid_mano' : 'pure_wilor';
+routeModeControl.value = sourceMode;
 const animationFrameIntervalsMs: number[] = [];
 const fluidSubmitIntervalsMs: number[] = [];
 const combinedCpuSubmitMs: number[] = [];
@@ -193,13 +225,19 @@ const fluidFrameDecisionCounts: Record<LiveHandFrameWorkReason, number> = {
 };
 const captureAcquireMs: number[] = [];
 const captureWorkerEncodeMs: number[] = [];
+const landmarkerWorkerMs: number[] = [];
+const fastPathPostMs: number[] = [];
+const pendingFastCaptureMetrics = new Map<string, {
+  capturedAtMs: number;
+  captureAcquireMs: number;
+}>();
 const pendingCaptureWorkerResults = new Map<string, {
   resolve: (result: LiveHandCaptureWorkerResult) => void;
   reject: (error: Error) => void;
   timeoutId: number;
 }>();
 interface RuntimeLatencySample extends LiveHandLatencySample {
-  schema: 'hand-state.viewer-latency-sample.v0';
+  schema: 'hand-state.viewer-latency-sample.v1';
   benchmarkSessionId: string;
   requestedRoute: string;
   model: string;
@@ -208,17 +246,30 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   captureTimestampMs: number;
   viewerReceiveTimestampMs: number;
   captureAcquireMs: number;
-  workerEncodeMs: number;
-  captureRoute: typeof LIVE_HAND_CAPTURE_WORKER_ROUTE;
-  clientEncodeMs: number;
-  nativePostMs: number;
+  captureRoute: string;
+  captureWorkerMs: number;
+  producerPostMs: number;
   captureToSidecarPublishMs: number;
   publishToViewerReceiveMs: number;
   captureToViewerReceiveMs: number;
+  requestedSourceMode: LiveHandSourceMode;
+  fusionMode: string | null;
+  geometryMode: string | null;
+  anchorCaptureId: string | null;
+  anchorAgeMs: number | null;
+  fastPathAgeMs: number | null;
+  fastPathLatencyMs: number | null;
+  fitResidualMean: number | null;
+  fitResidualMax: number | null;
+  maxJointCorrectionRad: number | null;
+  maxAnchorJointDeviationRad: number | null;
+  fallbackState: null;
   viewerReceiveToWebglRenderReturnMs?: number;
   handRenderCpuMs?: number;
   interactionFrameIntervalMs?: number;
   interactionFrameFluidDecision?: LiveHandFrameWorkReason;
+  fluidGpuBusyAtRender?: boolean;
+  fluidGpuQueueDrainLatestMs?: number | null;
   renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented';
 }
 
@@ -321,6 +372,7 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
     return;
   }
   const route = frame?.effectiveRoute || 'awaiting live effective route';
+  const requested = sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE;
   const topology = frame ? `${frame.vertexCount}v / ${frame.faceCount}f` : 'awaiting MANO topology';
   const fluidState = fluidSolver?.available ? fluidSolver.getDebugState() : null;
   const effectiveParticleCount = typeof fluidState?.baseParticleCount === 'number'
@@ -337,7 +389,10 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
   const fluid = fluidSolver?.available
     ? ` | juice ${juiceBudgetAuthority === 'macro_control' ? `${liveJuiceBudget.effectiveBudget.toFixed(0)} ${liveJuiceBudget.zone}` : 'custom'} | fluid ${effectiveParticleCount ?? 'unverified'}p effective / ${liveFluidEconomics.requestedParticleCount}p requested | release req ${liveFluidEconomics.sourceFluxParticlesPerSecond.toFixed(0)} / derived ${effectiveReleaseRate?.toFixed(0) ?? 'unverified'}pps | active ${activeParticleCount ?? liveInlets?.initialActiveParticleCount ?? 'diag-pending'} / dormant ${dormantParticleCount ?? liveInlets?.initialDormantParticleCount ?? 'diag-pending'} | residence 1.65s @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
     : fluidError ? ' | fluid error' : ' | fluid pending';
-  routeTruth.textContent = `${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fluid}`;
+  const fast = sourceMode === 'hybrid_mano'
+    ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} busy ${landmarkerFramesSuppressed}`
+    : '';
+  routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fast}${fluid}`;
 }
 
 async function runtimeFetch(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
@@ -512,6 +567,9 @@ function resetBenchmark(): void {
   unflushedLatencySamples.length = 0;
   captureAcquireMs.length = 0;
   captureWorkerEncodeMs.length = 0;
+  landmarkerWorkerMs.length = 0;
+  fastPathPostMs.length = 0;
+  pendingFastCaptureMetrics.clear();
   if (latencyFlushTimer !== null) window.clearTimeout(latencyFlushTimer);
   latencyFlushTimer = null;
 }
@@ -599,7 +657,7 @@ async function flushLatencySamples(): Promise<void> {
     await runtimeFetch('/viewer-latency-samples', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schema: 'hand-state.viewer-latency-batch.v0', samples: batch }),
+      body: JSON.stringify({ schema: 'hand-state.viewer-latency-batch.v1', samples: batch }),
     });
   } catch (error) {
     unflushedLatencySamples.unshift(...batch);
@@ -610,6 +668,180 @@ async function flushLatencySamples(): Promise<void> {
 
 function scheduleLatencyFlush(): void {
   if (latencyFlushTimer === null) latencyFlushTimer = window.setTimeout(() => void flushLatencySamples(), 1000);
+}
+
+function disposeLandmarkerWorker(): void {
+  landmarkerWorker?.terminate();
+  landmarkerWorker = null;
+  landmarkerWorkerReady = false;
+  landmarkerInitialization = null;
+  rejectLandmarkerInitialization = null;
+  landmarkerInFlightCaptureId = null;
+  pendingFastCaptureMetrics.clear();
+}
+
+function failLandmarkerWorker(worker: Worker, error: Error, report: Record<string, unknown> | null = null): void {
+  if (landmarkerWorker !== worker) return;
+  landmarkerWorkerError = error.message;
+  latestLandmarkerFailure = report;
+  rejectLandmarkerInitialization?.(error);
+  disposeLandmarkerWorker();
+  deactivateFluidInlets('browser_landmarker_failed');
+  setStatus(error.message, 'error');
+}
+
+async function handleLandmarkerResult(worker: Worker, value: unknown): Promise<void> {
+  const expectedCaptureId = landmarkerInFlightCaptureId;
+  if (!expectedCaptureId) {
+    failLandmarkerWorker(worker, new Error(`${LIVE_HAND_LANDMARKER_WORKER_ROUTE} returned an unrequested result`));
+    return;
+  }
+  try {
+    const result = normalizeLandmarkerWorkerResult(value, expectedCaptureId);
+    const payload = createFastLandmarkPayload(result);
+    const postStartedAt = performance.now();
+    const receipt = await runtimeFetch('/fast-landmarks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const postDurationMs = performance.now() - postStartedAt;
+    latestFastIngestReceipt = receipt;
+    landmarkerWorkerMs.push(result.workerLandmarkerMs);
+    fastPathPostMs.push(postDurationMs);
+    const captureMetrics = pendingFastCaptureMetrics.get(result.captureId);
+    if (!captureMetrics) throw new Error(`missing fast capture metrics for ${result.captureId}`);
+    const joinedReceipt = latencyReceiptJoiner.registerCapture(String(payload.frameId), {
+      capturedAtMs: captureMetrics.capturedAtMs,
+      captureAcquireMs: captureMetrics.captureAcquireMs,
+      captureRoute: LIVE_HAND_LANDMARKER_WORKER_ROUTE,
+      captureWorkerMs: result.workerProcessingMs,
+      producerPostMs: postDurationMs,
+    });
+    if (joinedReceipt) armLatencySample(joinedReceipt);
+    latencyReceiptJoiner.prune(Date.now(), 10_000);
+  } catch (error) {
+    failLandmarkerWorker(
+      worker,
+      error instanceof Error ? error : new Error(String(error)),
+      value && typeof value === 'object' ? value as Record<string, unknown> : null,
+    );
+    return;
+  } finally {
+    pendingFastCaptureMetrics.delete(expectedCaptureId);
+    if (landmarkerInFlightCaptureId === expectedCaptureId) landmarkerInFlightCaptureId = null;
+  }
+  setRouteTruth();
+}
+
+function ensureLandmarkerWorker(): Promise<void> {
+  if (landmarkerWorkerReady && landmarkerWorker) return Promise.resolve();
+  if (landmarkerInitialization) return landmarkerInitialization;
+  if (typeof VideoFrame !== 'function' || typeof Worker !== 'function' || typeof OffscreenCanvas !== 'function') {
+    return Promise.reject(new Error(`${LIVE_HAND_LANDMARKER_WORKER_ROUTE} is unavailable in this browser`));
+  }
+  const worker = new Worker(new URL('./live-hand-landmarker.worker.ts', import.meta.url), { type: 'module' });
+  landmarkerWorker = worker;
+  landmarkerInitialization = new Promise<void>((resolve, reject) => {
+    rejectLandmarkerInitialization = reject;
+    worker.addEventListener('message', event => {
+      const value = event.data as Record<string, unknown>;
+      if (value.schema === LIVE_HAND_LANDMARKER_READY_SCHEMA) {
+        if (value.routeIdentity !== LIVE_HAND_LANDMARKER_WORKER_ROUTE || value.mirroredInput !== true) {
+          failLandmarkerWorker(worker, new Error('landmarker worker initialization route is invalid'), value);
+          return;
+        }
+        landmarkerWorkerReady = true;
+        rejectLandmarkerInitialization = null;
+        resolve();
+        setRouteTruth();
+        return;
+      }
+      if (value.schema === LIVE_HAND_LANDMARKER_ERROR_SCHEMA) {
+        let normalized;
+        try {
+          normalized = normalizeLandmarkerWorkerError(value);
+        } catch (error) {
+          failLandmarkerWorker(worker, error instanceof Error ? error : new Error(String(error)), value);
+          return;
+        }
+        failLandmarkerWorker(
+          worker,
+          new Error(`${normalized.failurePhase}: ${normalized.error}`),
+          normalized as unknown as Record<string, unknown>,
+        );
+        return;
+      }
+      if (value.schema === LIVE_HAND_LANDMARKER_DROP_SCHEMA) {
+        if (
+          value.routeIdentity !== LIVE_HAND_LANDMARKER_WORKER_ROUTE
+          || value.captureId !== landmarkerInFlightCaptureId
+          || value.primaryOutputWritten !== false
+        ) {
+          failLandmarkerWorker(worker, new Error('landmarker worker drop receipt is invalid'), value);
+          return;
+        }
+        const captureId = String(value.captureId);
+        pendingFastCaptureMetrics.delete(captureId);
+        landmarkerInFlightCaptureId = null;
+        landmarkerFramesDropped += 1;
+        latestLandmarkerFailure = value;
+        deactivateFluidInlets('browser_fast_path_no_complete_hand');
+        setStatus('hybrid fallback | browser fast path found no complete hand');
+        setRouteTruth();
+        return;
+      }
+      if (value.schema === LIVE_HAND_LANDMARKER_RESULT_SCHEMA) {
+        void handleLandmarkerResult(worker, value);
+        return;
+      }
+      failLandmarkerWorker(worker, new Error(`${LIVE_HAND_LANDMARKER_WORKER_ROUTE} returned an unknown message`), value);
+    });
+    worker.addEventListener('error', event => {
+      failLandmarkerWorker(worker, new Error(event.message || 'landmarker worker crashed'));
+    });
+    worker.addEventListener('messageerror', () => {
+      failLandmarkerWorker(worker, new Error(`${LIVE_HAND_LANDMARKER_WORKER_ROUTE} returned an unreadable message`));
+    });
+    worker.postMessage({ type: 'init' });
+  });
+  return landmarkerInitialization;
+}
+
+function postLandmarkerFrame(
+  captureId: string,
+  captureTimestampMs: number,
+  frame: VideoFrame,
+  width: number,
+  height: number,
+  captureAcquireMsValue: number,
+): void {
+  const worker = landmarkerWorker;
+  if (!worker || !landmarkerWorkerReady || landmarkerInFlightCaptureId !== null) {
+    frame.close();
+    throw new Error(`${LIVE_HAND_LANDMARKER_WORKER_ROUTE} is not available for ${captureId}`);
+  }
+  landmarkerInFlightCaptureId = captureId;
+  pendingFastCaptureMetrics.set(captureId, {
+    capturedAtMs: captureTimestampMs,
+    captureAcquireMs: captureAcquireMsValue,
+  });
+  landmarkerFramesSubmitted += 1;
+  try {
+    worker.postMessage({
+      type: 'detect-frame',
+      captureId,
+      captureTimestampMs,
+      width,
+      height,
+      frame,
+    }, [frame]);
+  } catch (error) {
+    pendingFastCaptureMetrics.delete(captureId);
+    landmarkerInFlightCaptureId = null;
+    frame.close();
+    failLandmarkerWorker(worker, error instanceof Error ? error : new Error(String(error)));
+  }
 }
 
 function rejectCaptureWorkerResults(error: Error): void {
@@ -697,27 +929,28 @@ function encodeCameraFrame(
   });
 }
 
-async function captureFrame(runGeneration: number): Promise<void> {
+async function postAnchorFrame(
+  runGeneration: number,
+  captureId: string,
+  capturedAtMs: number,
+  frame: VideoFrame,
+  width: number,
+  height: number,
+  acquisitionMs: number,
+): Promise<void> {
   if (
     !isCaptureRunCurrent(runGeneration, captureRunGeneration, running)
     || captureWorkerError
     || captureInFlightGeneration !== null
-    || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
-  ) return;
+  ) {
+    frame.close();
+    return;
+  }
   captureInFlightGeneration = runGeneration;
   try {
-    const sourceWidth = Math.max(video.videoWidth || 640, 1);
-    const width = Math.min(sourceWidth, 640);
-    const height = Math.round(width * Math.max(video.videoHeight || 480, 1) / sourceWidth);
-    const capturedAtMs = Date.now();
-    const captureId = `run-${runGeneration}-${capturedAtMs}-${frameSequence += 1}`;
     const clientEncodeStartedAt = performance.now();
-    const captureAcquireStartedAt = performance.now();
-    const frame = new VideoFrame(video, { timestamp: capturedAtMs * 1000 });
-    const acquisitionMs = performance.now() - captureAcquireStartedAt;
     const encoded = await encodeCameraFrame(captureId, frame, width, height);
     if (!isCaptureRunCurrent(runGeneration, captureRunGeneration, running)) return;
-    const clientEncodeMs = performance.now() - clientEncodeStartedAt;
     captureAcquireMs.push(acquisitionMs);
     captureWorkerEncodeMs.push(encoded.workerEncodeMs);
     const postStartedAt = performance.now();
@@ -736,14 +969,16 @@ async function captureFrame(runGeneration: number): Promise<void> {
       body: encoded.blob,
     });
     if (!isCaptureRunCurrent(runGeneration, captureRunGeneration, running)) return;
-    const joinedReceipt = latencyReceiptJoiner.registerCapture(captureId, {
-      capturedAtMs,
-      captureAcquireMs: acquisitionMs,
-      workerEncodeMs: encoded.workerEncodeMs,
-      clientEncodeMs,
-      nativePostMs: performance.now() - postStartedAt,
-    });
-    if (joinedReceipt) armLatencySample(joinedReceipt);
+    if (sourceMode === 'pure_wilor') {
+      const joinedReceipt = latencyReceiptJoiner.registerCapture(captureId, {
+        capturedAtMs,
+        captureAcquireMs: acquisitionMs,
+        captureRoute: LIVE_HAND_CAPTURE_WORKER_ROUTE,
+        captureWorkerMs: performance.now() - clientEncodeStartedAt,
+        producerPostMs: performance.now() - postStartedAt,
+      });
+      if (joinedReceipt) armLatencySample(joinedReceipt);
+    }
     latencyReceiptJoiner.prune(capturedAtMs, 10_000);
   } catch (error) {
     if (
@@ -756,12 +991,79 @@ async function captureFrame(runGeneration: number): Promise<void> {
   }
 }
 
+function scheduleCameraFrame(runGeneration: number): void {
+  if (!isCaptureRunCurrent(runGeneration, captureRunGeneration, running)) return;
+  if (typeof video.requestVideoFrameCallback === 'function') {
+    cameraFrameCallbackId = video.requestVideoFrameCallback(() => {
+      cameraFrameCallbackId = null;
+      handleCameraFrame(runGeneration);
+    });
+    return;
+  }
+  cameraFrameFallbackTimer = window.setTimeout(() => {
+    cameraFrameFallbackTimer = null;
+    handleCameraFrame(runGeneration);
+  }, 1000 / 60);
+}
+
+function handleCameraFrame(runGeneration: number): void {
+  if (
+    !isCaptureRunCurrent(runGeneration, captureRunGeneration, running)
+    || captureWorkerError
+    || landmarkerWorkerError
+    || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+  ) {
+    scheduleCameraFrame(runGeneration);
+    return;
+  }
+  try {
+    const sourceWidth = Math.max(video.videoWidth || 640, 1);
+    const width = Math.min(sourceWidth, 640);
+    const height = Math.round(width * Math.max(video.videoHeight || 480, 1) / sourceWidth);
+    const captureTimestampMs = Date.now();
+    const captureId = `run-${runGeneration}-${captureTimestampMs}-${frameSequence += 1}`;
+    const plan = planLiveHandSourceFrame({
+      mode: sourceMode,
+      nowMs: captureTimestampMs,
+      lastAnchorCaptureAtMs,
+      anchorIntervalMs: captureIntervalMs,
+      fastPathAvailable: sourceMode === 'pure_wilor' || landmarkerWorkerReady,
+      fastPathInFlight: landmarkerInFlightCaptureId !== null,
+      anchorInFlight: captureInFlightGeneration !== null,
+    });
+    if (!plan.submitFastPath && !plan.submitAnchor) {
+      if (sourceMode === 'hybrid_mano' && plan.reason === 'fast_path_wait') landmarkerFramesSuppressed += 1;
+      return;
+    }
+    const captureAcquireStartedAt = performance.now();
+    const sourceFrame = new VideoFrame(video, { timestamp: captureTimestampMs * 1000 });
+    const acquisitionMs = performance.now() - captureAcquireStartedAt;
+    if (sourceMode === 'hybrid_mano') {
+      const anchorFrame = plan.submitAnchor ? sourceFrame.clone() : null;
+      if (anchorFrame) {
+        lastAnchorCaptureAtMs = captureTimestampMs;
+        void postAnchorFrame(runGeneration, captureId, captureTimestampMs, anchorFrame, width, height, acquisitionMs);
+      }
+      postLandmarkerFrame(captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs);
+    } else if (plan.submitAnchor) {
+      lastAnchorCaptureAtMs = captureTimestampMs;
+      void postAnchorFrame(runGeneration, captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs);
+    } else {
+      sourceFrame.close();
+    }
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    scheduleCameraFrame(runGeneration);
+  }
+}
+
 function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>): void {
   if (pendingLatencySample) benchmarkDroppedBeforeRender += 1;
   const { frame, captureMetrics, viewerReceiveTimestampMs } = receipt;
   const captureToViewerReceiveMs = Math.max(0, viewerReceiveTimestampMs - frame.captureTimestampMs);
   pendingLatencySample = {
-    schema: 'hand-state.viewer-latency-sample.v0',
+    schema: 'hand-state.viewer-latency-sample.v1',
     benchmarkSessionId,
     frameId: frame.frameId,
     runtimeOwner: 'hand-state-runtime',
@@ -776,14 +1078,25 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     captureTimestampMs: frame.captureTimestampMs,
     viewerReceiveTimestampMs,
     captureAcquireMs: captureMetrics.captureAcquireMs,
-    workerEncodeMs: captureMetrics.workerEncodeMs,
-    captureRoute: LIVE_HAND_CAPTURE_WORKER_ROUTE,
-    clientEncodeMs: captureMetrics.clientEncodeMs,
-    nativePostMs: captureMetrics.nativePostMs,
+    captureRoute: captureMetrics.captureRoute,
+    captureWorkerMs: captureMetrics.captureWorkerMs,
+    producerPostMs: captureMetrics.producerPostMs,
     modelLatencyMs: frame.modelLatencyMs,
     captureToSidecarPublishMs: frame.captureToSidecarPublishMs,
     publishToViewerReceiveMs: Math.max(0, captureToViewerReceiveMs - frame.captureToSidecarPublishMs),
     captureToViewerReceiveMs,
+    requestedSourceMode: sourceMode,
+    fusionMode: frame.fusionMode,
+    geometryMode: frame.geometryMode,
+    anchorCaptureId: frame.anchorCaptureId,
+    anchorAgeMs: frame.anchorAgeMs,
+    fastPathAgeMs: frame.fastPathAgeMs,
+    fastPathLatencyMs: frame.fastPathLatencyMs,
+    fitResidualMean: frame.fitResidualMean,
+    fitResidualMax: frame.fitResidualMax,
+    maxJointCorrectionRad: frame.maxJointCorrectionRad,
+    maxAnchorJointDeviationRad: frame.maxAnchorJointDeviationRad,
+    fallbackState: null,
     captureToWebglRenderReturnMs: -1,
     captureToRenderCompleteMs: -1,
     renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented',
@@ -798,6 +1111,12 @@ function applyState(state: Record<string, unknown>): void {
   }
   try {
     const frame = normalizeLiveManoFrame(state);
+    const requestedRoute = sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE;
+    if (frame.effectiveRoute !== requestedRoute) {
+      setStatus(`waiting for ${requestedRoute} | observed ${frame.effectiveRoute}`);
+      setRouteTruth(frame);
+      return;
+    }
     updateHandSurface(frame);
     benchmarkAcceptedFrameCount += 1;
     const joinedReceipt = latencyReceiptJoiner.registerFrame(frame.frameId, frame, Date.now());
@@ -844,9 +1163,19 @@ async function start(): Promise<void> {
   setStatus('initializing current Kaminos fluid');
   await ensureFluidSolver();
   captureWorkerError = null;
+  landmarkerWorkerError = null;
+  latestLandmarkerFailure = null;
+  latestFastIngestReceipt = null;
   ensureCaptureWorker();
   setStatus('verifying runtime');
   runtimeRoute = assertLiveRuntimeHealth(await runtimeFetch('/health'));
+  if (sourceMode === 'hybrid_mano') {
+    if (!runtimeRoute.manoRegeneratorAvailable || runtimeRoute.hybridGeometryMode !== 'native_mano_regeneration') {
+      throw new Error('hybrid MANO route requires the runtime native MANO regenerator');
+    }
+    setStatus('initializing browser MediaPipe');
+    await ensureLandmarkerWorker();
+  }
   setRouteTruth();
   setStatus('opening camera');
   stream = await navigator.mediaDevices.getUserMedia({
@@ -883,12 +1212,16 @@ async function start(): Promise<void> {
   lastStateSequence = 0;
   captureRunGeneration += 1;
   const runGeneration = captureRunGeneration;
+  lastAnchorCaptureAtMs = null;
+  landmarkerFramesSubmitted = 0;
+  landmarkerFramesDropped = 0;
+  landmarkerFramesSuppressed = 0;
   running = true;
+  routeModeControl.disabled = true;
   toggle.textContent = 'Stop Hand';
   toggle.dataset.running = 'true';
-  captureTimer = window.setInterval(() => void captureFrame(runGeneration), captureIntervalMs);
   void streamState();
-  await captureFrame(runGeneration);
+  scheduleCameraFrame(runGeneration);
 }
 
 async function stop(): Promise<void> {
@@ -896,11 +1229,16 @@ async function stop(): Promise<void> {
   fluidGpuCompletionGeneration += 1;
   fluidGpuBusy = false;
   captureRunGeneration += 1;
-  if (captureTimer !== null) window.clearInterval(captureTimer);
-  captureTimer = null;
+  if (cameraFrameCallbackId !== null && typeof video.cancelVideoFrameCallback === 'function') {
+    video.cancelVideoFrameCallback(cameraFrameCallbackId);
+  }
+  cameraFrameCallbackId = null;
+  if (cameraFrameFallbackTimer !== null) window.clearTimeout(cameraFrameFallbackTimer);
+  cameraFrameFallbackTimer = null;
   capturePostAbortController?.abort();
   capturePostAbortController = null;
   disposeCaptureWorker(new Error('hand control stopped'));
+  disposeLandmarkerWorker();
   stateAbortController?.abort();
   stateAbortController = null;
   stream?.getTracks().forEach(track => track.stop());
@@ -912,10 +1250,12 @@ async function stop(): Promise<void> {
   const missingEvidenceError = benchmarkAcceptedFrameCount > 0 && latencySamples.length === 0
     ? `telemetry failure: rendered ${benchmarkAcceptedFrameCount} live MANO frames but recorded 0 viewer latency samples`
     : receiptJoinState.discardedFrameCount > 0
+      || receiptJoinState.discardedCaptureCount > 0
       || receiptJoinState.pendingFrameCount > 0
+      || receiptJoinState.pendingCaptureCount > 0
       || benchmarkDroppedBeforeRender > 0
       || pendingLatencySample !== null
-      ? `telemetry incomplete: ${receiptJoinState.pendingFrameCount} unmatched, ${receiptJoinState.discardedFrameCount} discarded, ${benchmarkDroppedBeforeRender} superseded, ${pendingLatencySample ? 1 : 0} awaiting render`
+      ? `telemetry incomplete: ${receiptJoinState.pendingFrameCount} unmatched frames, ${receiptJoinState.pendingCaptureCount} unmatched captures, ${receiptJoinState.discardedFrameCount} discarded frames, ${receiptJoinState.discardedCaptureCount} discarded captures, ${benchmarkDroppedBeforeRender} superseded, ${pendingLatencySample ? 1 : 0} awaiting render`
       : null;
   if (missingEvidenceError) lastBenchmarkError = missingEvidenceError;
   const benchmarkFailure = missingEvidenceError
@@ -928,6 +1268,7 @@ async function stop(): Promise<void> {
   }
   toggle.textContent = 'Start Hand';
   toggle.dataset.running = 'false';
+  routeModeControl.disabled = false;
 }
 
 toggle.addEventListener('click', async () => {
@@ -952,6 +1293,14 @@ for (const control of [
   control.addEventListener('input', updateFluidEconomicsFromControls);
 }
 juiceBudgetControl.addEventListener('input', applyJuiceBudgetFromControl);
+routeModeControl.addEventListener('change', () => {
+  if (running) {
+    routeModeControl.value = sourceMode;
+    return;
+  }
+  sourceMode = routeModeControl.value === 'hybrid_mano' ? 'hybrid_mano' : 'pure_wilor';
+  setRouteTruth();
+});
 
 function resize(): void {
   const width = Math.max(window.innerWidth, 1);
@@ -1009,6 +1358,8 @@ function animate(now: number): void {
     sample.handRenderCpuMs = handRenderDurationMs;
     sample.interactionFrameIntervalMs = frameDecision.animationFrameIntervalMs;
     sample.interactionFrameFluidDecision = frameDecision.reason;
+    sample.fluidGpuBusyAtRender = fluidGpuBusy;
+    sample.fluidGpuQueueDrainLatestMs = fluidGpuQueueDrainMs.at(-1) ?? null;
     latencySamples.push(sample);
     unflushedLatencySamples.push(sample);
     scheduleLatencyFlush();
@@ -1072,6 +1423,7 @@ window.addEventListener('beforeunload', () => {
   stream?.getTracks().forEach(track => track.stop());
   navigator.sendBeacon?.(`${runtimeUrl}/sidecar/stop`, new Blob([], { type: 'application/octet-stream' }));
   disposeCaptureWorker(new Error('viewer closed'));
+  disposeLandmarkerWorker();
   fluidSolver?.destroy();
 });
 
@@ -1109,6 +1461,7 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     fluidEvidenceMode: fluidAssayMode ? LIVE_FLUID_ENVELOPE_ASSAY_ROUTE : 'live_hand',
     running,
     meshVisible: handMesh.visible,
+    requestedHandRoute: sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE,
     vertexCount: handGeometry.getAttribute('position')?.count || 0,
     faceCount: handGeometry.index ? handGeometry.index.count / 3 : 0,
     effectiveRoute: fluidAssayMode
@@ -1135,6 +1488,21 @@ function collectLiveHandDebugState(): Record<string, unknown> {
       replyDeadlineMs: LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
       runGeneration: captureRunGeneration,
       inFlight: captureInFlightGeneration !== null,
+    },
+    fastPath: {
+      requested: sourceMode === 'hybrid_mano',
+      route: LIVE_HAND_LANDMARKER_WORKER_ROUTE,
+      workerActive: Boolean(landmarkerWorker),
+      workerReady: landmarkerWorkerReady,
+      workerError: landmarkerWorkerError,
+      latestFailure: latestLandmarkerFailure,
+      latestIngestReceipt: latestFastIngestReceipt,
+      submittedFrameCount: landmarkerFramesSubmitted,
+      droppedFrameCount: landmarkerFramesDropped,
+      busySuppressedFrameCount: landmarkerFramesSuppressed,
+      inFlightCaptureId: landmarkerInFlightCaptureId,
+      workerLandmarkerMs: distribution(landmarkerWorkerMs),
+      runtimePostMs: distribution(fastPathPostMs),
     },
     fluid: fluidSolver?.available ? {
       pinnedRevision: KAMINOS_FLUID_REVISION,

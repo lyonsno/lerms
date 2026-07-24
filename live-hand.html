@@ -35,6 +35,16 @@
       }
       #hand-toggle:hover { background: #173031; }
       #hand-toggle[data-running="true"] { border-color: #bd8150; background: #372719; color: #ffe0bc; }
+      #hand-route-mode {
+        width: 100%;
+        height: 32px;
+        margin-bottom: 7px;
+        border: 1px solid #355f60;
+        border-radius: 5px;
+        background: #0b1b1c;
+        color: #b9d9da;
+        font: 10px inherit;
+      }
       #status { margin-top: 9px; color: #749697; font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
       #status[data-state="live"] { color: #83d7bc; }
       #status[data-state="error"] { color: #ef968b; }
@@ -56,9 +66,13 @@
     <canvas id="fluid-canvas" aria-label="Current Kaminos WebGPU finger fluid"></canvas>
     <canvas id="hand-canvas" aria-label="Live WiLoR MANO hand surface"></canvas>
     <section id="controls" aria-label="Live hand controls">
+      <select id="hand-route-mode" aria-label="Hand route">
+        <option value="pure_wilor">Pure WiLoR</option>
+        <option value="hybrid_mano">Hybrid MANO</option>
+      </select>
       <button id="hand-toggle" type="button">Start Hand</button>
       <div id="density-controls">
-        <label class="density-control">Juice <input id="fluid-juice-budget" type="range" min="0" max="100" step="1" value="50" /><span id="fluid-juice-budget-value" class="density-value">50</span></label>
+        <label class="density-control">Juice <input id="fluid-juice-budget" type="range" min="0" max="100" step="1" value="80" /><span id="fluid-juice-budget-value" class="density-value">80</span></label>
         <div id="fluid-juice-budget-state" data-state="full">full</div>
         <div id="advanced-density-controls">
           <label class="density-control">Flux req <input id="fluid-flux" type="range" min="60" max="1440" step="20" value="360" /><span id="fluid-flux-value" class="density-value">360</span></label>
