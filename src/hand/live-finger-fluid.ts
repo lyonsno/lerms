@@ -1,4 +1,8 @@
-import type { ManoDisplayTransform } from './live-hand-contract.js';
+import {
+  LIVE_HAND_HYBRID_ROUTE,
+  LIVE_HAND_ROUTE,
+  type ManoDisplayTransform,
+} from './live-hand-contract.js';
 
 export const LIVE_FINGER_FLUID_ADAPTER_CONTRACT = 'hand-state-distal-axis-full-extension-emitters-v1' as const;
 export const KAMINOS_FLUID_REVISION = '71d09e78fbf16c9edecde3ea72a82ba17b656bf2' as const;
@@ -17,6 +21,7 @@ const LIVE_HAND_CAMERA = Object.freeze({
 });
 
 const MAX_LIVE_SAMPLE_AGE_MS = 750;
+const LIVE_HAND_FLUID_ACCEPTED_ROUTES = new Set<string>([LIVE_HAND_ROUTE, LIVE_HAND_HYBRID_ROUTE]);
 
 const FINGERS = Object.freeze([
   { id: 'thumb', joints: [1, 2, 3, 4] as const, chemistry: 'splash' },
@@ -142,7 +147,7 @@ export function createLiveFingerFluidEmitterPacket(frame: LiveFingerFluidFrame):
   const nowMs = frame.nowMs ?? Date.now();
   const sampleAgeMs = Math.max(0, nowMs - frame.captureTimestampMs);
   const stale = sampleAgeMs > MAX_LIVE_SAMPLE_AGE_MS;
-  const simulationSafe = frame.effectiveRoute === 'native_wilor_mini_mlx_detector_sidecar_live'
+  const simulationSafe = LIVE_HAND_FLUID_ACCEPTED_ROUTES.has(frame.effectiveRoute)
     && frame.confidence > 0
     && frame.keypoints3d.length >= 21
     && !stale;
