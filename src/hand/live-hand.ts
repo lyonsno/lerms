@@ -293,6 +293,7 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   fastPathLatencyMs: number | null;
   fitResidualMean: number | null;
   fitResidualMax: number | null;
+  baselineResidualMean: number | null;
   calibrationDeterminant: number | null;
   calibrationResidualMean: number | null;
   calibrationResidualMax: number | null;
@@ -1156,6 +1157,7 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     fastPathLatencyMs: frame.fastPathLatencyMs,
     fitResidualMean: frame.fitResidualMean,
     fitResidualMax: frame.fitResidualMax,
+    baselineResidualMean: frame.baselineResidualMean,
     calibrationDeterminant: frame.calibrationDeterminant,
     calibrationResidualMean: frame.calibrationResidualMean,
     calibrationResidualMax: frame.calibrationResidualMax,
