@@ -22,6 +22,7 @@ export interface KaminosFluidPackagePin {
   runtimeFactoryExport: string;
   runtimeRoute: string;
   representationRoute: string;
+  sourceRoute: string;
   outputRoute: string;
 }
 
@@ -43,6 +44,7 @@ export interface KaminosFluidPackageDescriptor {
   cacheKey: string;
   runtimeRoute: string;
   representationRoutes: readonly string[];
+  sourceRoutes: readonly string[];
   outputRoutes: readonly string[];
 }
 
@@ -102,19 +104,20 @@ export type KaminosFluidPackageImporter = (specifier: string) => Promise<unknown
 
 export const KAMINOS_FLUID_WEBGPU_PIN: Readonly<KaminosFluidPackagePin> = Object.freeze({
   packageName: '@kaminos/fluid-webgpu',
-  packageVersion: '0.2.1',
-  dependencySpecifier: 'https://raw.githubusercontent.com/lyonsno/kaminos/fc484561ac27dec84d4b95afa4ec74abd1c92232/artifacts/fluid/kaminos-fluid-webgpu-0.2.1.tgz',
+  packageVersion: '0.3.0',
+  dependencySpecifier: 'https://raw.githubusercontent.com/lyonsno/kaminos/9a119c12778f34bb691df301addc89973913390e/artifacts/fluid/kaminos-fluid-webgpu-0.3.0.tgz',
   importSpecifier: '@kaminos/fluid-webgpu',
-  integrity: 'sha512-3vp6/vZqTtEa0OdFnAN5NLuZqqNYXtlegSnIzdTzRmWFQ9dG9ltX9x9zRg632ctJsbHK8qOHSnZv9hvXnu/cxQ==',
-  resolved: 'https://raw.githubusercontent.com/lyonsno/kaminos/fc484561ac27dec84d4b95afa4ec74abd1c92232/artifacts/fluid/kaminos-fluid-webgpu-0.2.1.tgz',
-  artifactRevision: '@kaminos/fluid-webgpu@0.2.1',
-  runtimeRevision: '95920668287205517bc2e22f4f224b0d7584f53e',
-  cacheKey: '@kaminos/fluid-webgpu@0.2.1:95920668287205517bc2e22f4f224b0d7584f53e',
+  integrity: 'sha512-aVk2m0XuPDoEkM2gB43SxyXFFWuGVc6t6wvs6wYHlq2XdwFmXIvgz7UzgS8O4OHZrz44lnrIxkDeHYQdF6CrVw==',
+  resolved: 'https://raw.githubusercontent.com/lyonsno/kaminos/9a119c12778f34bb691df301addc89973913390e/artifacts/fluid/kaminos-fluid-webgpu-0.3.0.tgz',
+  artifactRevision: '@kaminos/fluid-webgpu@0.3.0',
+  runtimeRevision: '854c57ee7086783c0b0d099058a2c985b71168cd',
+  cacheKey: '@kaminos/fluid-webgpu@0.3.0:854c57ee7086783c0b0d099058a2c985b71168cd',
   descriptorSchema: 'kaminos.fluid.package-descriptor.v1',
   descriptorExport: 'KAMINOS_FLUID_PACKAGE_DESCRIPTOR',
   runtimeFactoryExport: 'createKaminosFluidRuntime',
   runtimeRoute: 'kaminos/fluid/mapped-orthogonal-heightfield-hll-reference-v1',
   representationRoute: 'kaminos/fluid/representation-frame',
+  sourceRoute: 'kaminos/fluid/portable-macro-source',
   outputRoute: 'kaminos/fluid/terrain-feedback'
 });
 
@@ -180,6 +183,7 @@ export function createKaminosFluidPackageRequest(
   requireNonempty(pin.runtimeFactoryExport, 'runtime factory export');
   requireNonempty(pin.runtimeRoute, 'runtime route');
   requireNonempty(pin.representationRoute, 'representation route');
+  requireNonempty(pin.sourceRoute, 'source route');
   requireNonempty(pin.outputRoute, 'output route');
   requireFinite(options.requestedAtMs, 'requestedAtMs');
 
@@ -206,6 +210,7 @@ export function validateKaminosFluidPackageDescriptor(
   rejectUnless(descriptor.cacheKey === expected.cacheKey, 'reject-package-cache-key-mismatch', rejections);
   rejectUnless(descriptor.runtimeRoute === expected.runtimeRoute, 'reject-runtime-route-mismatch', rejections);
   rejectUnless(descriptor.representationRoutes.includes(expected.representationRoute), 'reject-missing-representation-route', rejections);
+  rejectUnless(descriptor.sourceRoutes.includes(expected.sourceRoute), 'reject-missing-source-route', rejections);
   rejectUnless(descriptor.outputRoutes.includes(expected.outputRoute), 'reject-missing-output-route', rejections);
 
   if (descriptor.fallbackStatus === 'fallback') {
@@ -464,6 +469,8 @@ function isPackageDescriptor(value: unknown): value is KaminosFluidPackageDescri
     typeof value.runtimeRoute === 'string' &&
     Array.isArray(value.representationRoutes) &&
     value.representationRoutes.every((entry) => typeof entry === 'string') &&
+    Array.isArray(value.sourceRoutes) &&
+    value.sourceRoutes.every((entry) => typeof entry === 'string') &&
     Array.isArray(value.outputRoutes) &&
     value.outputRoutes.every((entry) => typeof entry === 'string')
   );

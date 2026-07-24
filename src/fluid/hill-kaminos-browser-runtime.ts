@@ -1,5 +1,5 @@
-import packageJson from '../../package.json';
-import packageLock from '../../package-lock.json';
+import packageJson from '../../package.json' with { type: 'json' };
+import packageLock from '../../package-lock.json' with { type: 'json' };
 import {
   KAMINOS_FLUID_WEBGPU_PIN,
   createInstalledKaminosPackageEvidence,
@@ -30,7 +30,18 @@ import {
   createHillPortableMacroOpticalGeometryAdapterFrame,
   type HillPortableMacroOpticalGeometryAdapterFrame
 } from '../terrain/hill-of-hills-portable-optical-geometry-adapter.js';
+import {
+  createHillPortableMacroOpticalProviderMount,
+  createKaminosPortableMacroProviderInstallEvidence,
+  retainHillPortableMacroSource,
+  type HillPortableMacroOpticalProviderMount,
+  type HillPortableMacroOpticalProviderMountWitness
+} from './hill-kaminos-portable-optical-provider.js';
 import type { HillOfHillsTerrainBuffer } from '../terrain/hill-of-hills.js';
+import {
+  findHillMovingSupportFirstImpact,
+  type HillMovingSupportFirstImpactResult
+} from '../terrain/hill-of-hills-first-impact.js';
 
 export const HILL_KAMINOS_BROWSER_WITNESS_SCHEMA =
   'lerms.hill-of-hills.kaminos-browser-witness.v2' as const;
@@ -49,6 +60,13 @@ export interface HillKaminosBrowserRuntime {
   readonly feedback: KaminosFluidTerrainFeedbackFrame;
   readonly representation: KaminosFluidRepresentationFrame;
   readonly portableOpticalGeometry: HillPortableMacroOpticalGeometryAdapterFrame;
+  readonly portableOpticalProvider: HillPortableMacroOpticalProviderMount;
+  firstSupportImpact(options: {
+    queryId: string;
+    start: readonly [number, number, number];
+    end: readonly [number, number, number];
+  }): HillMovingSupportFirstImpactResult;
+  releasePortableMacroSource(): boolean;
   readonly witness: HillKaminosBrowserWitness;
 }
 
@@ -139,6 +157,8 @@ export interface HillKaminosBrowserWitness {
   stepCount: number;
   conservationReceiptIds: readonly string[];
   portableOpticalGeometry: HillPortableMacroOpticalGeometryWitness;
+  portableOpticalProvider: HillPortableMacroOpticalProviderMountWitness;
+  firstImpact: HillMovingSupportFirstImpactResult;
   falseClosureRejections: readonly [];
 }
 
@@ -170,6 +190,10 @@ export async function createHillKaminosBrowserRuntime(
   if (loaded.ok === false) {
     throw new Error(`Kaminos package load failed before Hill output: ${loaded.error}`);
   }
+  const providerInstallEvidence = createKaminosPortableMacroProviderInstallEvidence(
+    packageJson,
+    packageLock
+  );
 
   let adapterFrame = createHillFluidPackageAdapterFrame(terrainBuffer, {
     frameId: `hill-kaminos-browser:${terrainBuffer.sampleChecksum}`,
@@ -218,6 +242,14 @@ export async function createHillKaminosBrowserRuntime(
     },
     tolerance: 1e-9
   });
+  const portableSourceHandle = retainHillPortableMacroSource(runtime, terrainFrame, {
+    sourceHandleId: [
+      'hill-portable-macro-source',
+      terrainFrame.terrainId,
+      terrainFrame.currentEpoch,
+      terrainBuffer.witness.supportFrame.supportFrameChecksum
+    ].join(':')
+  });
   const initialRepresentation = runtime.representation({
     requestedRoute: loaded.requested.representationRoute,
     effectiveRoute: loaded.requested.representationRoute
@@ -239,6 +271,16 @@ export async function createHillKaminosBrowserRuntime(
     representation,
     remapReceipt
   );
+  let portableOpticalProvider = createHillPortableMacroOpticalProviderMount(
+    loaded,
+    portableSourceHandle,
+    adapterFrame,
+    terrainFrame,
+    representation,
+    remapReceipt,
+    providerInstallEvidence
+  );
+  let firstImpact = createCenterFirstImpact(adapterFrame, terrainFrame, remapReceipt);
 
   const controller: HillKaminosBrowserRuntime = {
     advance(timestampMs: number): void {
@@ -265,6 +307,16 @@ export async function createHillKaminosBrowserRuntime(
         representation,
         remapReceipt
       );
+      portableOpticalProvider = createHillPortableMacroOpticalProviderMount(
+        loaded,
+        portableSourceHandle,
+        adapterFrame,
+        terrainFrame,
+        representation,
+        remapReceipt,
+        providerInstallEvidence
+      );
+      firstImpact = createCenterFirstImpact(adapterFrame, terrainFrame, remapReceipt);
       assertOutputEvidence(
         request,
         loaded.effective,
@@ -345,6 +397,16 @@ export async function createHillKaminosBrowserRuntime(
         representation,
         remapReceipt
       );
+      portableOpticalProvider = createHillPortableMacroOpticalProviderMount(
+        loaded,
+        portableSourceHandle,
+        adapterFrame,
+        terrainFrame,
+        representation,
+        remapReceipt,
+        providerInstallEvidence
+      );
+      firstImpact = createCenterFirstImpact(adapterFrame, terrainFrame, remapReceipt);
       assertOutputEvidence(
         request,
         loaded.effective,
@@ -373,6 +435,21 @@ export async function createHillKaminosBrowserRuntime(
     },
     get portableOpticalGeometry(): HillPortableMacroOpticalGeometryAdapterFrame {
       return portableOpticalGeometry;
+    },
+    get portableOpticalProvider(): HillPortableMacroOpticalProviderMount {
+      return portableOpticalProvider;
+    },
+    firstSupportImpact(impactOptions): HillMovingSupportFirstImpactResult {
+      firstImpact = findHillMovingSupportFirstImpact(
+        adapterFrame,
+        terrainFrame,
+        remapReceipt,
+        impactOptions
+      );
+      return firstImpact;
+    },
+    releasePortableMacroSource(): boolean {
+      return portableSourceHandle.release();
     },
     get witness(): HillKaminosBrowserWitness {
       const outwardWave = summarizeWave(
@@ -436,6 +513,8 @@ export async function createHillKaminosBrowserRuntime(
         stepCount,
         conservationReceiptIds: feedback.conservationReceiptIds,
         portableOpticalGeometry: summarizePortableOpticalGeometry(portableOpticalGeometry),
+        portableOpticalProvider: portableOpticalProvider.witness,
+        firstImpact,
         falseClosureRejections: []
       };
     }
@@ -462,6 +541,27 @@ function createPortableOpticalGeometryFrame(
         representation.fluidEpoch
       ].join(':'),
       requestedCapability: PORTABLE_MACRO_SUPPORT_GEOMETRY_CAPABILITY
+    }
+  );
+}
+
+function createCenterFirstImpact(
+  adapterFrame: HillFluidPackageAdapterFrame,
+  terrainFrame: KaminosTerrainFluidFrame,
+  remapReceipt: KaminosTerrainRemapReceipt | null
+): HillMovingSupportFirstImpactResult {
+  const centerX = (terrainFrame.grid.width - 1) * 0.5;
+  const centerZ = (terrainFrame.grid.height - 1) * 0.5;
+  const worldX = terrainFrame.grid.origin[0] + centerX * terrainFrame.grid.spacing[0];
+  const worldZ = terrainFrame.grid.origin[2] + centerZ * terrainFrame.grid.spacing[1];
+  return findHillMovingSupportFirstImpact(
+    adapterFrame,
+    terrainFrame,
+    remapReceipt,
+    {
+      queryId: `hill-center-impact:${terrainFrame.currentEpoch}`,
+      start: [worldX, adapterFrame.terrain.heightRange.max + 1, worldZ],
+      end: [worldX, adapterFrame.terrain.heightRange.min - 1, worldZ]
     }
   );
 }
@@ -531,7 +631,8 @@ function assertRuntime(
     typeof runtime.step !== 'function' ||
     typeof runtime.depositLocal !== 'function' ||
     typeof runtime.feedback !== 'function' ||
-    typeof runtime.representation !== 'function'
+    typeof runtime.representation !== 'function' ||
+    typeof runtime.retainPortableMacroSource !== 'function'
   ) {
     throw new Error('installed package returned an incomplete Hill runtime');
   }

@@ -57,6 +57,7 @@ const pin: KaminosFluidPackagePin = {
   runtimeFactoryExport: 'createKaminosFluidRuntime',
   runtimeRoute: 'kaminos/terrain-coupled-conservative-water-core-v1',
   representationRoute: 'kaminos/macro-local-transaction-v1',
+  sourceRoute: 'kaminos/fluid/portable-macro-source',
   outputRoute: 'kaminos/fluid-terrain-feedback-frame-v1'
 };
 
@@ -251,6 +252,7 @@ const syntheticDescriptor: KaminosFluidPackageDescriptor = {
   cacheKey: pin.cacheKey,
   runtimeRoute: pin.runtimeRoute,
   representationRoutes: [pin.representationRoute],
+  sourceRoutes: [pin.sourceRoute],
   outputRoutes: [pin.outputRoute]
 };
 

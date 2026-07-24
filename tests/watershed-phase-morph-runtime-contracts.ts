@@ -62,7 +62,7 @@ const loaded = await loadPinnedKaminosFluidPackage(
 if (loaded.ok === false) {
   throw new Error(`phase-morph package must load: ${loaded.error}`);
 }
-assert(loaded.effective.packageVersion === '0.2.1', 'phase-morph exercise consumes exact package 0.2.1');
+assert(loaded.effective.packageVersion === '0.3.0', 'phase-morph exercise consumes exact package 0.3.0');
 
 const cache = createHillOfHillsLayerTileCache();
 const bufferA = createHillKaminosPhaseMorphRecipeBuffer(cache, 'previous');

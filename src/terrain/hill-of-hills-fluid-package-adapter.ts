@@ -134,6 +134,7 @@ export interface KaminosTerrainFluidFrame {
     origin: readonly [number, number, number];
   };
   fields: {
+    worldPosition: Float64Array;
     bedHeight: Float64Array;
     jacobian: Float64Array;
     gradient: Float64Array;
@@ -330,6 +331,7 @@ export function createKaminosTerrainFluidFrame(
   }
 
   const sampleCount = adapterFrame.terrain.sampleCount;
+  const worldPosition = new Float64Array(sampleCount * 3);
   const bedHeight = new Float64Array(sampleCount);
   const jacobian = new Float64Array(sampleCount);
   const gradient = new Float64Array(sampleCount * 2);
@@ -351,7 +353,10 @@ export function createKaminosTerrainFluidFrame(
       throw new Error(`Hill sample ${index} has a degenerate heightfield normal`);
     }
 
-    bedHeight[index] = adapterFrame.channels.positions[vectorOffset + 1];
+    worldPosition[vectorOffset] = adapterFrame.channels.positions[vectorOffset];
+    worldPosition[vectorOffset + 1] = adapterFrame.channels.positions[vectorOffset + 1];
+    worldPosition[vectorOffset + 2] = adapterFrame.channels.positions[vectorOffset + 2];
+    bedHeight[index] = worldPosition[vectorOffset + 1];
     jacobian[index] = 1;
     gradient[index * 2] = -adapterFrame.channels.normals[vectorOffset] / sourceNormalY;
     gradient[index * 2 + 1] = -adapterFrame.channels.normals[vectorOffset + 2] / sourceNormalY;
@@ -424,6 +429,7 @@ export function createKaminosTerrainFluidFrame(
       origin: [worldBounds.x.min, 0, worldBounds.z.min]
     },
     fields: {
+      worldPosition,
       bedHeight,
       jacobian,
       gradient,

@@ -114,6 +114,17 @@ export interface KaminosMappedMacroRuntime {
   };
   feedback(options?: unknown): KaminosFluidTerrainFeedbackFrame;
   representation(options?: unknown): KaminosFluidRepresentationFrame;
+  retainPortableMacroSource(options: unknown): KaminosPortableMacroSourceHandle;
+}
+
+export interface KaminosPortableMacroSourceHandle {
+  readonly descriptor: Readonly<Record<string, unknown>>;
+  readonly status: {
+    state: 'retained' | 'released';
+    readGeneration: number;
+  };
+  read(options?: unknown): Record<string, unknown>;
+  release(): boolean;
 }
 
 export interface KaminosTerrainRemapReceipt {

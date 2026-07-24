@@ -2069,7 +2069,7 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
       ? `terrain remap: ${fluidWitness.remap.status} count ${fluidWitness.remap.count} ${fluidWitness.remap.receipt?.receiptId ?? 'pending'}`
       : `terrain remap: pending`,
     fluidWitness
-      ? `portable geometry: ${fluidWitness.portableOpticalGeometry.descriptorIdentity} ${fluidWitness.portableOpticalGeometry.providerBinding.status} terrain/fluid ${fluidWitness.portableOpticalGeometry.epochs.terrain}/${fluidWitness.portableOpticalGeometry.epochs.fluid}`
+      ? `portable optics: ${fluidWitness.portableOpticalProvider.provider.revision.slice(0, 8)} ${fluidWitness.portableOpticalProvider.source.handleId} terrain/fluid ${fluidWitness.portableOpticalProvider.epochs.terrain}/${fluidWitness.portableOpticalProvider.epochs.fluid} ${fluidWitness.portableOpticalProvider.optical.closure}`
       : `portable geometry: pending`,
     fluidWitness
       ? `wave: cells ${fluidWitness.outwardWave.initialReachedCellCount}->${fluidWitness.outwardWave.reachedCellCount} radius ${fluidWitness.outwardWave.maximumRadiusCells.toFixed(2)} depth ${fluidWitness.outwardWave.maximumDepth.toFixed(3)}`
