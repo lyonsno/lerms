@@ -6,12 +6,12 @@ Kaminos creature-motion producer into Hill of Hills' reviewed
 
 ## Source Identity
 
-- LERMS candidate: `cc/lerm-horde-live-producer-history-0723@9dbe0452476b451c1a23f0a999bcda19d7fa40ff`
+- LERMS candidate: `cc/lerm-horde-live-producer-history-0723@1014904b64c8e2adef257bafc0a2489cab0e56a1`
 - Hill base: `cc/hill-producer-contact-history-0723@653175725ed695094a7420247ef4b9f96b988125`
 - Producer source: `cc/mushfinger-motion-ready-719024-0720@ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58`
 - Producer checkout: `cc/lerm-horde-producer-ced6db3d@ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58`
 - Producer module SHA-256: `ffce984721d00468856e70bd0805961a852d8690bcd402d1dc5ae96ad1ec88f0`
-- Receipt SHA-256: `9c042f7b4f8e99ee9680aa33db9fe765b0577e6914e35e683da7fae2a46a5b3c`
+- Receipt SHA-256: `c56627554f5cacb8f151361419bfe70177e2d86490193e30b2f148a11b430b2e`
 
 ## Result
 

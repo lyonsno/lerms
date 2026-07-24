@@ -6,17 +6,18 @@
   "evidenceClass": "live_producer_composition",
   "lerms": {
     "branch": "cc/lerm-horde-live-producer-history-0723",
-    "revision": "9dbe0452476b451c1a23f0a999bcda19d7fa40ff",
+    "revision": "1014904b64c8e2adef257bafc0a2489cab0e56a1",
     "hillBaseRevision": "653175725ed695094a7420247ef4b9f96b988125"
   },
   "producer": {
     "repository": "kaminos",
-    "branch": "cc/mushfinger-motion-ready-719024-0720",
-    "revision": "ced6db3d",
+    "sourceBranch": "cc/mushfinger-motion-ready-719024-0720",
+    "checkoutBranch": "cc/lerm-horde-producer-ced6db3d",
+    "revision": "ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58",
     "moduleSha256": "ffce984721d00468856e70bd0805961a852d8690bcd402d1dc5ae96ad1ec88f0",
     "creatureId": "motion-ready-719024",
     "bodyRevision": "motion-ready-719024-registration-cb519913",
-    "motionRevision": "ced6db3d",
+    "motionRevision": "ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58",
     "routeId": "lerm-horde-719024-control-crossing-v0-left-longitudinal-short",
     "railId": "lerm-horde-719024-control-crossing-v0-left-longitudinal-short-rail",
     "railSchema": "kaminos.creature-scale-locomotion-rail.v0",
@@ -75,11 +76,11 @@
     "episodeId": "lerm-horde-719024-live-control-crossing-0001",
     "producer": {
       "repository": "kaminos",
-      "revision": "ced6db3d",
+      "revision": "ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58",
       "route": "motion-ready-719024/creature-scale-locomotion-rail",
       "creatureId": "motion-ready-719024",
       "bodyRevision": "motion-ready-719024-registration-cb519913",
-      "motionRevision": "ced6db3d",
+      "motionRevision": "ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58",
       "routeId": "lerm-horde-719024-control-crossing-v0-left-longitudinal-short",
       "railSchema": "kaminos.creature-scale-locomotion-rail.v0",
       "railId": "lerm-horde-719024-control-crossing-v0-left-longitudinal-short-rail",
@@ -909,7 +910,7 @@
     ]
   },
   "historySummary": {
-    "checksum": "b76a6a5b",
+    "checksum": "c19527af",
     "episodeId": "lerm-horde-719024-live-control-crossing-0001",
     "orderedSampleCount": 15,
     "supportedRootCount": 14,
@@ -922,7 +923,7 @@
     "lastRouteProgress": 1
   },
   "admission": {
-    "trafficChecksum": "29d7310d",
+    "trafficChecksum": "42a665d3",
     "trafficRange": {
       "min": 0,
       "max": 0.14369582505347486
@@ -936,8 +937,8 @@
     "supportShockResetCount": 0
   },
   "persistence": {
-    "producerTrafficChecksumAtAdmission": "29d7310d",
-    "producerTrafficChecksumAfterDeparture": "29d7310d",
+    "producerTrafficChecksumAtAdmission": "42a665d3",
+    "producerTrafficChecksumAfterDeparture": "42a665d3",
     "cacheGenerationBefore": 1,
     "cacheGenerationAtAdmission": 2,
     "cacheGenerationAfterDeparture": 3
@@ -979,9 +980,10 @@
     },
     "git": {
       "lermsBranch": "cc/lerm-horde-live-producer-history-0723",
-      "lermsRevision": "9dbe0452476b451c1a23f0a999bcda19d7fa40ff",
+      "lermsRevision": "1014904b64c8e2adef257bafc0a2489cab0e56a1",
       "lermsDirty": "",
-      "producerBranch": "cc/mushfinger-motion-ready-719024-0720",
+      "expectedProducerBranch": "cc/mushfinger-motion-ready-719024-0720",
+      "producerCheckoutBranch": "cc/lerm-horde-producer-ced6db3d",
       "producerRevision": "ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58",
       "expectedProducerRevision": "ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58",
       "dirtyProducerInputs": ""
