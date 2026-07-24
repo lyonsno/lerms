@@ -3,6 +3,7 @@ import {
   createLiveFingerFluidFrontierSweep,
   resolveLiveFingerFluidRouteEconomics,
 } from '../src/hand/live-finger-fluid.js';
+import * as liveFingerFluidModule from '../src/hand/live-finger-fluid.js';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -58,7 +59,7 @@ const packet = createLiveFingerFluidEmitterPacket(makeFrame(5), {
 assert(packet.economics.requestedParticleCount === 2400, 'keeps the explicit 2400-particle product pool request');
 assert(packet.economics.effectiveParticleCount === 2400, 'effective particle count cannot be silently defaulted away');
 assert(packet.economics.requestedActiveParticleBudget === 960, 'preserves caller-owned active occupancy target');
-assert(packet.economics.effectiveActiveParticleBudget === 960, 'effective active target reflects the requested operating point');
+assert(packet.economics.effectiveActiveParticleBudget === null, 'unsupported active-budget requests must not be echoed as effective');
 assert(packet.economics.sourceFluxParticlesPerSecond === 640, 'preserves source flux as an independent control');
 assert(packet.economics.opticalDensityScale === 2.75, 'preserves optical density separately from solver work');
 assert(packet.economics.reconstructionRadiusScale === 1.9, 'preserves reconstruction radius separately from source flux');
@@ -67,6 +68,239 @@ assert(packet.economics.defaultSubstitution === false, 'non-default requests mus
 assert(packet.economics.fallbackActive === false, 'valid economics cannot claim fallback authority');
 assert(packet.emitters.every(emitter => emitter.source_flux_particles_per_second === 128), 'source flux is distributed across five active emitters');
 assert(packet.emitters.every(emitter => emitter.optical_density_scale === 2.75), 'emitter packet carries visible-density policy to the solver');
+
+type RuntimeAuthorityFactory = (
+  economics: typeof packet.economics,
+  runtime: Record<string, unknown>,
+) => {
+  schema: string;
+  complete: boolean;
+  authority: string;
+  requested: typeof packet.economics;
+  effective: {
+    particleCount: number | null;
+    activeParticleBudget: number | null;
+    expectedParticleReleaseRate: number | null;
+    opticalDensityScale: number | null;
+    reconstructionRadiusScale: number | null;
+    residenceSeconds: number | null;
+    maximumTravelDistance: number | null;
+    packetId: string | null;
+    sourceRoute: string | null;
+  };
+  support: {
+    activeParticleBudget: string;
+    sourceFlux: string;
+    opticalDensity: string;
+    reconstructionRadius: string;
+    lifetime: string;
+  };
+};
+
+const createRuntimeAuthority = (
+  liveFingerFluidModule as unknown as Record<string, unknown>
+).createPinnedKaminosLiveInletRuntimeAuthority as RuntimeAuthorityFactory | undefined;
+assert(typeof createRuntimeAuthority === 'function', 'runtime authority factory must exist');
+
+const verifiedRuntime = createRuntimeAuthority(packet.economics, {
+  effectiveParticleCount: 2400,
+  expectedPacketId: packet.packet_id,
+  expectedSourceRoute: packet.source_route,
+  packetAuthority: packet.authority,
+  packetEconomics: packet.economics,
+  receipt: {
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: 875.25,
+  },
+  liveInlets: {
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: 875.25,
+    inlets: [
+      { id: 'index', radius: 0.12, maximumSpeed: 1.8, active: true },
+      { id: 'middle', radius: 0.14, maximumSpeed: 1.9, active: true },
+    ],
+  },
+});
+assert(verifiedRuntime.schema === 'lerms.live-finger-fluid-runtime-authority.v0', 'runtime authority uses a stable schema');
+assert(verifiedRuntime.complete === true, 'effective inlet receipt completes runtime authority');
+assert(verifiedRuntime.authority === 'pinned_runtime_receipt', 'effective values name pinned runtime receipt authority');
+assert(verifiedRuntime.effective.particleCount === 2400, 'effective allocation comes from solver initialization');
+assert(verifiedRuntime.effective.activeParticleBudget === null, 'pinned runtime has no effective active-budget control');
+assert(verifiedRuntime.effective.expectedParticleReleaseRate === 875.25, 'effective release comes from the runtime release plan');
+assert(verifiedRuntime.effective.opticalDensityScale === null, 'pinned runtime has no independent optical-density control');
+assert(verifiedRuntime.effective.reconstructionRadiusScale === null, 'pinned runtime has no independent reconstruction-radius control');
+assert(verifiedRuntime.effective.residenceSeconds === 1.65, 'effective residence reports the pinned hard recycle age');
+assert(verifiedRuntime.effective.maximumTravelDistance === 2.4, 'effective residence reports the pinned distance recycle');
+assert(verifiedRuntime.effective.packetId === packet.packet_id, 'effective state is joined to the exact packet id');
+assert(verifiedRuntime.effective.sourceRoute === packet.source_route, 'effective state is joined to the exact source route');
+assert(verifiedRuntime.support.activeParticleBudget === 'unsupported_by_pinned_runtime', 'active-budget support fails loud');
+assert(verifiedRuntime.support.sourceFlux === 'derived_from_aperture_and_speed', 'source release names its actual coupled controls');
+assert(verifiedRuntime.support.opticalDensity === 'unsupported_metadata_coupled_to_speed', 'optics request names its physical speed coupling');
+assert(verifiedRuntime.support.reconstructionRadius === 'unsupported_metadata_coupled_to_aperture', 'reconstruction request names its aperture coupling');
+assert(verifiedRuntime.support.lifetime === 'unsupported_metadata_hard_recycle', 'lifetime request names its hard recycle override');
+
+const missingRuntime = createRuntimeAuthority(packet.economics, {
+  effectiveParticleCount: null,
+  liveInlets: null,
+});
+assert(missingRuntime.complete === false, 'missing runtime receipt cannot look complete');
+assert(missingRuntime.authority === 'missing_runtime_receipt', 'missing effective evidence fails loud');
+assert(missingRuntime.effective.expectedParticleReleaseRate === null, 'missing release evidence cannot fall back to the request');
+
+const staleRuntime = createRuntimeAuthority(packet.economics, {
+  effectiveParticleCount: 2400,
+  expectedPacketId: packet.packet_id,
+  expectedSourceRoute: packet.source_route,
+  packetAuthority: packet.authority,
+  packetEconomics: packet.economics,
+  receipt: {
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: 875.25,
+  },
+  liveInlets: {
+    packetId: 'older-packet',
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: 875.25,
+    inlets: [{ id: 'index', radius: 0.12, maximumSpeed: 1.8, active: true }],
+  },
+});
+assert(staleRuntime.complete === false, 'a stale runtime packet cannot complete current authority');
+assert(staleRuntime.authority === 'stale_or_mismatched_runtime_receipt', 'packet identity mismatch fails loud');
+
+const malformedRuntime = createRuntimeAuthority(packet.economics, {
+  effectiveParticleCount: 2400,
+  expectedPacketId: packet.packet_id,
+  expectedSourceRoute: packet.source_route,
+  packetAuthority: packet.authority,
+  packetEconomics: packet.economics,
+  receipt: {
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: -1,
+  },
+  liveInlets: {
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: -1,
+    inlets: [{ id: '', radius: -0.12, maximumSpeed: -1.8, active: true }],
+  },
+});
+assert(malformedRuntime.complete === false, 'negative or empty runtime fields cannot look complete');
+assert(malformedRuntime.authority === 'malformed_runtime_receipt', 'malformed runtime evidence fails loud');
+
+const nullReleaseRuntime = createRuntimeAuthority(packet.economics, {
+  effectiveParticleCount: 2400,
+  expectedPacketId: packet.packet_id,
+  expectedSourceRoute: packet.source_route,
+  packetAuthority: packet.authority,
+  packetEconomics: packet.economics,
+  receipt: {
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: null,
+  },
+  liveInlets: {
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: null,
+    inlets: [{ id: 'index', radius: 0.12, maximumSpeed: 1.8, active: true }],
+  },
+});
+assert(nullReleaseRuntime.complete === false, 'null release fields cannot coerce into authoritative zeroes');
+assert(nullReleaseRuntime.authority === 'malformed_runtime_receipt', 'null-like runtime numerics fail loud');
+
+const stoppedRuntime = createRuntimeAuthority(packet.economics, {
+  effectiveParticleCount: 2400,
+  expectedPacketId: 'stop-packet',
+  expectedSourceRoute: packet.source_route,
+  packetAuthority: { simulation_safe: false, stale: true, reason: 'assay_stopped' },
+  packetEconomics: packet.economics,
+  receipt: {
+    packetId: 'stop-packet',
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: 0,
+  },
+  liveInlets: {
+    packetId: 'stop-packet',
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: 0,
+    inlets: [],
+  },
+});
+assert(stoppedRuntime.complete === false, 'a stopped or stale packet cannot retain runtime authority');
+assert(stoppedRuntime.authority === 'stale_or_mismatched_runtime_receipt', 'stopped packet state fails loud');
+
+type JuiceBudgetResolver = (requestedBudget: number) => {
+  schema: string;
+  requestedBudget: number;
+  effectiveBudget: number;
+  zone: 'economy' | 'full' | 'redline';
+  fallbackActive: boolean;
+  economics: {
+    requestedParticleCount: number;
+    requestedActiveParticleBudget: number;
+    sourceFluxParticlesPerSecond: number;
+    opticalDensityScale: number;
+    reconstructionRadiusScale: number;
+    lifetimeSeconds: number;
+  };
+};
+const resolveJuiceBudget = (
+  liveFingerFluidModule as unknown as Record<string, unknown>
+).resolveLiveFingerFluidJuiceBudget as JuiceBudgetResolver | undefined;
+assert(typeof resolveJuiceBudget === 'function', 'single Juice budget resolver must exist');
+
+const zeroJuice = resolveJuiceBudget(0);
+assert(zeroJuice.schema === 'lerms.live-finger-fluid-juice-budget.v0', 'Juice mapping uses a stable schema');
+assert(zeroJuice.zone === 'economy', 'low Juice is the economy region');
+assert(zeroJuice.economics.requestedParticleCount === 2400, 'Juice mapping starts from the explicit product pool');
+assert(zeroJuice.economics.requestedActiveParticleBudget === 120, 'zero Juice starts at the lowest requested occupancy probe');
+assert(zeroJuice.economics.sourceFluxParticlesPerSecond === 60, 'zero Juice starts at the lowest requested release probe');
+assert(zeroJuice.economics.opticalDensityScale === 0.5, 'zero Juice starts at the lowest effective speed scale');
+assert(zeroJuice.economics.reconstructionRadiusScale === 0.7, 'zero Juice starts at the lowest effective aperture scale');
+assert(zeroJuice.economics.lifetimeSeconds === 1, 'zero Juice preserves the lowest requested lifetime probe');
+
+const honestKnee = resolveJuiceBudget(80);
+assert(honestKnee.zone === 'full', 'the strongest honest composite preset sits at the full-region knee');
+assert(honestKnee.economics.requestedActiveParticleBudget === 1440, 'the knee preserves the measured intermediate active request');
+assert(honestKnee.economics.sourceFluxParticlesPerSecond === 960, 'the knee preserves the measured intermediate flux request');
+assert(honestKnee.economics.opticalDensityScale === 1.7, 'the knee requests the pinned maximum speed without overshooting its clamp');
+assert(honestKnee.economics.reconstructionRadiusScale === 2.5, 'the knee preserves the measured intermediate aperture scale');
+assert(honestKnee.economics.lifetimeSeconds === 10, 'the knee preserves the measured intermediate lifetime request');
+
+const redline = resolveJuiceBudget(100);
+assert(redline.zone === 'redline', 'the upper range is explicitly redline evidence');
+assert(redline.economics.requestedActiveParticleBudget === 1920, 'redline retains the measured max-long occupancy request');
+assert(redline.economics.sourceFluxParticlesPerSecond === 1440, 'redline retains the measured max-long flux request');
+assert(redline.economics.opticalDensityScale === 1.7, 'redline does not advance a speed request after effective speed saturates');
+assert(redline.economics.reconstructionRadiusScale === 2.8, 'redline stops below the pinned aperture clamp instead of creating a dead zone');
+assert(redline.economics.lifetimeSeconds === 12, 'redline retains the measured max-long lifetime request');
+
+const nearRedline = resolveJuiceBudget(94);
+const terminalNeighbor = resolveJuiceBudget(99);
+const nearRedlinePacket = createLiveFingerFluidEmitterPacket(makeFrame(5), nearRedline.economics);
+const terminalNeighborPacket = createLiveFingerFluidEmitterPacket(makeFrame(5), terminalNeighbor.economics);
+const redlinePacket = createLiveFingerFluidEmitterPacket(makeFrame(5), redline.economics);
+const effectiveRadius = (radius: number) => Math.min(0.18, Math.max(0.035, radius * 1.45));
+const effectiveSpeed = (strength: number) => Math.min(2.6, Math.max(0.25, strength * 1.35));
+assert(
+  effectiveRadius(redlinePacket.emitters[0].radius) > effectiveRadius(nearRedlinePacket.emitters[0].radius),
+  'the final Juice range must continue changing effective inlet aperture',
+);
+assert(
+  effectiveRadius(redlinePacket.emitters[0].radius) > effectiveRadius(terminalNeighborPacket.emitters[0].radius),
+  'adjacent terminal Juice positions must not collapse into a physical dead zone',
+);
+assert(
+  effectiveSpeed(redlinePacket.emitters[0].strength) === effectiveSpeed(honestKnee.economics.opticalDensityScale * 1.15),
+  'the macro must expose the pinned speed plateau instead of pretending later requests increase speed',
+);
+
+const invalidJuice = resolveJuiceBudget(Number.NaN);
+assert(invalidJuice.fallbackActive === true, 'invalid Juice cannot silently become an authoritative default');
 
 const sweep = createLiveFingerFluidFrontierSweep({
   requestedParticleCount: 2400,

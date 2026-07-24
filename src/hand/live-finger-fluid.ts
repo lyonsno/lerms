@@ -8,6 +8,8 @@ export const LIVE_FINGER_FLUID_ADAPTER_CONTRACT = 'hand-state-distal-axis-full-e
 export const KAMINOS_FLUID_REVISION = '71d09e78fbf16c9edecde3ea72a82ba17b656bf2' as const;
 export const FULL_EXTENSION_THRESHOLD = 0.86 as const;
 export const LERMS_LIVE_FLUID_PARTICLE_COUNT = 2_400 as const;
+export const PINNED_KAMINOS_LIVE_INLET_RESIDENCE_SECONDS = 1.65 as const;
+export const PINNED_KAMINOS_LIVE_INLET_MAXIMUM_TRAVEL_DISTANCE = 2.4 as const;
 export const LIVE_FLUID_CAMERA = Object.freeze({
   fovRadians: Math.PI / 3.15,
   yaw: 0,
@@ -47,12 +49,63 @@ export interface LiveFingerFluidEconomics {
   requestedParticleCount: number;
   effectiveParticleCount: number;
   requestedActiveParticleBudget: number;
-  effectiveActiveParticleBudget: number;
+  effectiveActiveParticleBudget: null;
   sourceFluxParticlesPerSecond: number;
   opticalDensityScale: number;
   reconstructionRadiusScale: number;
   lifetimeSeconds: number;
   defaultSubstitution: boolean;
+  fallbackActive: boolean;
+  fallbackReason: string | null;
+}
+
+export interface LiveFingerFluidJuiceBudget {
+  schema: 'lerms.live-finger-fluid-juice-budget.v0';
+  requestedBudget: number;
+  effectiveBudget: number;
+  zone: 'economy' | 'full' | 'redline';
+  economics: Required<LiveFingerFluidEconomicsOptions>;
+  defaultSubstitution: boolean;
+  fallbackActive: boolean;
+  fallbackReason: string | null;
+}
+
+export interface PinnedKaminosLiveInletRuntimeAuthority {
+  schema: 'lerms.live-finger-fluid-runtime-authority.v0';
+  pinnedRevision: typeof KAMINOS_FLUID_REVISION;
+  complete: boolean;
+  authority:
+    | 'pinned_runtime_receipt'
+    | 'missing_runtime_receipt'
+    | 'stale_or_mismatched_runtime_receipt'
+    | 'malformed_runtime_receipt'
+    | 'invalid_requested_economics';
+  requested: LiveFingerFluidEconomics;
+  effective: {
+    packetId: string | null;
+    sourceRoute: string | null;
+    particleCount: number | null;
+    activeParticleBudget: null;
+    expectedParticleReleaseRate: number | null;
+    opticalDensityScale: null;
+    reconstructionRadiusScale: null;
+    residenceSeconds: typeof PINNED_KAMINOS_LIVE_INLET_RESIDENCE_SECONDS;
+    maximumTravelDistance: typeof PINNED_KAMINOS_LIVE_INLET_MAXIMUM_TRAVEL_DISTANCE;
+    inlets: readonly {
+      id: string;
+      radius: number;
+      maximumSpeed: number;
+      active: boolean;
+    }[];
+  };
+  support: {
+    particleCount: 'solver_initialization_receipt';
+    activeParticleBudget: 'unsupported_by_pinned_runtime';
+    sourceFlux: 'derived_from_aperture_and_speed';
+    opticalDensity: 'unsupported_metadata_coupled_to_speed';
+    reconstructionRadius: 'unsupported_metadata_coupled_to_aperture';
+    lifetime: 'unsupported_metadata_hard_recycle';
+  };
   fallbackActive: boolean;
   fallbackReason: string | null;
 }
@@ -155,6 +208,111 @@ function clampNumber(value: number | undefined, fallback: number, minimum: numbe
   };
 }
 
+const LIVE_FLUID_JUICE_ANCHORS = Object.freeze([
+  {
+    budget: 0,
+    economics: {
+      requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
+      requestedActiveParticleBudget: 120,
+      sourceFluxParticlesPerSecond: 60,
+      opticalDensityScale: 0.5,
+      reconstructionRadiusScale: 0.7,
+      lifetimeSeconds: 1,
+    },
+  },
+  {
+    budget: 50,
+    economics: {
+      requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
+      requestedActiveParticleBudget: 720,
+      sourceFluxParticlesPerSecond: 360,
+      opticalDensityScale: 1.7,
+      reconstructionRadiusScale: 1.6,
+      lifetimeSeconds: 6,
+    },
+  },
+  {
+    budget: 80,
+    economics: {
+      requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
+      requestedActiveParticleBudget: 1_440,
+      sourceFluxParticlesPerSecond: 960,
+      opticalDensityScale: 1.7,
+      reconstructionRadiusScale: 2.5,
+      lifetimeSeconds: 10,
+    },
+  },
+  {
+    budget: 100,
+    economics: {
+      requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
+      requestedActiveParticleBudget: 1_920,
+      sourceFluxParticlesPerSecond: 1_440,
+      opticalDensityScale: 1.7,
+      reconstructionRadiusScale: 2.8,
+      lifetimeSeconds: 12,
+    },
+  },
+] as const);
+
+function interpolate(left: number, right: number, amount: number): number {
+  return left + (right - left) * amount;
+}
+
+function snap(value: number, minimum: number, step: number): number {
+  return Number((minimum + Math.round((value - minimum) / step) * step).toFixed(6));
+}
+
+export function resolveLiveFingerFluidJuiceBudget(requestedBudget: number): LiveFingerFluidJuiceBudget {
+  const valid = Number.isFinite(requestedBudget) && requestedBudget >= 0 && requestedBudget <= 100;
+  const effectiveBudget = valid ? requestedBudget : 50;
+  const rightIndex = Math.max(
+    1,
+    LIVE_FLUID_JUICE_ANCHORS.findIndex(anchor => effectiveBudget <= anchor.budget),
+  );
+  const left = LIVE_FLUID_JUICE_ANCHORS[rightIndex - 1];
+  const right = LIVE_FLUID_JUICE_ANCHORS[rightIndex];
+  const amount = (effectiveBudget - left.budget) / Math.max(1, right.budget - left.budget);
+  const economics = {
+    requestedParticleCount: LERMS_LIVE_FLUID_PARTICLE_COUNT,
+    requestedActiveParticleBudget: snap(
+      interpolate(left.economics.requestedActiveParticleBudget, right.economics.requestedActiveParticleBudget, amount),
+      120,
+      60,
+    ),
+    sourceFluxParticlesPerSecond: snap(
+      interpolate(left.economics.sourceFluxParticlesPerSecond, right.economics.sourceFluxParticlesPerSecond, amount),
+      60,
+      20,
+    ),
+    opticalDensityScale: snap(
+      interpolate(left.economics.opticalDensityScale, right.economics.opticalDensityScale, amount),
+      0.5,
+      0.1,
+    ),
+    reconstructionRadiusScale: snap(
+      interpolate(left.economics.reconstructionRadiusScale, right.economics.reconstructionRadiusScale, amount),
+      0.7,
+      0.01,
+    ),
+    lifetimeSeconds: snap(
+      interpolate(left.economics.lifetimeSeconds, right.economics.lifetimeSeconds, amount),
+      1,
+      0.5,
+    ),
+  };
+  return {
+    schema: 'lerms.live-finger-fluid-juice-budget.v0',
+    requestedBudget,
+    effectiveBudget,
+    zone: effectiveBudget > 80 ? 'redline' : effectiveBudget >= 50 ? 'full' : 'economy',
+    economics,
+    defaultSubstitution: !valid,
+    fallbackActive: !valid,
+    fallbackReason: valid ? null : 'invalid_juice_budget',
+  };
+}
+
 const LIVE_FLUID_ROUTE_CONTROLS = Object.freeze([
   { query: 'fluid_active', option: 'requestedActiveParticleBudget', minimum: 120, maximum: 1920, step: 60 },
   { query: 'fluid_flux', option: 'sourceFluxParticlesPerSecond', minimum: 60, maximum: 1440, step: 20 },
@@ -236,7 +394,7 @@ export function normalizeLiveFingerFluidEconomics(
     requestedParticleCount: options.requestedParticleCount ?? LERMS_LIVE_FLUID_PARTICLE_COUNT,
     effectiveParticleCount: requestedParticleCount.value,
     requestedActiveParticleBudget: options.requestedActiveParticleBudget ?? Math.round(requestedParticleCount.value * 0.18),
-    effectiveActiveParticleBudget: requestedActiveParticleBudget.value,
+    effectiveActiveParticleBudget: null,
     sourceFluxParticlesPerSecond: sourceFluxParticlesPerSecond.value,
     opticalDensityScale: opticalDensityScale.value,
     reconstructionRadiusScale: reconstructionRadiusScale.value,
@@ -244,6 +402,157 @@ export function normalizeLiveFingerFluidEconomics(
     defaultSubstitution,
     fallbackActive: defaultSubstitution,
     fallbackReason: defaultSubstitution ? 'invalid_fluid_economics_clamped' : null,
+  };
+}
+
+export function createPinnedKaminosLiveInletRuntimeAuthority(
+  economics: LiveFingerFluidEconomics,
+  runtime: {
+    effectiveParticleCount: number | null;
+    expectedPacketId?: unknown;
+    expectedSourceRoute?: unknown;
+    packetAuthority?: {
+      simulation_safe?: unknown;
+      stale?: unknown;
+    } | null;
+    packetEconomics?: LiveFingerFluidEconomics | null;
+    receipt?: {
+      packetId?: unknown;
+      sourceRoute?: unknown;
+      expectedParticleReleaseRate?: unknown;
+    } | null;
+    liveInlets: {
+      packetId?: unknown;
+      sourceRoute?: unknown;
+      expectedParticleReleaseRate?: unknown;
+      inlets?: unknown;
+    } | null;
+  },
+): PinnedKaminosLiveInletRuntimeAuthority {
+  const effectiveParticleCount = Number.isSafeInteger(runtime.effectiveParticleCount)
+    && Number(runtime.effectiveParticleCount) > 0
+    ? Number(runtime.effectiveParticleCount)
+    : null;
+  const packetId = typeof runtime.liveInlets?.packetId === 'string' && runtime.liveInlets.packetId.length > 0
+    ? runtime.liveInlets.packetId
+    : null;
+  const sourceRoute = typeof runtime.liveInlets?.sourceRoute === 'string' && runtime.liveInlets.sourceRoute.length > 0
+    ? runtime.liveInlets.sourceRoute
+    : null;
+  const liveReleaseValue = runtime.liveInlets?.expectedParticleReleaseRate;
+  const expectedParticleReleaseRate = typeof liveReleaseValue === 'number'
+    && Number.isFinite(liveReleaseValue)
+    && liveReleaseValue >= 0
+    ? liveReleaseValue
+    : null;
+  const inlets = Array.isArray(runtime.liveInlets?.inlets)
+    ? runtime.liveInlets.inlets.flatMap((value): PinnedKaminosLiveInletRuntimeAuthority['effective']['inlets'][number][] => {
+      if (!value || typeof value !== 'object') return [];
+      const inlet = value as Record<string, unknown>;
+      if (typeof inlet.id !== 'string'
+        || inlet.id.length === 0
+        || !Number.isFinite(inlet.radius)
+        || Number(inlet.radius) <= 0
+        || !Number.isFinite(inlet.maximumSpeed)
+        || Number(inlet.maximumSpeed) < 0
+        || typeof inlet.active !== 'boolean') return [];
+      return [{
+        id: inlet.id,
+        radius: Number(inlet.radius),
+        maximumSpeed: Number(inlet.maximumSpeed),
+        active: inlet.active,
+      }];
+    })
+    : [];
+  const expectedPacketId = typeof runtime.expectedPacketId === 'string' && runtime.expectedPacketId.length > 0
+    ? runtime.expectedPacketId
+    : null;
+  const expectedSourceRoute = typeof runtime.expectedSourceRoute === 'string' && runtime.expectedSourceRoute.length > 0
+    ? runtime.expectedSourceRoute
+    : null;
+  const receiptPacketId = typeof runtime.receipt?.packetId === 'string' && runtime.receipt.packetId.length > 0
+    ? runtime.receipt.packetId
+    : null;
+  const receiptSourceRoute = typeof runtime.receipt?.sourceRoute === 'string' && runtime.receipt.sourceRoute.length > 0
+    ? runtime.receipt.sourceRoute
+    : null;
+  const receiptReleaseValue = runtime.receipt?.expectedParticleReleaseRate;
+  const receiptReleaseRate = typeof receiptReleaseValue === 'number' ? receiptReleaseValue : Number.NaN;
+  const packetEconomicsMatch = runtime.packetEconomics !== null
+    && runtime.packetEconomics !== undefined
+    && [
+      'requestedParticleCount',
+      'effectiveParticleCount',
+      'requestedActiveParticleBudget',
+      'sourceFluxParticlesPerSecond',
+      'opticalDensityScale',
+      'reconstructionRadiusScale',
+      'lifetimeSeconds',
+    ].every(key => runtime.packetEconomics?.[key as keyof LiveFingerFluidEconomics] === economics[key as keyof LiveFingerFluidEconomics]);
+  const evidencePresent = effectiveParticleCount !== null
+    && runtime.liveInlets !== null
+    && runtime.receipt !== null
+    && runtime.receipt !== undefined
+    && expectedPacketId !== null
+    && expectedSourceRoute !== null;
+  const malformed = evidencePresent && (
+    packetId === null
+    || sourceRoute === null
+    || receiptPacketId === null
+    || receiptSourceRoute === null
+    || expectedParticleReleaseRate === null
+    || !Number.isFinite(receiptReleaseRate)
+    || receiptReleaseRate < 0
+    || !Array.isArray(runtime.liveInlets?.inlets)
+    || inlets.length !== runtime.liveInlets?.inlets?.length
+  );
+  const identityMatch = !malformed
+    && packetId === expectedPacketId
+    && packetId === receiptPacketId
+    && sourceRoute === expectedSourceRoute
+    && sourceRoute === receiptSourceRoute
+    && expectedParticleReleaseRate === receiptReleaseRate
+    && packetEconomicsMatch
+    && runtime.packetAuthority?.simulation_safe === true
+    && runtime.packetAuthority?.stale === false;
+  const complete = !economics.fallbackActive && evidencePresent && !malformed && identityMatch;
+  const authority = economics.fallbackActive
+    ? 'invalid_requested_economics'
+    : !evidencePresent
+      ? 'missing_runtime_receipt'
+      : malformed
+        ? 'malformed_runtime_receipt'
+        : complete
+          ? 'pinned_runtime_receipt'
+          : 'stale_or_mismatched_runtime_receipt';
+  return {
+    schema: 'lerms.live-finger-fluid-runtime-authority.v0',
+    pinnedRevision: KAMINOS_FLUID_REVISION,
+    complete,
+    authority,
+    requested: economics,
+    effective: {
+      packetId,
+      sourceRoute,
+      particleCount: effectiveParticleCount,
+      activeParticleBudget: null,
+      expectedParticleReleaseRate,
+      opticalDensityScale: null,
+      reconstructionRadiusScale: null,
+      residenceSeconds: PINNED_KAMINOS_LIVE_INLET_RESIDENCE_SECONDS,
+      maximumTravelDistance: PINNED_KAMINOS_LIVE_INLET_MAXIMUM_TRAVEL_DISTANCE,
+      inlets,
+    },
+    support: {
+      particleCount: 'solver_initialization_receipt',
+      activeParticleBudget: 'unsupported_by_pinned_runtime',
+      sourceFlux: 'derived_from_aperture_and_speed',
+      opticalDensity: 'unsupported_metadata_coupled_to_speed',
+      reconstructionRadius: 'unsupported_metadata_coupled_to_aperture',
+      lifetime: 'unsupported_metadata_hard_recycle',
+    },
+    fallbackActive: !complete,
+    fallbackReason: complete ? null : authority,
   };
 }
 
@@ -397,13 +706,9 @@ export function createLiveFingerFluidFrontierSweep({
         blankOrPartialOutput: activeEmitterCount <= 0,
       },
       estimatedVisibleMaterialScore: activeEmitterCount
-        * packet.economics.sourceFluxParticlesPerSecond
         * packet.economics.opticalDensityScale
-        * packet.economics.reconstructionRadiusScale
-        * Math.sqrt(packet.economics.lifetimeSeconds),
-      estimatedSolverWorkScore: packet.economics.effectiveActiveParticleBudget
-        * Math.max(1, activeEmitterCount)
-        / packet.economics.effectiveParticleCount,
+        * packet.economics.reconstructionRadiusScale ** 2,
+      estimatedSolverWorkScore: packet.economics.effectiveParticleCount,
     };
   }));
   return {

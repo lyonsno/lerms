@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import { normalizeFingerFluidLiveInletPacket } from 'kaminos/finger-fluid-webgpu-core.js';
 
 const liveHandSource = readFileSync(new URL('../src/hand/live-hand.ts', import.meta.url), 'utf8');
+const pinnedKaminosSource = readFileSync(
+  new URL('../node_modules/kaminos/finger-fluid-webgpu-core.js', import.meta.url),
+  'utf8',
+);
 
 const normalized = normalizeFingerFluidLiveInletPacket({
   packet_id: 'route-truth-fixture',
@@ -38,6 +42,21 @@ assert.doesNotMatch(
   liveHandSource,
   /fluid \$\{KAMINOS_FINGER_FLUID_DEFAULT_PARTICLE_COUNT\}p/,
   'operator route truth must not report an unrelated package default as the effective allocation',
+);
+assert.doesNotMatch(
+  pinnedKaminosSource,
+  /source_flux_particles_per_second|optical_density_scale|reconstruction_radius_scale|lifetime_seconds|activeParticleBudget/,
+  'the pinned runtime audit must be revised if independent economics controls appear',
+);
+assert.match(
+  pinnedKaminosSource,
+  /liveAge\s*>\s*1\.65\s*\|\|\s*distance\(particle\.position\.xyz,\s*liveSource\.originRadius\.xyz\)\s*>\s*2\.4/,
+  'the pinned runtime hard residence identity must stay explicit until a canonical replacement lands',
+);
+assert.match(
+  liveHandSource,
+  /createPinnedKaminosLiveInletRuntimeAuthority/,
+  'operator debug truth must be assembled from the pinned runtime receipt',
 );
 
 console.log('Kaminos live inlet route contract ok');

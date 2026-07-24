@@ -55,6 +55,11 @@ assert.match(
 );
 assert.match(
   liveHandSource,
+  /mapping:\s*juiceBudgetAuthority\s*===\s*'macro_control'\s*\?\s*liveJuiceBudget\s*:\s*null/,
+  'an explicit assay or advanced profile must not expose the last macro mapping as current authority',
+);
+assert.match(
+  liveHandSource,
   /resolveLiveFingerFluidRouteEconomics\(params,\s*readFluidEconomicsControls\(\)\)/,
   'live smoke URLs must carry the complete fluid economics profile instead of relying on prior slider state',
 );
@@ -120,6 +125,11 @@ assert.match(
   witnessSource,
   /sourceFluxMismatch[\s\S]*observedParticleReleaseRate[\s\S]*expectedParticleReleaseRate/,
   'the witness rejects nominal source flux that is not observed by GPU recirculation truth',
+);
+assert.match(
+  witnessSource,
+  /juiceBudgetAuthorityMismatch[\s\S]*assay_explicit_profile[\s\S]*runtimeEconomicsAuthorityMismatch[\s\S]*pinned_runtime_receipt[\s\S]*activeParticleBudget[\s\S]*residenceSeconds/,
+  'the witness rejects missing, partial, or requested-as-effective runtime economics authority',
 );
 assert.match(
   witnessSource,
