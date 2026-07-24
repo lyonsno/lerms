@@ -25,6 +25,10 @@ import {
   type LiveHandCaptureWorkerResult,
 } from './live-hand-capture-contract.js';
 import {
+  LiveHandLatencyReceiptJoiner,
+  type LiveHandLatencyReceipt,
+} from './live-hand-latency-receipt.js';
+import {
   LIVE_HAND_FLUID_PIXEL_RATIO_CAP,
   advanceFluidSimulationClock,
   decideLiveHandFrameWork,
@@ -215,14 +219,9 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
 let benchmarkSessionId = '';
 let pendingLatencySample: RuntimeLatencySample | null = null;
 let benchmarkDroppedBeforeRender = 0;
+let benchmarkAcceptedFrameCount = 0;
 let lastBenchmarkError: string | null = null;
-const captureMetricsByFrame = new Map<string, {
-  capturedAtMs: number;
-  captureAcquireMs: number;
-  workerEncodeMs: number;
-  clientEncodeMs: number;
-  nativePostMs: number;
-}>();
+const latencyReceiptJoiner = new LiveHandLatencyReceiptJoiner<NormalizedManoFrame>();
 const latencySamples: RuntimeLatencySample[] = [];
 const unflushedLatencySamples: RuntimeLatencySample[] = [];
 let latencyFlushTimer: number | null = null;
@@ -477,8 +476,9 @@ function resetBenchmark(): void {
   benchmarkSessionId = globalThis.crypto?.randomUUID?.() || `lerms-hand-${Date.now()}`;
   pendingLatencySample = null;
   benchmarkDroppedBeforeRender = 0;
+  benchmarkAcceptedFrameCount = 0;
   lastBenchmarkError = null;
-  captureMetricsByFrame.clear();
+  latencyReceiptJoiner.reset();
   latencySamples.length = 0;
   unflushedLatencySamples.length = 0;
   captureAcquireMs.length = 0;
@@ -707,16 +707,15 @@ async function captureFrame(runGeneration: number): Promise<void> {
       body: encoded.blob,
     });
     if (!isCaptureRunCurrent(runGeneration, captureRunGeneration, running)) return;
-    captureMetricsByFrame.set(captureId, {
+    const joinedReceipt = latencyReceiptJoiner.registerCapture(captureId, {
       capturedAtMs,
       captureAcquireMs: acquisitionMs,
       workerEncodeMs: encoded.workerEncodeMs,
       clientEncodeMs,
       nativePostMs: performance.now() - postStartedAt,
     });
-    for (const [frameId, metrics] of captureMetricsByFrame) {
-      if (capturedAtMs - metrics.capturedAtMs > 10_000) captureMetricsByFrame.delete(frameId);
-    }
+    if (joinedReceipt) armLatencySample(joinedReceipt);
+    latencyReceiptJoiner.prune(capturedAtMs, 10_000);
   } catch (error) {
     if (
       isCaptureRunCurrent(runGeneration, captureRunGeneration, running)
@@ -728,6 +727,39 @@ async function captureFrame(runGeneration: number): Promise<void> {
   }
 }
 
+function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>): void {
+  if (pendingLatencySample) benchmarkDroppedBeforeRender += 1;
+  const { frame, captureMetrics, viewerReceiveTimestampMs } = receipt;
+  const captureToViewerReceiveMs = Math.max(0, viewerReceiveTimestampMs - frame.captureTimestampMs);
+  pendingLatencySample = {
+    schema: 'hand-state.viewer-latency-sample.v0',
+    benchmarkSessionId,
+    frameId: frame.frameId,
+    runtimeOwner: 'hand-state-runtime',
+    sourceAuthority: 'live_simulation',
+    requestedRoute: frame.requestedRoute,
+    effectiveRoute: frame.effectiveRoute,
+    model: frame.model,
+    deviceRoute: frame.deviceRoute,
+    dtypeRoute: frame.dtypeRoute,
+    manoVertexCount: frame.vertexCount,
+    manoFaceCount: frame.faceCount,
+    captureTimestampMs: frame.captureTimestampMs,
+    viewerReceiveTimestampMs,
+    captureAcquireMs: captureMetrics.captureAcquireMs,
+    workerEncodeMs: captureMetrics.workerEncodeMs,
+    captureRoute: LIVE_HAND_CAPTURE_WORKER_ROUTE,
+    clientEncodeMs: captureMetrics.clientEncodeMs,
+    nativePostMs: captureMetrics.nativePostMs,
+    modelLatencyMs: frame.modelLatencyMs,
+    captureToSidecarPublishMs: frame.captureToSidecarPublishMs,
+    publishToViewerReceiveMs: Math.max(0, captureToViewerReceiveMs - frame.captureToSidecarPublishMs),
+    captureToViewerReceiveMs,
+    captureToWebglRenderReturnMs: -1,
+    renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented',
+  };
+}
+
 function applyState(state: Record<string, unknown>): void {
   if (captureWorkerError) {
     deactivateFluidInlets('capture_worker_failed');
@@ -737,40 +769,9 @@ function applyState(state: Record<string, unknown>): void {
   try {
     const frame = normalizeLiveManoFrame(state);
     updateHandSurface(frame);
-    const captureMetrics = captureMetricsByFrame.get(frame.frameId);
-    if (captureMetrics && !latencySamples.some(sample => sample.frameId === frame.frameId)) {
-      if (pendingLatencySample) benchmarkDroppedBeforeRender += 1;
-      const viewerReceiveTimestampMs = Date.now();
-      const captureToViewerReceiveMs = Math.max(0, viewerReceiveTimestampMs - frame.captureTimestampMs);
-      pendingLatencySample = {
-        schema: 'hand-state.viewer-latency-sample.v0',
-        benchmarkSessionId,
-        frameId: frame.frameId,
-        runtimeOwner: 'hand-state-runtime',
-        sourceAuthority: 'live_simulation',
-        requestedRoute: frame.requestedRoute,
-        effectiveRoute: frame.effectiveRoute,
-        model: frame.model,
-        deviceRoute: frame.deviceRoute,
-        dtypeRoute: frame.dtypeRoute,
-        manoVertexCount: frame.vertexCount,
-        manoFaceCount: frame.faceCount,
-        captureTimestampMs: frame.captureTimestampMs,
-        viewerReceiveTimestampMs,
-        captureAcquireMs: captureMetrics.captureAcquireMs,
-        workerEncodeMs: captureMetrics.workerEncodeMs,
-        captureRoute: LIVE_HAND_CAPTURE_WORKER_ROUTE,
-        clientEncodeMs: captureMetrics.clientEncodeMs,
-        nativePostMs: captureMetrics.nativePostMs,
-        modelLatencyMs: frame.modelLatencyMs,
-        captureToSidecarPublishMs: frame.captureToSidecarPublishMs,
-        publishToViewerReceiveMs: Math.max(0, captureToViewerReceiveMs - frame.captureToSidecarPublishMs),
-        captureToViewerReceiveMs,
-        captureToWebglRenderReturnMs: -1,
-        renderCompletionAuthority: 'webgl_render_call_complete_not_compositor_presented',
-      };
-      captureMetricsByFrame.delete(frame.frameId);
-    }
+    benchmarkAcceptedFrameCount += 1;
+    const joinedReceipt = latencyReceiptJoiner.registerFrame(frame.frameId, frame, Date.now());
+    if (joinedReceipt) armLatencySample(joinedReceipt);
     const tail = latencySamples.length ? summarizeLiveHandLatency(latencySamples) : null;
     const receipt = tail ? ` | webgl-return p50 ${tail.captureToWebglRenderReturnMs.p50.toFixed(0)} p95 ${tail.captureToWebglRenderReturnMs.p95.toFixed(0)}ms` : '';
     setStatus(`live MANO | model ${frame.modelLatencyMs.toFixed(0)}ms${receipt}`, 'live');
@@ -877,9 +878,21 @@ async function stop(): Promise<void> {
   video.srcObject = null;
   deactivateFluidInlets('hand_control_stopped');
   await flushLatencySamples();
+  const receiptJoinState = latencyReceiptJoiner.snapshot();
+  const missingEvidenceError = benchmarkAcceptedFrameCount > 0 && latencySamples.length === 0
+    ? `telemetry failure: rendered ${benchmarkAcceptedFrameCount} live MANO frames but recorded 0 viewer latency samples`
+    : receiptJoinState.discardedFrameCount > 0
+      || receiptJoinState.pendingFrameCount > 0
+      || benchmarkDroppedBeforeRender > 0
+      || pendingLatencySample !== null
+      ? `telemetry incomplete: ${receiptJoinState.pendingFrameCount} unmatched, ${receiptJoinState.discardedFrameCount} discarded, ${benchmarkDroppedBeforeRender} superseded, ${pendingLatencySample ? 1 : 0} awaiting render`
+      : null;
+  if (missingEvidenceError) lastBenchmarkError = missingEvidenceError;
+  const benchmarkFailure = missingEvidenceError
+    || (unflushedLatencySamples.length > 0 ? lastBenchmarkError || 'telemetry failure: viewer latency samples remain unflushed' : null);
   try {
     await runtimeFetch('/sidecar/stop', { method: 'POST' });
-    setStatus('runtime stopped');
+    setStatus(benchmarkFailure || 'runtime stopped', benchmarkFailure ? 'error' : 'idle');
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error), 'error');
   }
@@ -1066,8 +1079,10 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     deliveryMode: 'long_poll',
     orientationContract: MANO_DISPLAY_ORIENTATION,
     benchmarkDroppedBeforeRender,
+    benchmarkAcceptedFrameCount,
     benchmarkError: lastBenchmarkError,
     benchmark: latencySamples.length ? summarizeLiveHandLatency(latencySamples) : null,
+    benchmarkReceiptJoin: latencyReceiptJoiner.snapshot(),
     capture: {
       route: LIVE_HAND_CAPTURE_WORKER_ROUTE,
       workerActive: Boolean(captureWorker),

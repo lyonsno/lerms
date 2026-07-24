@@ -12,6 +12,7 @@ import {
   isCaptureRunCurrent,
   normalizeCaptureWorkerResult,
 } from '../src/hand/live-hand-capture-contract.js';
+import { LiveHandLatencyReceiptJoiner } from '../src/hand/live-hand-latency-receipt.js';
 import {
   LIVE_HAND_FLUID_FRAME_INTERVAL_MS,
   LIVE_HAND_FLUID_MAX_CATCH_UP_MS,
@@ -84,6 +85,34 @@ assertThrows(
 assertThrows(
   () => normalizeCaptureWorkerResult({ ...workerResult, blob: new Blob([], { type: 'image/jpeg' }) }, 'capture-1'),
   'nonblank JPEG',
+);
+
+const receiptJoiner = new LiveHandLatencyReceiptJoiner<{ route: string }>();
+const earlyFrameReceipt = receiptJoiner.registerFrame(
+  'capture-state-first',
+  { route: LIVE_HAND_ROUTE },
+  1_100,
+);
+assert(earlyFrameReceipt === null, 'a state received before POST completion waits for its capture timing');
+assert(receiptJoiner.snapshot().pendingFrameCount === 1, 'an unmatched live frame remains visible as pending evidence');
+const stateFirstJoin = receiptJoiner.registerCapture('capture-state-first', {
+  capturedAtMs: 1_000,
+  captureAcquireMs: 1.5,
+  workerEncodeMs: 4.5,
+  clientEncodeMs: 6,
+  nativePostMs: 75,
+});
+assert(stateFirstJoin?.frame.route === LIVE_HAND_ROUTE, 'capture timing completes a state-first receipt');
+assert(stateFirstJoin?.viewerReceiveTimestampMs === 1_100, 'state-first receipt preserves viewer arrival time');
+assert(
+  receiptJoiner.snapshot().pendingFrameCount === 0 && receiptJoiner.snapshot().completedCount === 1,
+  'a completed state-first receipt leaves no unmatched evidence',
+);
+receiptJoiner.registerFrame('capture-never-completes', { route: LIVE_HAND_ROUTE }, 2_000);
+receiptJoiner.prune(12_001, 10_000);
+assert(
+  receiptJoiner.snapshot().discardedFrameCount === 1,
+  'a live frame whose capture timing never arrives is counted as discarded evidence',
 );
 
 assert(LIVE_HAND_FLUID_FRAME_INTERVAL_MS === 1000 / 60, 'fluid simulation targets the 60 Hz interaction cadence');
