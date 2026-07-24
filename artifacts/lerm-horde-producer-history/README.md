@@ -55,19 +55,22 @@ or Lerm-species evidence?
 Result: yes. `operator-replay.png` and `operator-replay.svg` show the exact
 no-history control, the history-admitted Hill, and the same Hill after producer
 departure. The control carries no traffic. Admission creates one compact
-producer-traffic band over 14 supported roots, and the identical traffic field
-persists after departure. All three panels retain zero inferred contacts and
-zero support-shock resets. The replay independently reproduces the receipt's
-traffic and topology-possibility checksums before it renders.
+producer-traffic band over 14 supported roots and renders the current producer
+rail in yellow. After departure the yellow presence rail is absent while the
+identical blue traffic field remains, making absence plus persistence visible
+instead of asking the operator to infer it from labels. All three panels retain
+zero inferred contacts and zero support-shock resets. The replay independently
+reproduces the receipt's traffic and topology-possibility checksums before it
+renders.
 
 Route:
 
 - repo: `lerms`
 - worktree: `/private/tmp/lerms-hill-producer-history-operator-replay-0724`
 - branch: `cc/hill-producer-history-operator-replay-0724`
-- replay implementation: `b22474eb10f927f1416ce760354a1dca075fc538`
+- replay implementation: `96afdd5a30b4a0e36ae8152e2b866c4ef7ef289b`
 - receipt input: `receipt.json` at SHA-256 `c56627554f5cacb8f151361419bfe70177e2d86490193e30b2f148a11b430b2e`
-- generated: `2026-07-24T01:13:13Z`
+- generated: `2026-07-24T01:34:25Z`
 - effective Hill route: `lerms/hill-of-hills/producer-contact-history-v0`
 - effective authority/backend/config: `live_simulation` / `cpu-live` / `hill-of-hills-live-v0`
 - replay profile: `lerm-horde-live-producer-history-v0`, seed `414`, grid `48x60`, terrain `12x15`, phase duration `600ms`
@@ -83,13 +86,13 @@ npm run witness:hill-producer-history-replay -- \
 Images and reports:
 
 - `operator-replay.png`: inspected raster rendering of the three-state replay;
-  SHA-256 `7a8227a07cbaa42c73bc7d107eb73537e4b55171e28b9337e518f96106e8c699`.
+  SHA-256 `5efe8fcd680415d51faf0d2f6f54fe2197c4f54f69e4179212a5b23950dee23a`.
 - `operator-replay.svg`: primary deterministic replay image; SHA-256
-  `c80f05025997a109e503fbb052215881b00cd9d0192742d16db4a2fd8ab2411a`.
+  `ced9ba6e245c320a34cac488fa11c7750fad063af0d1dd5abe5f78fb40f9be29`.
 - `operator-replay.json`: machine report with requested/effective source
   and output path identity, independently replayed checksums, assertion results,
   and primary output status; SHA-256
-  `fb99fc1d752d206e117f779777d3d7119f66b691e77b3ca59d7334b03fe1ffe1`.
+  `613cb55d85be8da52e488fb85c225ce54ad7d900f6123ce42647961beb19488f`.
 
 This evidence does not prove a moving rendered creature, a final Lerm body,
 complete stance contacts, or that the current traffic material is the desired

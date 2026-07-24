@@ -29,6 +29,8 @@
     {
       "id": "no-history-control",
       "label": "no-history control",
+      "producerPresence": "absent",
+      "retainedTrafficMemory": false,
       "frameId": "lerm-horde-hill-post-departure",
       "sampleChecksum": "9ee7e994",
       "topologyPossibilityChecksum": "26349850",
@@ -45,6 +47,8 @@
     {
       "id": "history-admitted",
       "label": "history admitted",
+      "producerPresence": "present",
+      "retainedTrafficMemory": true,
       "frameId": "lerm-horde-hill-admitted",
       "sampleChecksum": "86131828",
       "topologyPossibilityChecksum": "8140a856",
@@ -61,6 +65,8 @@
     {
       "id": "after-departure",
       "label": "after departure",
+      "producerPresence": "departed",
+      "retainedTrafficMemory": true,
       "frameId": "lerm-horde-hill-post-departure",
       "sampleChecksum": "06a255a1",
       "topologyPossibilityChecksum": "3e34b040",
@@ -88,8 +94,8 @@
     "width": 1260,
     "height": 610,
     "cellCount": 8640,
-    "rootMarkerCount": 30,
-    "svgSha256": "c80f05025997a109e503fbb052215881b00cd9d0192742d16db4a2fd8ab2411a",
+    "rootMarkerCount": 15,
+    "svgSha256": "ced9ba6e245c320a34cac488fa11c7750fad063af0d1dd5abe5f78fb40f9be29",
     "primaryOutputWritten": true
   },
   "failurePhase": null,
@@ -102,6 +108,6 @@
       "imageOut": "/private/tmp/lerms-hill-producer-history-operator-replay-0724/artifacts/lerm-horde-producer-history/operator-replay.svg",
       "reportOut": "/private/tmp/lerms-hill-producer-history-operator-replay-0724/artifacts/lerm-horde-producer-history/operator-replay.json"
     },
-    "imageSha256": "c80f05025997a109e503fbb052215881b00cd9d0192742d16db4a2fd8ab2411a"
+    "imageSha256": "ced9ba6e245c320a34cac488fa11c7750fad063af0d1dd5abe5f78fb40f9be29"
   }
 }
