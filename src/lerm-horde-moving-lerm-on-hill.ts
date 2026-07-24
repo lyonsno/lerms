@@ -38,6 +38,11 @@ export interface MovingLermIdentity {
   assetIdentity: string;
   speciesIdentity: 'lerms.red-lerm.v0';
   bodySchemaIdentity: string;
+}
+
+export interface MovingLermDriverIdentity {
+  assetIdentity: string;
+  role: 'producer-control-non-lerm';
   registrationId: string;
 }
 
@@ -65,10 +70,10 @@ export interface MovingLermOnHillInput {
     replaySchema: string;
   };
   identity: MovingLermIdentity;
+  driver: MovingLermDriverIdentity;
   body: MovingLermArtifactHandle & {
     representationKind: 'authored_procedural' | 'generated_mesh_imported';
     assetIdentity: string;
-    registrationId: string;
   };
   rig: MovingLermArtifactHandle & {
     assetIdentity: string;
@@ -106,6 +111,7 @@ export interface MovingLermOnHillComposition {
   evidenceClass: 'caller_supplied_moving_lerm_composition';
   sourceVerification: 'declared_unverified';
   identity: MovingLermIdentity;
+  driver: MovingLermDriverIdentity;
   sources: {
     lermsRevision: typeof LERM_HORDE_MOVING_LERM_HILL_REVISION;
     hillRevision: typeof LERM_HORDE_MOVING_LERM_HILL_REVISION;
@@ -125,6 +131,7 @@ export interface MovingLermOnHillComposition {
     sourceIdentityDeclared: true;
     routeIdentityPreserved: true;
     rootSupportSamplesPreserved: true;
+    visibleBodyDriverSeparated: true;
   };
 }
 
@@ -142,6 +149,7 @@ export function composeMovingLermOnHill(
     evidenceClass: 'caller_supplied_moving_lerm_composition',
     sourceVerification: 'declared_unverified',
     identity: { ...input.identity },
+    driver: { ...input.driver },
     sources: {
       lermsRevision: input.lermsRevision,
       hillRevision: input.hill.revision,
@@ -150,7 +158,6 @@ export function composeMovingLermOnHill(
         ...artifactHandle(input.body),
         representationKind: input.body.representationKind,
         assetIdentity: input.body.assetIdentity,
-        registrationId: input.body.registrationId,
       },
       rig: {
         ...artifactHandle(input.rig),
@@ -179,6 +186,7 @@ export function composeMovingLermOnHill(
       sourceIdentityDeclared: true,
       routeIdentityPreserved: true,
       rootSupportSamplesPreserved: true,
+      visibleBodyDriverSeparated: true,
     },
   };
 }
@@ -206,12 +214,16 @@ function validateInput(input: MovingLermOnHillInput): void {
   requireString(input.identity.actorId, 'identity.actorId');
   requireString(input.identity.assetIdentity, 'identity.assetIdentity');
   requireString(input.identity.bodySchemaIdentity, 'identity.bodySchemaIdentity');
-  requireString(input.identity.registrationId, 'identity.registrationId');
   if (input.identity.speciesIdentity !== 'lerms.red-lerm.v0') {
     throw new Error('species identity must be lerms.red-lerm.v0');
   }
-  if (input.identity.assetIdentity === 'producer-control-non-lerm') {
-    throw new Error('producer control identity cannot be promoted to a Lerm body');
+  requireString(input.driver.assetIdentity, 'driver.assetIdentity');
+  requireString(input.driver.registrationId, 'driver.registrationId');
+  if (input.driver.role !== 'producer-control-non-lerm') {
+    throw new Error('driver role must remain producer-control-non-lerm');
+  }
+  if (input.driver.assetIdentity === input.identity.assetIdentity) {
+    throw new Error('visible Lerm body and non-Lerm driver identities must differ');
   }
   if (
     input.body.representationKind !== 'authored_procedural' &&
@@ -220,18 +232,22 @@ function validateInput(input: MovingLermOnHillInput): void {
     throw new Error('body representation must be a non-fixture imported or authored body');
   }
 
-  const artifacts = [
-    ['body', input.body],
+  validateArtifact('body', input.body);
+  if (input.body.assetIdentity !== input.identity.assetIdentity) {
+    throw new Error('body asset identity mismatch');
+  }
+
+  const driverArtifacts = [
     ['rig', input.rig],
     ['support', input.support],
     ['motion', input.motion],
   ] as const;
-  for (const [label, artifact] of artifacts) {
+  for (const [label, artifact] of driverArtifacts) {
     validateArtifact(label, artifact);
-    if (artifact.assetIdentity !== input.identity.assetIdentity) {
-      throw new Error(`${label} asset identity mismatch`);
+    if (artifact.assetIdentity !== input.driver.assetIdentity) {
+      throw new Error(`${label} driver asset identity mismatch`);
     }
-    if (artifact.registrationId !== input.identity.registrationId) {
+    if (artifact.registrationId !== input.driver.registrationId) {
       throw new Error(`${label} registration identity mismatch`);
     }
   }

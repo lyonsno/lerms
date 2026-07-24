@@ -69,24 +69,27 @@ const input = {
   },
   identity: {
     actorId: 'red-lerm-moving-hill-001',
-    assetIdentity: 'lerms.red-lerm-body.scene-local.candidate.v0',
+    assetIdentity: 'lerms.red-lerm-body.procedural-squash-thief.v0',
     speciesIdentity: 'lerms.red-lerm.v0',
     bodySchemaIdentity: 'lerms.red-lerm-body-schema.v0',
-    registrationId: 'red-lerm-moving-hill-registration-001',
+  },
+  driver: {
+    assetIdentity: 'motion-ready-719024:axial-footprint',
+    role: 'producer-control-non-lerm',
+    registrationId: 'motion-ready-719024-registration',
   },
   body: {
     ...handle({
-      schema: 'kaminos.motion-ready-creature-asset.v0',
-      path: 'artifacts/motion-ready-red-lerm/creature.glb',
+      schema: 'lerms.red-lerm-procedural-body.v0',
+      path: 'src/red-lerm-visual-witness.ts',
       sha256: sha('1'),
-      sourceRevision: 'molten-body-revision',
-      requestedRoute: 'kaminos/motion-ready-creature/body',
-      backend: 'molten-body-producer',
-      configId: 'red-lerm-body-config',
+      sourceRevision: LERM_HORDE_MOVING_LERM_HILL_REVISION,
+      requestedRoute: 'lerms/red-lerm-body/procedural-squash-thief-v0',
+      backend: 'lerm-horde-authored-procedural-body',
+      configId: 'procedural-squash-thief-v0',
     }),
-    representationKind: 'generated_mesh_imported',
-    assetIdentity: 'lerms.red-lerm-body.scene-local.candidate.v0',
-    registrationId: 'red-lerm-moving-hill-registration-001',
+    representationKind: 'authored_procedural',
+    assetIdentity: 'lerms.red-lerm-body.procedural-squash-thief.v0',
   },
   rig: {
     ...handle({
@@ -98,8 +101,8 @@ const input = {
       backend: 'molten-fitted-rig',
       configId: 'red-lerm-rig-config',
     }),
-    assetIdentity: 'lerms.red-lerm-body.scene-local.candidate.v0',
-    registrationId: 'red-lerm-moving-hill-registration-001',
+    assetIdentity: 'motion-ready-719024:axial-footprint',
+    registrationId: 'motion-ready-719024-registration',
   },
   support: {
     ...handle({
@@ -111,8 +114,8 @@ const input = {
       backend: 'mushfinger-portable-support',
       configId: 'fd052b64-support-config',
     }),
-    assetIdentity: 'lerms.red-lerm-body.scene-local.candidate.v0',
-    registrationId: 'red-lerm-moving-hill-registration-001',
+    assetIdentity: 'motion-ready-719024:axial-footprint',
+    registrationId: 'motion-ready-719024-registration',
     hillRevision: LERM_HORDE_MOVING_LERM_HILL_REVISION,
   },
   motion: {
@@ -125,8 +128,8 @@ const input = {
       backend: 'molten-fitted-motion',
       configId: 'red-lerm-motion-config',
     }),
-    assetIdentity: 'lerms.red-lerm-body.scene-local.candidate.v0',
-    registrationId: 'red-lerm-moving-hill-registration-001',
+    assetIdentity: 'motion-ready-719024:axial-footprint',
+    registrationId: 'motion-ready-719024-registration',
     samples: [
       {
         timestampMs: 0,
@@ -181,9 +184,13 @@ assert.equal(
 assert.equal(composition.sourceVerification, 'declared_unverified');
 assert.equal(composition.identity.speciesIdentity, 'lerms.red-lerm.v0');
 assert.equal(composition.sources.body.assetIdentity, input.identity.assetIdentity);
-assert.equal(composition.sources.rig.registrationId, input.identity.registrationId);
+assert.equal(composition.driver.role, 'producer-control-non-lerm');
+assert.equal(composition.driver.assetIdentity, input.driver.assetIdentity);
+assert.notEqual(composition.identity.assetIdentity, composition.driver.assetIdentity);
+assert.equal(composition.sources.rig.assetIdentity, input.driver.assetIdentity);
+assert.equal(composition.sources.rig.registrationId, input.driver.registrationId);
 assert.equal(composition.sources.support.hillRevision, LERM_HORDE_MOVING_LERM_HILL_REVISION);
-assert.equal(composition.sources.motion.assetIdentity, input.identity.assetIdentity);
+assert.equal(composition.sources.motion.assetIdentity, input.driver.assetIdentity);
 assert.equal(composition.timeline.length, 3);
 assert.deepEqual(
   composition.timeline.map((frame) => frame.lerm.id),
@@ -205,6 +212,7 @@ assert.ok(composition.assertions.exactLandedHill);
 assert.ok(composition.assertions.routeIdentityPreserved);
 assert.ok(composition.assertions.sourceIdentityDeclared);
 assert.ok(composition.assertions.rootSupportSamplesPreserved);
+assert.ok(composition.assertions.visibleBodyDriverSeparated);
 assert.equal(
   composition.assertions.sourceIdentityPreserved,
   undefined,
@@ -220,6 +228,29 @@ assert.throws(
     },
   }),
   /species identity must be lerms\.red-lerm\.v0/,
+);
+
+assert.throws(
+  () => composeMovingLermOnHill({
+    ...input,
+    driver: {
+      ...input.driver,
+      assetIdentity: input.identity.assetIdentity,
+    },
+    rig: {
+      ...input.rig,
+      assetIdentity: input.identity.assetIdentity,
+    },
+    support: {
+      ...input.support,
+      assetIdentity: input.identity.assetIdentity,
+    },
+    motion: {
+      ...input.motion,
+      assetIdentity: input.identity.assetIdentity,
+    },
+  }),
+  /visible Lerm body and non-Lerm driver identities must differ/,
 );
 
 assert.throws(
