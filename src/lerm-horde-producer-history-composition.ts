@@ -580,7 +580,8 @@ function createRoutePlan(
     return [x, producerModule.sampleHillTerrainSurface(producerTerrain, x, z).height, z] as HillOfHillsVec3;
   });
   const routePoints = world.map((point, index) => {
-    if (index === 0) return { index, world: point };
+    const pointId = `${candidate.id}:${index}`;
+    if (index === 0) return { index: pointId, world: point };
     const before = world[index - 1];
     const heading = normalizeHorizontal([
       point[0] - before[0],
@@ -589,8 +590,8 @@ function createRoutePlan(
     ]);
     const evaluation = transitionEvaluator({
       source: producerTerrain,
-      from: { index: index - 1, grid: null, world: before },
-      to: { index, grid: null, world: point },
+      from: { index: `${candidate.id}:${index - 1}`, grid: null, world: before },
+      to: { index: pointId, grid: null, world: point },
       heading,
       previousHeading: heading,
       directionIndex: null,
@@ -600,7 +601,7 @@ function createRoutePlan(
       throw new Error(`producer route preflight rejected segment ${index - 1}->${index}`);
     }
     return {
-      index,
+      index: pointId,
       world: point,
       transitionEvidence: evaluation.evidence
     };

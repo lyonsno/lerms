@@ -11,14 +11,32 @@ import {
 } from '../src/lerm-horde-producer-history-composition.js';
 import { runLermHordeProducerHistoryWitnessCli } from '../src/lerm-horde-producer-history-witness.js';
 
+const transitionCache = new Map<string, {
+  admissible: boolean;
+  additionalCost: number;
+  evidence: { schema: string };
+}>();
+
 const producerModule: LermHordeProducerModule = {
   validateAxialCrawlerRegistration: (registration) => registration,
   sampleHillTerrainSurface: (_source, _x, _z) => ({ height: 0 }),
-  createAxialTerrainRouteTransitionEvaluator: () => () => ({
-    admissible: true,
-    additionalCost: 0,
-    evidence: { schema: 'test.transition-evidence.v0' }
-  }),
+  createAxialTerrainRouteTransitionEvaluator: () => (transitionInput) => {
+    const transition = transitionInput as {
+      from: { index: string; world: readonly number[] };
+      to: { index: string };
+    };
+    const cacheKey = `${transition.from.index}:${transition.to.index}`;
+    const cached = transitionCache.get(cacheKey);
+    if (cached) return cached;
+    const result = {
+      admissible: transition.from.world[0] !== -1.25 ||
+        transition.from.world[2] !== -3,
+      additionalCost: 0,
+      evidence: { schema: 'test.transition-evidence.v0' }
+    };
+    transitionCache.set(cacheKey, result);
+    return result;
+  },
   compileCreatureScaleLocomotionRail: () => ({
     schema: 'kaminos.creature-scale-locomotion-rail.v0',
     id: 'fixture-rail',
@@ -66,6 +84,9 @@ assert.equal(receipt.phase, 'complete');
 assert.equal(receipt.history.producer.revision, 'ced6db3d');
 assert.equal(receipt.history.producer.creatureId, 'motion-ready-719024');
 assert.equal(receipt.history.producer.railId, 'fixture-rail');
+assert.equal(receipt.producer.routeSelection.candidateId, 'right-longitudinal-wide');
+assert.equal(receipt.producer.routeSelection.attemptedCandidateCount, 2);
+assert.equal(receipt.producer.routeSelection.rejectedCandidates.length, 1);
 assert.equal(receipt.history.samples.length, 15);
 assert.equal(receipt.history.samples[0].root.sourceDistance, 0);
 assert.equal(receipt.history.samples.at(-1)!.root.routeProgress, 1);
