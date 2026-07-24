@@ -41,6 +41,18 @@ const packet = createLiveFingerFluidEmitterPacket({
   viewport: { width: 1280, height: 720 },
   nowMs: 1_040,
 });
+const hybridPacket = createLiveFingerFluidEmitterPacket({
+  eventSequence: 171,
+  frameId: 'frame-hybrid-17',
+  captureTimestampMs: 1_000,
+  effectiveRoute: 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-v0',
+  confidence: 0.96,
+  handedness: 'right',
+  keypoints3d: keypoints,
+  manoTransform: { center: [0, 0, 0], scale: 1 },
+  viewport: { width: 1280, height: 720 },
+  nowMs: 1_040,
+});
 
 assert(LIVE_FINGER_FLUID_ADAPTER_CONTRACT === 'hand-state-distal-axis-full-extension-emitters-v1', 'identifies the LERMS live adapter');
 assert(KAMINOS_FLUID_REVISION === '71d09e78fbf16c9edecde3ea72a82ba17b656bf2', 'exposes the exact pinned Kaminos fluid revision');
@@ -49,6 +61,9 @@ assert(packet.simulation_authority === 'live_simulation', 'fresh native frames c
 assert(packet.route_identity === 'native_wilor_mini_mlx_detector_sidecar_live', 'packet route identity preserves the effective native source');
 assert(packet.adapter_contract === LIVE_FINGER_FLUID_ADAPTER_CONTRACT, 'packet identifies the LERMS hand-to-fluid adapter separately');
 assert(packet.authority.simulation_safe === true && packet.authority.stale === false, 'fresh native frames pass the solver authority gate');
+assert(hybridPacket.simulation_authority === 'live_simulation', 'fresh hybrid frames carry live simulation authority');
+assert(hybridPacket.source_route === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-v0', 'hybrid packet preserves fused source route');
+assert(hybridPacket.authority.simulation_safe === true && hybridPacket.authority.stale === false, 'fresh hybrid frames pass the solver authority gate');
 assert(packet.emitters.length === 5, 'publishes one emitter per finger');
 assert(packet.emitters.every(emitter => emitter.active && emitter.emission_state === 'jet'), 'fully extended fingers emit jets');
 assert(Math.abs(packet.emitters[1].aim_world[1]) > 0.98, 'index jet follows its transformed distal-to-tip axis');
