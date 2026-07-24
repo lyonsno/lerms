@@ -50,6 +50,11 @@ assert.match(
 );
 assert.match(
   liveHandSource,
+  /syncFluidEconomicsControls\(liveFluidEconomics\)/,
+  'the headed panel must reflect assay-effective economics instead of stale defaults',
+);
+assert.match(
+  liveHandSource,
   /requestDiagnostics/,
   'the assay must request GPU diagnostics at explicit checkpoints',
 );

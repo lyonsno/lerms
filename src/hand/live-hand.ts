@@ -247,13 +247,22 @@ function readFluidEconomicsControls(): LiveFingerFluidEconomicsOptions {
   };
 }
 
+function syncFluidEconomicsControls(economics: LiveFingerFluidEconomics): void {
+  fluxControl.value = String(economics.sourceFluxParticlesPerSecond);
+  activeBudgetControl.value = String(economics.requestedActiveParticleBudget);
+  opticalDensityControl.value = String(economics.opticalDensityScale);
+  reconstructionRadiusControl.value = String(economics.reconstructionRadiusScale);
+  lifetimeControl.value = String(economics.lifetimeSeconds);
+  densityValueElements.flux.textContent = economics.sourceFluxParticlesPerSecond.toFixed(0);
+  densityValueElements.activeBudget.textContent = economics.effectiveActiveParticleBudget.toFixed(0);
+  densityValueElements.opticalDensity.textContent = economics.opticalDensityScale.toFixed(1);
+  densityValueElements.reconstructionRadius.textContent = economics.reconstructionRadiusScale.toFixed(1);
+  densityValueElements.lifetime.textContent = economics.lifetimeSeconds.toFixed(1);
+}
+
 function updateFluidEconomicsFromControls(): void {
   liveFluidEconomics = normalizeLiveFingerFluidEconomics(readFluidEconomicsControls());
-  densityValueElements.flux.textContent = liveFluidEconomics.sourceFluxParticlesPerSecond.toFixed(0);
-  densityValueElements.activeBudget.textContent = liveFluidEconomics.effectiveActiveParticleBudget.toFixed(0);
-  densityValueElements.opticalDensity.textContent = liveFluidEconomics.opticalDensityScale.toFixed(1);
-  densityValueElements.reconstructionRadius.textContent = liveFluidEconomics.reconstructionRadiusScale.toFixed(1);
-  densityValueElements.lifetime.textContent = liveFluidEconomics.lifetimeSeconds.toFixed(1);
+  syncFluidEconomicsControls(liveFluidEconomics);
   if (latestFluidFrame && fluidSolver?.available) {
     publishFluidPacketForFrame(latestFluidFrame);
   }
@@ -1160,6 +1169,7 @@ Object.assign(window, {
         reconstructionRadiusScale,
         lifetimeSeconds,
       });
+      syncFluidEconomicsControls(liveFluidEconomics);
       const packet = createFluidEnvelopeAssayPacket({ emitterCount, radius, strength });
       latestFluidPacket = packet;
       latestLiveInletReceipt = solver.setLiveInletPacket(packet);
