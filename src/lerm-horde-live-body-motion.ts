@@ -124,11 +124,17 @@ export interface LermHordeSameSceneConsumerEvidence {
     actorId: string;
     bodySourceRevision: string;
     bodySha256: string;
+    hillEvidenceReportPath: string;
+    hillEvidenceReportSha256: string;
   };
   world: {
     coordinateSpace: 'x-y-z-world';
     actualHillTerrain: true;
     commonWorldView: true;
+    sceneId: string;
+    viewId: string;
+    cameraChecksum: string;
+    renderLayout: 'single_common_world_view';
   };
   frames: readonly LermHordeSameSceneFrame[];
   witness: {
@@ -139,6 +145,7 @@ export interface LermHordeSameSceneConsumerEvidence {
     dynamic: true;
     blank: false;
     cached: false;
+    frameImageSha256s: readonly string[];
   };
   fallbackStatus: 'none';
   staleStatus: 'fresh';
@@ -159,27 +166,27 @@ export interface LermHordeSameSceneFrame {
   history: {
     admittedSampleCount: number;
     admittedThroughTimestampMs: number | null;
+    admittedSampleIdentities: readonly string[];
+    prefixChecksum: string;
   };
   pressure: {
     visible: boolean;
+    sourcePrefixChecksum: string;
     trafficChecksum: string;
   };
-}
-
-export interface LermHordeSameSceneInspection {
-  inspectorAuthority: 'lerms_body_motion_owner';
-  artifactPath: string;
-  inspectionReportPath: string;
-  outputSha256: string;
-  inspectedFrameCount: number;
-  observed: {
-    actualHillTerrain: true;
-    commonWorldView: true;
-    exactBodyAtRootAndHeading: true;
-    prefixHistoryGrowth: true;
-    pressureFormsBehindBody: true;
-    bodyAbsentAfterDeparture: true;
-    pressurePersistsAfterDeparture: true;
+  hill: {
+    revision: string;
+    terrainSourceId: string;
+    sampleChecksum: string;
+    topologyChecksum: string;
+  };
+  render: {
+    sceneId: string;
+    viewId: string;
+    cameraChecksum: string;
+    layout: 'single_common_world_view';
+    frameImageSha256: string;
+    layers: readonly string[];
   };
 }
 
@@ -404,8 +411,12 @@ export function composeLermHordeLiveBodyMotion(
 export function verifyLermHordeSameSceneConsumerEvidence(
   motion: LermHordeLiveBodyMotionComposition,
   evidence: LermHordeSameSceneConsumerEvidence,
-  inspection?: LermHordeSameSceneInspection,
 ): LermHordeSameSceneVerification {
+  if (arguments.length > 2) {
+    throw new Error(
+      'same-scene verifier does not accept a declarative inspection object',
+    );
+  }
   requireClaim(
     motion?.ok === true &&
       motion.schema === LERM_HORDE_LIVE_BODY_MOTION_SCHEMA &&
@@ -448,9 +459,18 @@ export function verifyLermHordeSameSceneConsumerEvidence(
     'same-scene evidence body source does not match the motion component',
   );
   requireClaim(
+    evidence.source.hillEvidenceReportPath.length > 0 &&
+      isSha256(evidence.source.hillEvidenceReportSha256),
+    'same-scene Hill evidence report identity is missing',
+  );
+  requireClaim(
     evidence.world.coordinateSpace === 'x-y-z-world' &&
       evidence.world.actualHillTerrain === true &&
-      evidence.world.commonWorldView === true,
+      evidence.world.commonWorldView === true &&
+      evidence.world.sceneId.length > 0 &&
+      evidence.world.viewId.length > 0 &&
+      isSha256(evidence.world.cameraChecksum) &&
+      evidence.world.renderLayout === 'single_common_world_view',
     'same-scene evidence does not use the actual Hill in a common world view',
   );
   requireClaim(
@@ -459,8 +479,18 @@ export function verifyLermHordeSameSceneConsumerEvidence(
   );
 
   const movingFrames = evidence.frames.slice(0, motion.samples.length);
+  const expectedSampleIdentities = motion.samples.map(
+    deriveLermHordeSameSceneSampleIdentity,
+  );
+  const terrainSourceId = movingFrames[0]?.hill.terrainSourceId;
   movingFrames.forEach((frame, index) => {
     const sample = motion.samples[index];
+    const expectedPrefixIdentities = expectedSampleIdentities.slice(
+      0,
+      index + 1,
+    );
+    const expectedPrefixChecksum =
+      deriveLermHordeSameScenePrefixChecksum(expectedPrefixIdentities);
     requireClaim(
       frame.sequence === index && frame.timestampMs === sample.timestampMs,
       'same-scene frame order or timestamp does not match body motion',
@@ -484,15 +514,46 @@ export function verifyLermHordeSameSceneConsumerEvidence(
       'same-scene prefix history is not aligned to the current body timestamp',
     );
     requireClaim(
+      arraysEqual(
+        frame.history.admittedSampleIdentities,
+        expectedPrefixIdentities,
+      ) &&
+        frame.history.prefixChecksum === expectedPrefixChecksum,
+      'same-scene prefix sample identities do not match the exact Horde prefix',
+    );
+    requireClaim(
       frame.pressure.visible === true &&
-        frame.pressure.trafficChecksum.length > 0,
+        isSha256(frame.pressure.trafficChecksum) &&
+        frame.pressure.sourcePrefixChecksum === expectedPrefixChecksum,
       'same-scene pressure is missing during traversal',
+    );
+    requireClaim(
+      frame.hill.revision === evidence.source.hillRevision &&
+        frame.hill.terrainSourceId === terrainSourceId &&
+        terrainSourceId.length > 0 &&
+        isSha256(frame.hill.sampleChecksum) &&
+        isSha256(frame.hill.topologyChecksum),
+      'same-scene frame Hill source identity is missing or inconsistent',
+    );
+    requireClaim(
+      frame.render.sceneId === evidence.world.sceneId &&
+        frame.render.viewId === evidence.world.viewId &&
+        frame.render.cameraChecksum === evidence.world.cameraChecksum &&
+        frame.render.layout === 'single_common_world_view' &&
+        isSha256(frame.render.frameImageSha256) &&
+        includesAll(
+          frame.render.layers,
+          'actual_hill',
+          'lerm_body',
+          'prefix_pressure',
+        ),
+      'same-scene frame is not one single common-world render',
     );
   });
   requireClaim(
     new Set(
       movingFrames.map(({ pressure }) => pressure.trafficChecksum),
-    ).size > 1,
+    ).size === movingFrames.length,
     'same-scene pressure does not accumulate during traversal',
   );
 
@@ -507,14 +568,45 @@ export function verifyLermHordeSameSceneConsumerEvidence(
   );
   requireClaim(
     departure.history.admittedSampleCount === motion.samples.length &&
-      departure.history.admittedThroughTimestampMs === finalSample.timestampMs,
+      departure.history.admittedThroughTimestampMs ===
+        finalSample.timestampMs &&
+      arraysEqual(
+        departure.history.admittedSampleIdentities,
+        expectedSampleIdentities,
+      ) &&
+      departure.history.prefixChecksum ===
+        deriveLermHordeSameScenePrefixChecksum(expectedSampleIdentities),
     'same-scene departure lost the complete admitted prefix',
   );
   requireClaim(
     departure.pressure.visible === true &&
+      departure.pressure.sourcePrefixChecksum ===
+        departure.history.prefixChecksum &&
       departure.pressure.trafficChecksum ===
         finalMovingFrame.pressure.trafficChecksum,
     'same-scene pressure persistence was lost after departure',
+  );
+  requireClaim(
+    departure.hill.revision === evidence.source.hillRevision &&
+      departure.hill.terrainSourceId === terrainSourceId &&
+      departure.hill.sampleChecksum === finalMovingFrame.hill.sampleChecksum &&
+      departure.hill.topologyChecksum ===
+        finalMovingFrame.hill.topologyChecksum,
+    'same-scene departure changed or lost Hill source identity',
+  );
+  requireClaim(
+    departure.render.sceneId === evidence.world.sceneId &&
+      departure.render.viewId === evidence.world.viewId &&
+      departure.render.cameraChecksum === evidence.world.cameraChecksum &&
+      departure.render.layout === 'single_common_world_view' &&
+      isSha256(departure.render.frameImageSha256) &&
+      includesAll(
+        departure.render.layers,
+        'actual_hill',
+        'prefix_pressure',
+      ) &&
+      !departure.render.layers.includes('lerm_body'),
+    'same-scene departure is not the same common-world render without the body',
   );
   requireClaim(
     evidence.witness.requestedOutputPath.length > 0 &&
@@ -527,33 +619,13 @@ export function verifyLermHordeSameSceneConsumerEvidence(
       evidence.witness.frameCount === evidence.frames.length &&
       evidence.witness.dynamic === true &&
       evidence.witness.blank === false &&
-      evidence.witness.cached === false,
+      evidence.witness.cached === false &&
+      arraysEqual(
+        evidence.witness.frameImageSha256s,
+        evidence.frames.map(({ render }) => render.frameImageSha256),
+      ),
     'same-scene witness output is missing, blank, cached, or partial',
   );
-
-  if (inspection) {
-    requireClaim(
-      inspection.inspectorAuthority === 'lerms_body_motion_owner',
-      'same-scene inspection is not Horde-owned',
-    );
-    requireClaim(
-      inspection.artifactPath === evidence.witness.effectiveOutputPath,
-      'same-scene inspection artifact path does not match Hill evidence',
-    );
-    requireClaim(
-      inspection.inspectionReportPath.length > 0,
-      'same-scene inspection report path is missing',
-    );
-    requireClaim(
-      inspection.outputSha256 === evidence.witness.outputSha256,
-      'same-scene inspection output SHA does not match Hill evidence',
-    );
-    requireClaim(
-      inspection.inspectedFrameCount === evidence.witness.frameCount &&
-        Object.values(inspection.observed).every((value) => value === true),
-      'same-scene inspection did not confirm every visual predicate',
-    );
-  }
 
   const pending: Array<
     'hill_consumer_execution' | 'horde_visual_inspection'
@@ -561,18 +633,13 @@ export function verifyLermHordeSameSceneConsumerEvidence(
   if (evidence.authority !== 'hill_consumer_execution') {
     pending.push('hill_consumer_execution');
   }
-  if (!inspection) {
-    pending.push('horde_visual_inspection');
-  }
-  const independentHordeInspection = inspection !== undefined;
+  pending.push('horde_visual_inspection');
 
   return {
     ok: true,
     schema: LERM_HORDE_SAME_SCENE_VERIFICATION_SCHEMA,
     machineContractAccepted: true,
-    visualOutcomeAccepted:
-      evidence.authority === 'hill_consumer_execution' &&
-      independentHordeInspection,
+    visualOutcomeAccepted: false,
     pending,
     assertions: {
       exactHordeComponent: true,
@@ -584,7 +651,7 @@ export function verifyLermHordeSameSceneConsumerEvidence(
       bodyDeparts: true,
       pressurePersistsAfterDeparture: true,
       witnessOutputComplete: true,
-      independentHordeInspection,
+      independentHordeInspection: false,
     },
     claimBoundary: {
       liveContactTruth: false,
@@ -669,6 +736,51 @@ function vec3Equal(left: readonly number[], right: readonly number[]): boolean {
     right.length === 3 &&
     left.every((value, index) => value === right[index])
   );
+}
+
+export function deriveLermHordeSameSceneSampleIdentity(
+  sample: LermHordeLiveBodyMotionSample,
+): string {
+  return `sample-${fnv1a32(JSON.stringify([
+    sample.sequence,
+    sample.timestampMs,
+    sample.rootWorld,
+    sample.heading,
+    sample.poseFingerprint,
+  ]))}`;
+}
+
+export function deriveLermHordeSameScenePrefixChecksum(
+  sampleIdentities: readonly string[],
+): string {
+  return `prefix-${fnv1a32(JSON.stringify(sampleIdentities))}`;
+}
+
+function fnv1a32(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function arraysEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function includesAll(values: readonly string[], ...required: string[]): boolean {
+  return required.every((value) => values.includes(value));
+}
+
+function isSha256(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
 }
 
 function requireClaim(value: boolean, message: string): asserts value {
