@@ -17,6 +17,7 @@ export interface LiveHandLatencyReceiptJoinState {
   pendingCaptureCount: number;
   pendingFrameCount: number;
   completedCount: number;
+  resolvedWithoutPresentationCount: number;
   discardedCaptureCount: number;
   discardedFrameCount: number;
 }
@@ -28,6 +29,7 @@ export class LiveHandLatencyReceiptJoiner<TFrame> {
     viewerReceiveTimestampMs: number;
   }>();
   private readonly completedFrameIds = new Set<string>();
+  private resolvedWithoutPresentationCount = 0;
   private discardedCaptureCount = 0;
   private discardedFrameCount = 0;
 
@@ -35,6 +37,7 @@ export class LiveHandLatencyReceiptJoiner<TFrame> {
     this.captureMetricsByFrame.clear();
     this.receivedFrames.clear();
     this.completedFrameIds.clear();
+    this.resolvedWithoutPresentationCount = 0;
     this.discardedCaptureCount = 0;
     this.discardedFrameCount = 0;
   }
@@ -77,6 +80,14 @@ export class LiveHandLatencyReceiptJoiner<TFrame> {
     return { frameId, frame, viewerReceiveTimestampMs, captureMetrics };
   }
 
+  resolveWithoutPresentation(frameId: string): void {
+    if (this.completedFrameIds.has(frameId)) return;
+    this.captureMetricsByFrame.delete(frameId);
+    this.receivedFrames.delete(frameId);
+    this.completedFrameIds.add(frameId);
+    this.resolvedWithoutPresentationCount += 1;
+  }
+
   prune(nowMs: number, maxAgeMs: number): void {
     for (const [frameId, captureMetrics] of this.captureMetricsByFrame) {
       if (nowMs - captureMetrics.capturedAtMs > maxAgeMs) {
@@ -97,6 +108,7 @@ export class LiveHandLatencyReceiptJoiner<TFrame> {
       pendingCaptureCount: this.captureMetricsByFrame.size,
       pendingFrameCount: this.receivedFrames.size,
       completedCount: this.completedFrameIds.size,
+      resolvedWithoutPresentationCount: this.resolvedWithoutPresentationCount,
       discardedCaptureCount: this.discardedCaptureCount,
       discardedFrameCount: this.discardedFrameCount,
     };
