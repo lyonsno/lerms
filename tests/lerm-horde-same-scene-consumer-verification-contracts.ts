@@ -14,7 +14,7 @@ import * as bodyMotionModule from '../src/lerm-horde-live-body-motion.js';
 type Verifier = (
   motion: bodyMotionModule.LermHordeLiveBodyMotionComposition,
   evidence: SameSceneEvidence,
-  inspection?: SameSceneInspection,
+  ...unexpectedInspection: unknown[]
 ) => {
   machineContractAccepted: boolean;
   visualOutcomeAccepted: boolean;
@@ -31,11 +31,17 @@ interface SameSceneEvidence {
     actorId: string;
     bodySourceRevision: string;
     bodySha256: string;
+    hillEvidenceReportPath: string;
+    hillEvidenceReportSha256: string;
   };
   world: {
     coordinateSpace: 'x-y-z-world';
     actualHillTerrain: true;
     commonWorldView: true;
+    sceneId: string;
+    viewId: string;
+    cameraChecksum: string;
+    renderLayout: 'single_common_world_view';
   };
   frames: Array<{
     sequence: number;
@@ -51,10 +57,27 @@ interface SameSceneEvidence {
     history: {
       admittedSampleCount: number;
       admittedThroughTimestampMs: number | null;
+      admittedSampleIdentities: string[];
+      prefixChecksum: string;
     };
     pressure: {
       visible: boolean;
+      sourcePrefixChecksum: string;
       trafficChecksum: string;
+    };
+    hill: {
+      revision: string;
+      terrainSourceId: string;
+      sampleChecksum: string;
+      topologyChecksum: string;
+    };
+    render: {
+      sceneId: string;
+      viewId: string;
+      cameraChecksum: string;
+      layout: 'single_common_world_view';
+      frameImageSha256: string;
+      layers: string[];
     };
   }>;
   witness: {
@@ -65,27 +88,11 @@ interface SameSceneEvidence {
     dynamic: true;
     blank: false;
     cached: false;
+    frameImageSha256s: string[];
   };
   fallbackStatus: 'none';
   staleStatus: 'fresh';
   partialStatus: 'complete';
-}
-
-interface SameSceneInspection {
-  inspectorAuthority: 'lerms_body_motion_owner';
-  artifactPath: string;
-  inspectionReportPath: string;
-  outputSha256: string;
-  inspectedFrameCount: number;
-  observed: {
-    actualHillTerrain: true;
-    commonWorldView: true;
-    exactBodyAtRootAndHeading: true;
-    prefixHistoryGrowth: true;
-    pressureFormsBehindBody: true;
-    bodyAbsentAfterDeparture: true;
-    pressurePersistsAfterDeparture: true;
-  };
 }
 
 const fileSha256 = (path: string) =>
@@ -103,6 +110,16 @@ const bodySha256 = fileSha256(bodyPath);
 const bodySourceRevision = gitText(['log', '-1', '--format=%H', '--', bodyPath]);
 const componentRevision =
   bodyMotionModule.LERM_HORDE_REVIEWED_LIVE_BODY_MOTION_REVISION;
+const hashText = (value: string) =>
+  createHash('sha256').update(value).digest('hex');
+const fnv1a32 = (value: string) => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+};
 
 const hordeReport: ReviewedHordeTraversalReport = {
   ok: true,
@@ -195,6 +212,24 @@ assert.equal(
 assert.ok(verifier);
 
 const outputSha256 = '1'.repeat(64);
+const sampleIdentities = motion.samples.map((sample) =>
+  `sample-${fnv1a32(
+    JSON.stringify([
+      sample.sequence,
+      sample.timestampMs,
+      sample.rootWorld,
+      sample.heading,
+      sample.poseFingerprint,
+    ]),
+  )}`,
+);
+const prefixChecksum = (count: number) =>
+  `prefix-${fnv1a32(JSON.stringify(sampleIdentities.slice(0, count)))}`;
+const sceneId = 'hill-horde-same-scene';
+const viewId = 'main-world-camera';
+const cameraChecksum = hashText('main-world-camera-v0');
+const hillSampleChecksum = hashText('live-hill-sample');
+const hillTopologyChecksum = hashText('live-hill-topology');
 const frames: SameSceneEvidence['frames'] = motion.samples.map(
   (sample, sequence) => ({
     sequence,
@@ -208,10 +243,27 @@ const frames: SameSceneEvidence['frames'] = motion.samples.map(
     history: {
       admittedSampleCount: sequence + 1,
       admittedThroughTimestampMs: sample.timestampMs,
+      admittedSampleIdentities: sampleIdentities.slice(0, sequence + 1),
+      prefixChecksum: prefixChecksum(sequence + 1),
     },
     pressure: {
       visible: true,
-      trafficChecksum: `prefix-${sequence + 1}`,
+      sourcePrefixChecksum: prefixChecksum(sequence + 1),
+      trafficChecksum: hashText(`pressure:${prefixChecksum(sequence + 1)}`),
+    },
+    hill: {
+      revision: bodyMotionModule.LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
+      terrainSourceId: 'hill-live-prior-0001',
+      sampleChecksum: hillSampleChecksum,
+      topologyChecksum: hillTopologyChecksum,
+    },
+    render: {
+      sceneId,
+      viewId,
+      cameraChecksum,
+      layout: 'single_common_world_view',
+      frameImageSha256: hashText(`frame:${sequence}`),
+      layers: ['actual_hill', 'lerm_body', 'prefix_pressure'],
     },
   }),
 );
@@ -222,10 +274,29 @@ frames.push({
   history: {
     admittedSampleCount: motion.samples.length,
     admittedThroughTimestampMs: motion.samples.at(-1)!.timestampMs,
+    admittedSampleIdentities: [...sampleIdentities],
+    prefixChecksum: prefixChecksum(motion.samples.length),
   },
   pressure: {
     visible: true,
-    trafficChecksum: `prefix-${motion.samples.length}`,
+    sourcePrefixChecksum: prefixChecksum(motion.samples.length),
+    trafficChecksum: hashText(
+      `pressure:${prefixChecksum(motion.samples.length)}`,
+    ),
+  },
+  hill: {
+    revision: bodyMotionModule.LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
+    terrainSourceId: 'hill-live-prior-0001',
+    sampleChecksum: hillSampleChecksum,
+    topologyChecksum: hillTopologyChecksum,
+  },
+  render: {
+    sceneId,
+    viewId,
+    cameraChecksum,
+    layout: 'single_common_world_view',
+    frameImageSha256: hashText(`frame:${motion.samples.length}`),
+    layers: ['actual_hill', 'prefix_pressure'],
   },
 });
 
@@ -239,11 +310,18 @@ const evidence: SameSceneEvidence = {
     actorId: motion.source.admission.actorId,
     bodySourceRevision: motion.source.body.sourceRevision,
     bodySha256: motion.source.body.sha256,
+    hillEvidenceReportPath:
+      'artifacts/hill-horde-same-scene/evidence.json',
+    hillEvidenceReportSha256: hashText('hill-evidence-report'),
   },
   world: {
     coordinateSpace: 'x-y-z-world',
     actualHillTerrain: true,
     commonWorldView: true,
+    sceneId,
+    viewId,
+    cameraChecksum,
+    renderLayout: 'single_common_world_view',
   },
   frames,
   witness: {
@@ -254,44 +332,57 @@ const evidence: SameSceneEvidence = {
     dynamic: true,
     blank: false,
     cached: false,
+    frameImageSha256s: frames.map(
+      ({ render }) => render.frameImageSha256,
+    ),
   },
   fallbackStatus: 'none',
   staleStatus: 'fresh',
   partialStatus: 'complete',
 };
-const inspection: SameSceneInspection = {
-  inspectorAuthority: 'lerms_body_motion_owner',
-  artifactPath: evidence.witness.effectiveOutputPath,
-  inspectionReportPath:
-    'artifacts/lerm-horde-same-scene/inspection.json',
-  outputSha256,
-  inspectedFrameCount: frames.length,
-  observed: {
-    actualHillTerrain: true,
-    commonWorldView: true,
-    exactBodyAtRootAndHeading: true,
-    prefixHistoryGrowth: true,
-    pressureFormsBehindBody: true,
-    bodyAbsentAfterDeparture: true,
-    pressurePersistsAfterDeparture: true,
-  },
-};
-
-const syntheticResult = verifier(motion, evidence, inspection);
+const syntheticResult = verifier(motion, evidence);
 assert.equal(syntheticResult.machineContractAccepted, true);
 assert.equal(
   syntheticResult.visualOutcomeAccepted,
   false,
   'synthetic verifier input must never close the visual outcome',
 );
-assert.deepEqual(syntheticResult.pending, ['hill_consumer_execution']);
+assert.deepEqual(syntheticResult.pending, [
+  'hill_consumer_execution',
+  'horde_visual_inspection',
+]);
 
 const liveEvidence = structuredClone(evidence);
 liveEvidence.authority = 'hill_consumer_execution';
-const accepted = verifier(motion, liveEvidence, inspection);
+const accepted = verifier(motion, liveEvidence);
 assert.equal(accepted.machineContractAccepted, true);
-assert.equal(accepted.visualOutcomeAccepted, true);
-assert.deepEqual(accepted.pending, []);
+assert.equal(
+  accepted.visualOutcomeAccepted,
+  false,
+  'Hill execution authority alone must not manufacture visual acceptance',
+);
+assert.deepEqual(accepted.pending, ['horde_visual_inspection']);
+assert.throws(
+  () =>
+    verifier(motion, liveEvidence, {
+      inspectorAuthority: 'lerms_body_motion_owner',
+      artifactPath: liveEvidence.witness.effectiveOutputPath,
+      inspectionReportPath:
+        'artifacts/lerm-horde-same-scene/inspection.json',
+      outputSha256: liveEvidence.witness.outputSha256,
+      inspectedFrameCount: liveEvidence.witness.frameCount,
+      observed: {
+        actualHillTerrain: true,
+        commonWorldView: true,
+        exactBodyAtRootAndHeading: true,
+        prefixHistoryGrowth: true,
+        pressureFormsBehindBody: true,
+        bodyAbsentAfterDeparture: true,
+        pressurePersistsAfterDeparture: true,
+      },
+    }),
+  /does not accept a declarative inspection object/,
+);
 
 const expectReject = (
   mutate: (candidate: SameSceneEvidence) => void,
@@ -299,9 +390,29 @@ const expectReject = (
 ) => {
   const candidate = structuredClone(liveEvidence);
   mutate(candidate);
-  assert.throws(() => verifier(motion, candidate, inspection), expected);
+  assert.throws(() => verifier(motion, candidate), expected);
 };
 
+expectReject(
+  (candidate) => {
+    candidate.frames[2].history.admittedSampleIdentities = [
+      ...sampleIdentities,
+    ];
+    candidate.frames[2].history.prefixChecksum = prefixChecksum(
+      motion.samples.length,
+    );
+    candidate.frames[2].pressure.sourcePrefixChecksum = prefixChecksum(
+      motion.samples.length,
+    );
+  },
+  /prefix sample identities/,
+);
+expectReject(
+  (candidate) => {
+    candidate.frames[3].render.sceneId = 'separate-body-projection';
+  },
+  /single common-world render/,
+);
 expectReject(
   (candidate) => {
     candidate.source.hordeComponentRevision = '0'.repeat(40);
@@ -368,23 +479,6 @@ expectReject(
     candidate.witness.blank = true as false;
   },
   /witness output/,
-);
-
-assert.throws(
-  () =>
-    verifier(motion, liveEvidence, {
-      ...inspection,
-      outputSha256: '2'.repeat(64),
-    }),
-  /inspection output SHA/,
-);
-assert.throws(
-  () =>
-    verifier(motion, liveEvidence, {
-      ...inspection,
-      artifactPath: '/tmp/substituted.svg',
-    }),
-  /inspection artifact path/,
 );
 
 console.log('Lerm Horde same-scene consumer verification contracts ok');
