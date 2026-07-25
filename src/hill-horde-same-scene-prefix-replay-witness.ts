@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { LermHordeProducerHistoryCompositionReceipt } from './lerm-horde-producer-history-composition.js';
 import {
@@ -69,6 +70,10 @@ interface WitnessRuntime {
     dirty: string;
     hordeAncestor: (revision: string) => boolean;
     hillAncestor: (revision: string) => boolean;
+    verifierAncestor?: (revision: string) => boolean;
+    verifierRevision?: string;
+    verifierModuleBlob?: string;
+    reviewedVerifierModuleBlob?: string;
   };
 }
 
@@ -76,7 +81,15 @@ interface SameSceneConsumerEvidenceOptions {
   hillEvidenceReportPath: string;
   requestedOutputPath: string;
   effectiveOutputPath: string;
+  presenterRevision: string;
+  hordeVerifierRevision: string;
+  hordeVerifierModuleBlob: string;
 }
+
+export const HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION =
+  'f916a9309ef4ab3f35d3a94d4e6084a3cdd2f474' as const;
+export const HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB =
+  'ae5aec5b6978a6f9d192d0a37aa7a254408201d7' as const;
 
 const SAME_SCENE_ID = 'hill-horde-live-hill-common-world-v1';
 const SAME_SCENE_VIEW_ID = 'hill-horde-isometric-v1';
@@ -112,7 +125,12 @@ export function createHillHordeSameSceneConsumerEvidence(
     !departure ||
     options.hillEvidenceReportPath.length === 0 ||
     options.requestedOutputPath.length === 0 ||
-    options.requestedOutputPath !== options.effectiveOutputPath
+    options.requestedOutputPath !== options.effectiveOutputPath ||
+    options.presenterRevision.length === 0 ||
+    options.hordeVerifierRevision !==
+      HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION ||
+    options.hordeVerifierModuleBlob !==
+      HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB
   ) {
     throw new Error(
       'same-scene consumer evidence inputs are incomplete or incompatible',
@@ -137,23 +155,14 @@ export function createHillHordeSameSceneConsumerEvidence(
   );
   const hillEvidenceReport = JSON.parse(
     hillEvidenceBytes.toString('utf8'),
-  ) as Record<string, any>;
-  if (
-    hillEvidenceReport.ok !== true ||
-    hillEvidenceReport.schema !==
-      'lerms.hill-of-hills.horde-same-scene-consumer-evidence.v0' ||
-    hillEvidenceReport.source?.route !== replay.route ||
-    hillEvidenceReport.source?.hillRevision !== replay.source.hillRevision ||
-    hillEvidenceReport.source?.actorId !== replay.source.actorId ||
-    hillEvidenceReport.output?.effectivePath !==
-      options.effectiveOutputPath ||
-    hillEvidenceReport.output?.sha256 !== outputSha256 ||
-    hillEvidenceReport.output?.frameCount !== motion.samples.length + 1
-  ) {
-    throw new Error(
-      'same-scene Hill evidence report does not bind the canonical replay output',
-    );
-  }
+  ) as unknown;
+  validateHillEvidenceReport(
+    hillEvidenceReport,
+    replay,
+    motion,
+    options,
+    outputSha256,
+  );
   const hillEvidenceReportSha256 = sha256(hillEvidenceBytes);
   const sampleIdentities = motion.samples.map(
     deriveLermHordeSameSceneSampleIdentity,
@@ -339,6 +348,102 @@ function consumerFrame(
   };
 }
 
+function createExpectedHillEvidenceReport(
+  replay: HillHordeSameScenePrefixReplay,
+  motion: LermHordeLiveBodyMotionComposition,
+  options: SameSceneConsumerEvidenceOptions,
+  outputSha256: string,
+): Record<string, unknown> {
+  const verifierFrames = replay.frames.filter(
+    (frame) =>
+      frame.kind === 'actor-prefix' || frame.kind === 'actor-departed',
+  );
+  return {
+    ok: true,
+    schema: 'lerms.hill-of-hills.horde-same-scene-consumer-evidence.v0',
+    phase: 'complete',
+    source: {
+      route: replay.route,
+      replaySchema: replay.schema,
+      hillRevision: replay.source.hillRevision,
+      hordeRevision: replay.source.hordeRevision,
+      hordeComponentRevision:
+        LERM_HORDE_REVIEWED_LIVE_BODY_MOTION_REVISION,
+      hordeVerifierRevision: options.hordeVerifierRevision,
+      hordeVerifierModuleBlob: options.hordeVerifierModuleBlob,
+      bodySourceRevision: replay.source.bodySourceRevision,
+      actorId: replay.source.actorId,
+      presenterRevision: options.presenterRevision,
+    },
+    world: {
+      coordinateSpace: 'x-y-z-world',
+      sceneId: SAME_SCENE_ID,
+      viewId: SAME_SCENE_VIEW_ID,
+      cameraChecksum: SAME_SCENE_CAMERA_CHECKSUM,
+      renderLayout: 'single_common_world_view',
+      layers: ['actual_hill', 'lerm_body', 'prefix_pressure'],
+    },
+    frames: verifierFrames.map((frame) => ({
+      sequence: frame.actor?.sequence ?? motion.samples.length,
+      timestampMs: frame.timestampMs,
+      kind: frame.kind,
+      prefixSampleCount: frame.prefixSampleCount,
+      trafficFieldChecksum:
+        frame.terrain.witness.producerTrafficFieldChecksum,
+      trafficExposureSeconds:
+        frame.terrain.witness.producerTrafficExposureSeconds,
+      topologyChecksum: frame.terrain.witness.topologyChecksum,
+      topologyPossibilityChecksum:
+        frame.terrain.witness.topologyPossibilityChecksum,
+      frameImageSha256: sha256(
+        renderHillHordeSameScenePrefixFrameSvg(frame),
+      ),
+      bodyPresent: frame.actor !== null,
+      liveContactTruth: frame.claimBoundary.liveContactTruth,
+    })),
+    output: {
+      requestedPath: options.requestedOutputPath,
+      effectivePath: options.effectiveOutputPath,
+      sha256: outputSha256,
+      width: 2160,
+      height: 1080,
+      frameCount: verifierFrames.length,
+      blank: false,
+      cached: false,
+    },
+    fallbackStatus: 'none',
+    staleStatus: 'fresh',
+    partialStatus: 'complete',
+    failurePhase: null,
+    claimBoundary: {
+      liveContactTruth: false,
+      producerRigMotionTruth: false,
+      morphologyPortability: false,
+      hordeVisualOutcomeAccepted: false,
+    },
+  };
+}
+
+function validateHillEvidenceReport(
+  report: unknown,
+  replay: HillHordeSameScenePrefixReplay,
+  motion: LermHordeLiveBodyMotionComposition,
+  options: SameSceneConsumerEvidenceOptions,
+  outputSha256: string,
+): void {
+  const expected = createExpectedHillEvidenceReport(
+    replay,
+    motion,
+    options,
+    outputSha256,
+  );
+  if (!isDeepStrictEqual(report, expected)) {
+    throw new Error(
+      'same-scene Hill evidence report does not match canonical source, status, world, frames, output, and claim identity',
+    );
+  }
+}
+
 export function runHillHordeSameScenePrefixWitnessCli(
   argv = process.argv.slice(2),
   runtime: WitnessRuntime = {
@@ -416,13 +521,34 @@ export function runHillHordeSameScenePrefixWitnessCli(
         `reviewed Hill revision ${complete.hillRevision} is not an ancestor of current source`,
       );
     }
+    if (
+      sourceIdentity.verifierRevision !==
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION ||
+      sourceIdentity.verifierAncestor?.(
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION,
+      ) !== true ||
+      sourceIdentity.verifierModuleBlob !==
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB ||
+      sourceIdentity.reviewedVerifierModuleBlob !==
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB
+    ) {
+      throw new Error(
+        `reviewed Horde verifier ${HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION} ancestry or source blob is missing or substituted`,
+      );
+    }
     evidence.source = {
       requestedHordeRevision: complete.hordeRevision,
       requestedHillRevision: complete.hillRevision,
+      reviewedHordeVerifierRevision:
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION,
       effectivePresenterRevision: sourceIdentity.head,
+      effectiveHordeVerifierModuleBlob:
+        sourceIdentity.verifierModuleBlob,
       dirty: sourceIdentity.dirty,
       hordeAncestor: true,
       hillAncestor: true,
+      hordeVerifierAncestor: true,
+      hordeVerifierSourceExact: true,
     };
 
     phase = 'composition';
@@ -446,66 +572,22 @@ export function runHillHordeSameScenePrefixWitnessCli(
     verifyWrittenSvg(effective.imageOut, svgSha256);
 
     phase = 'write-hill-evidence';
-    const verifierFrames = replay.frames.filter(
-      (frame) =>
-        frame.kind === 'actor-prefix' || frame.kind === 'actor-departed',
-    );
-    const hillEvidenceReport = {
-      ok: true,
-      schema: 'lerms.hill-of-hills.horde-same-scene-consumer-evidence.v0',
-      phase: 'complete',
-      source: {
-        route: replay.route,
-        replaySchema: replay.schema,
-        hillRevision: replay.source.hillRevision,
-        hordeRevision: replay.source.hordeRevision,
-        hordeComponentRevision:
-          LERM_HORDE_REVIEWED_LIVE_BODY_MOTION_REVISION,
-        bodySourceRevision: replay.source.bodySourceRevision,
-        actorId: replay.source.actorId,
-        presenterRevision: sourceIdentity.head,
-      },
-      world: {
-        coordinateSpace: 'x-y-z-world',
-        sceneId: SAME_SCENE_ID,
-        viewId: SAME_SCENE_VIEW_ID,
-        cameraChecksum: SAME_SCENE_CAMERA_CHECKSUM,
-        renderLayout: 'single_common_world_view',
-        layers: ['actual_hill', 'lerm_body', 'prefix_pressure'],
-      },
-      frames: verifierFrames.map((frame) => ({
-        sequence: frame.actor?.sequence ?? motion.samples.length,
-        timestampMs: frame.timestampMs,
-        kind: frame.kind,
-        prefixSampleCount: frame.prefixSampleCount,
-        trafficFieldChecksum:
-          frame.terrain.witness.producerTrafficFieldChecksum,
-        trafficExposureSeconds:
-          frame.terrain.witness.producerTrafficExposureSeconds,
-        topologyChecksum: frame.terrain.witness.topologyChecksum,
-        topologyPossibilityChecksum:
-          frame.terrain.witness.topologyPossibilityChecksum,
-        frameImageSha256: sha256(
-          renderHillHordeSameScenePrefixFrameSvg(frame),
-        ),
-        bodyPresent: frame.actor !== null,
-        liveContactTruth: frame.claimBoundary.liveContactTruth,
-      })),
-      output: {
-        requestedPath: complete.imageOut,
-        effectivePath: effective.imageOut,
-        sha256: svgSha256,
-        width: 2160,
-        height: 1080,
-        frameCount: verifierFrames.length,
-        blank: false,
-        cached: false,
-      },
-      fallbackStatus: 'none',
-      staleStatus: 'fresh',
-      partialStatus: 'complete',
-      failurePhase: null,
+    const hillEvidenceOptions: SameSceneConsumerEvidenceOptions = {
+      hillEvidenceReportPath: effective.hillEvidenceOut,
+      requestedOutputPath: complete.imageOut,
+      effectiveOutputPath: effective.imageOut,
+      presenterRevision: sourceIdentity.head,
+      hordeVerifierRevision:
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION,
+      hordeVerifierModuleBlob:
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB,
     };
+    const hillEvidenceReport = createExpectedHillEvidenceReport(
+      replay,
+      motion,
+      hillEvidenceOptions,
+      svgSha256,
+    );
     const hillEvidenceText = `${JSON.stringify(hillEvidenceReport, null, 2)}\n`;
     atomicWrite(effective.hillEvidenceOut, hillEvidenceText);
     const hillEvidenceSha256 = sha256(
@@ -516,11 +598,7 @@ export function runHillHordeSameScenePrefixWitnessCli(
     const consumerEvidence = createHillHordeSameSceneConsumerEvidence(
       replay,
       motion,
-      {
-        hillEvidenceReportPath: effective.hillEvidenceOut,
-        requestedOutputPath: complete.imageOut,
-        effectiveOutputPath: effective.imageOut,
-      },
+      hillEvidenceOptions,
     );
     const consumerVerification = verifyLermHordeSameSceneConsumerEvidence(
       motion,
@@ -561,6 +639,10 @@ export function runHillHordeSameScenePrefixWitnessCli(
           producerReceipt: effective.producerReceipt,
           hordeRevision: admission.source.horde.revision,
           hillRevision: admission.hill.targetRevision,
+          hordeVerifierRevision:
+            HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION,
+          hordeVerifierModuleBlob:
+            HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB,
           presenterRevision: sourceIdentity.head,
         },
         hordeReportSha256: sha256(hordeReportBytes),
@@ -588,6 +670,14 @@ export function runHillHordeSameScenePrefixWitnessCli(
         })),
       },
       consumer: {
+        verifierSource: {
+          revision: HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION,
+          modulePath: 'src/lerm-horde-live-body-motion.ts',
+          moduleBlob:
+            HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB,
+          ancestorOfPresenter: true,
+          sourceExact: true,
+        },
         evidence: consumerEvidence,
         verification: consumerVerification,
       },
@@ -618,6 +708,10 @@ export function runHillHordeSameScenePrefixWitnessCli(
       finalReport.ok !== true ||
       finalReport.output?.imageSha256 !== svgSha256 ||
       finalReport.replay?.frames?.length !== 18 ||
+      finalReport.consumer?.verifierSource?.revision !==
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION ||
+      finalReport.consumer?.verifierSource?.moduleBlob !==
+        HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB ||
       finalReport.consumer?.verification?.machineContractAccepted !== true ||
       finalReport.consumer?.verification?.visualOutcomeAccepted !== false ||
       finalReport.hillEvidence?.reportSha256 !== hillEvidenceSha256 ||
@@ -713,6 +807,10 @@ function inspectSourceIdentity(): {
   dirty: string;
   hordeAncestor: (revision: string) => boolean;
   hillAncestor: (revision: string) => boolean;
+  verifierAncestor: (revision: string) => boolean;
+  verifierRevision: string;
+  verifierModuleBlob: string;
+  reviewedVerifierModuleBlob: string;
 } {
   const git = (args: readonly string[]) =>
     execFileSync('git', args, { encoding: 'utf8' }).trim();
@@ -731,6 +829,17 @@ function inspectSourceIdentity(): {
     dirty: git(['status', '--porcelain=v1']),
     hordeAncestor: isAncestor,
     hillAncestor: isAncestor,
+    verifierAncestor: isAncestor,
+    verifierRevision:
+      HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION,
+    verifierModuleBlob: git([
+      'hash-object',
+      'src/lerm-horde-live-body-motion.ts',
+    ]),
+    reviewedVerifierModuleBlob: git([
+      'rev-parse',
+      `${HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION}:src/lerm-horde-live-body-motion.ts`,
+    ]),
   };
 }
 
