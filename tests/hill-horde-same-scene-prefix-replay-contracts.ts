@@ -178,6 +178,115 @@ assert.throws(
   /motion source does not match admission/,
 );
 
+const substitutedAdmissions = [
+  {
+    name: 'requested route',
+    value: {
+      ...admission,
+      hill: {
+        ...admission.hill,
+        requested: {
+          ...admission.hill.requested,
+          route: 'substituted/hill-route',
+        },
+      },
+    },
+  },
+  {
+    name: 'effective backend and config',
+    value: {
+      ...admission,
+      hill: {
+        ...admission.hill,
+        effective: {
+          ...admission.hill.effective,
+          backend: 'substituted-backend',
+          configId: 'substituted-config',
+        },
+      },
+    },
+  },
+  {
+    name: 'fallback status',
+    value: {
+      ...admission,
+      fallbackStatus: 'fallback',
+    },
+  },
+  {
+    name: 'claim boundary',
+    value: {
+      ...admission,
+      claimBoundary: {
+        ...admission.claimBoundary,
+        topologyResponseTruth: false,
+      },
+    },
+  },
+] as const;
+substitutedAdmissions.forEach(({ name, value }) => {
+  assert.throws(
+    () =>
+      createHillHordeSameScenePrefixReplay(
+        value as unknown as typeof admission,
+        motion,
+      ),
+    /admission identity is incompatible/,
+    `${name} substitution must fail before replay assertions are stamped`,
+  );
+});
+
+const substitutedMotions = [
+  {
+    name: 'motion route',
+    value: {
+      ...motion,
+      route: 'substituted-motion-route',
+    },
+  },
+  {
+    name: 'motion stale status',
+    value: {
+      ...motion,
+      staleStatus: 'stale',
+    },
+  },
+  {
+    name: 'motion claim boundary',
+    value: {
+      ...motion,
+      claimBoundary: {
+        ...motion.claimBoundary,
+        liveContactTruth: true,
+      },
+    },
+  },
+  {
+    name: 'motion body identity',
+    value: {
+      ...motion,
+      source: {
+        ...motion.source,
+        body: {
+          ...motion.source.body,
+          candidateId: 'substituted-body',
+        },
+      },
+    },
+  },
+] as const;
+substitutedMotions.forEach(({ name, value }) => {
+  assert.throws(
+    () =>
+      createHillHordeSameScenePrefixReplay(
+        admission,
+        value as unknown as typeof motion,
+      ),
+    /motion identity is incompatible/,
+    `${name} substitution must fail before replay assertions are stamped`,
+  );
+});
+
 const tempDir = mkdtempSync('/tmp/lerms-hill-horde-prefix-contracts.');
 const hordeReportPath = join(tempDir, 'horde-report.json');
 writeFileSync(hordeReportPath, `${JSON.stringify(hordeReport, null, 2)}\n`);

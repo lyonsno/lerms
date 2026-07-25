@@ -1,5 +1,13 @@
-import type { HillHordeLiveTraversalAdmissionReceipt } from './hill-horde-live-traversal-admission.js';
-import type {
+import {
+  HILL_HORDE_LIVE_TRAVERSAL_ADMISSION_SCHEMA,
+  HILL_HORDE_LIVE_TRAVERSAL_ROUTE,
+  HILL_HORDE_REVIEWED_SOURCE_REVISION,
+  type HillHordeLiveTraversalAdmissionReceipt,
+} from './hill-horde-live-traversal-admission.js';
+import {
+  LERM_HORDE_LIVE_BODY_MOTION_ROUTE,
+  LERM_HORDE_LIVE_BODY_MOTION_SCHEMA,
+  LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
   LermHordeLiveBodyMotionComposition,
   LermHordeLiveBodyMotionSample,
 } from './lerm-horde-live-body-motion.js';
@@ -24,6 +32,9 @@ const WIDTH = 1440;
 const HEIGHT = 720;
 const PANEL_WIDTH = 360;
 const PANEL_HEIGHT = 360;
+const REVIEWED_HILL_ROUTE = 'hill-of-hills/horde-live-traversal-admission';
+const REVIEWED_HILL_BACKEND = 'deterministic-cpu-heightfield';
+const REVIEWED_HILL_CONFIG = 'horde-live-traversal-admission-v0';
 
 export interface HillHordeSameScenePrefixFrame {
   index: number;
@@ -326,9 +337,9 @@ function validateSources(
   admission: HillHordeLiveTraversalAdmissionReceipt,
   motion: LermHordeLiveBodyMotionComposition,
 ): void {
+  validateAdmissionIdentity(admission);
+  validateMotionIdentity(admission, motion);
   if (
-    admission.ok !== true ||
-    motion.ok !== true ||
     motion.source.admission.hillRevision !== admission.hill.targetRevision ||
     motion.source.admission.hordeRevision !== admission.source.horde.revision ||
     motion.source.admission.actorId !== admission.source.horde.actorId
@@ -348,6 +359,108 @@ function validateSources(
     )
   ) {
     throw new Error('motion samples do not preserve reviewed admitted roots');
+  }
+}
+
+function validateAdmissionIdentity(
+  admission: HillHordeLiveTraversalAdmissionReceipt,
+): void {
+  const { requested, effective } = admission.hill;
+  if (
+    admission?.ok !== true ||
+    admission.schema !== HILL_HORDE_LIVE_TRAVERSAL_ADMISSION_SCHEMA ||
+    admission.phase !== 'complete' ||
+    admission.route !== HILL_HORDE_LIVE_TRAVERSAL_ROUTE ||
+    admission.evidenceClass !== 'live_current_hill_lerm_traversal' ||
+    admission.fallbackStatus !== 'none' ||
+    admission.staleStatus !== 'fresh' ||
+    admission.partialStatus !== 'complete-root-only' ||
+    admission.failurePhase !== null ||
+    admission.source.horde.revision !== HILL_HORDE_REVIEWED_SOURCE_REVISION ||
+    admission.hill.targetRevision !== LERM_HORDE_REVIEWED_LIVE_HILL_REVISION ||
+    requested.route !== REVIEWED_HILL_ROUTE ||
+    requested.authority !== 'live_simulation' ||
+    requested.backend !== REVIEWED_HILL_BACKEND ||
+    requested.configId !== REVIEWED_HILL_CONFIG ||
+    effective.route !== requested.route ||
+    effective.authority !== requested.authority ||
+    effective.backend !== requested.backend ||
+    effective.configId !== requested.configId ||
+    effective.priorFrameId !== 'horde-live-hill-prior' ||
+    effective.admittedFrameId !== 'horde-live-hill-admitted' ||
+    effective.postDepartureFrameId !== 'horde-live-hill-post-departure'
+  ) {
+    throw new Error('admission identity is incompatible with reviewed replay');
+  }
+  if (
+    admission.claimBoundary.rootRailMotionTruth !== true ||
+    admission.claimBoundary.visibleLermIdentityTruth !== true ||
+    admission.claimBoundary.liveCurrentHillTruth !== true ||
+    admission.claimBoundary.topologyResponseTruth !== true ||
+    admission.claimBoundary.liveContactTruth !== false ||
+    admission.claimBoundary.bodyArticulationTruth !== false ||
+    admission.claimBoundary.morphologyPortability !== false ||
+    Object.values(admission.assertions).some((value) => value !== true)
+  ) {
+    throw new Error('admission identity is incompatible with reviewed replay');
+  }
+}
+
+function validateMotionIdentity(
+  admission: HillHordeLiveTraversalAdmissionReceipt,
+  motion: LermHordeLiveBodyMotionComposition,
+): void {
+  const visibleBody = admission.source.horde.visibleBody;
+  if (
+    motion?.ok !== true ||
+    motion.schema !== LERM_HORDE_LIVE_BODY_MOTION_SCHEMA ||
+    motion.phase !== 'complete' ||
+    motion.route !== LERM_HORDE_LIVE_BODY_MOTION_ROUTE ||
+    motion.evidenceClass !== 'authored_procedural_body_motion_on_live_hill' ||
+    motion.fallbackStatus !== 'none' ||
+    motion.staleStatus !== 'fresh' ||
+    motion.partialStatus !== 'complete-root-only' ||
+    motion.source.admission.schema !==
+      HILL_HORDE_LIVE_TRAVERSAL_ADMISSION_SCHEMA ||
+    motion.source.admission.route !== HILL_HORDE_LIVE_TRAVERSAL_ROUTE ||
+    motion.source.body.assetIdentity !== visibleBody.assetIdentity ||
+    motion.source.body.sourceRevision !== visibleBody.sourceRevision ||
+    motion.source.body.sha256 !== visibleBody.sha256 ||
+    motion.source.body.candidateId !== 'procedural-squash-thief-v0' ||
+    motion.source.body.candidateSchema !==
+      'lerms.red-lerm-body-candidate.v0' ||
+    motion.source.body.shapeSchema !==
+      'lerms.red-lerm-procedural-shape.v0' ||
+    motion.gait.authority !== 'horde_authored_procedural_presentation' ||
+    motion.gait.phaseDriver !== 'source_distance' ||
+    motion.gait.strideLengthWorld !== 0.87 ||
+    motion.gait.maxBodyBobWorld !== 0.065 ||
+    motion.gait.maxLegReachWorld !== 0.16 ||
+    motion.gait.maxLegLiftWorld !== 0.09 ||
+    motion.hillMemory.trafficChecksumAtAdmission !==
+      admission.persistence.trafficChecksumAtAdmission ||
+    motion.hillMemory.trafficChecksumAfterDeparture !==
+      admission.persistence.trafficChecksumAfterDeparture ||
+    motion.hillMemory.postDepartureTopologyPossibilityChecksum !==
+      admission.admission.postDepartureTopologyPossibilityChecksum ||
+    motion.hillMemory.noHistoryTopologyPossibilityChecksum !==
+      admission.control.noHistoryTopologyPossibilityChecksum
+  ) {
+    throw new Error('motion identity is incompatible with reviewed replay');
+  }
+  if (
+    motion.claimBoundary.rootRailMotionTruth !== true ||
+    motion.claimBoundary.liveCurrentHillTruth !== true ||
+    motion.claimBoundary.topologyResponseTruth !== true ||
+    motion.claimBoundary.bodyArticulationTruth !== true ||
+    motion.claimBoundary.articulationClass !==
+      'authored_procedural_presentation' ||
+    motion.claimBoundary.liveContactTruth !== false ||
+    motion.claimBoundary.producerRigMotionTruth !== false ||
+    motion.claimBoundary.morphologyPortability !== false ||
+    Object.values(motion.assertions).some((value) => value !== true)
+  ) {
+    throw new Error('motion identity is incompatible with reviewed replay');
   }
 }
 
