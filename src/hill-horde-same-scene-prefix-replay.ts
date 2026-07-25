@@ -27,9 +27,9 @@ export const HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_SCHEMA =
 export const HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_ROUTE =
   'lerms/hill-of-hills/horde-same-scene-prefix-replay' as const;
 
-const MOTION_SEQUENCES = [0, 3, 6, 9, 12, 14] as const;
-const WIDTH = 1440;
-const HEIGHT = 720;
+const WIDTH = 2160;
+const HEIGHT = 1080;
+const PANEL_COLUMNS = 6;
 const PANEL_WIDTH = 360;
 const PANEL_HEIGHT = 360;
 const REVIEWED_HILL_ROUTE = 'hill-of-hills/horde-live-traversal-admission';
@@ -38,7 +38,11 @@ const REVIEWED_HILL_CONFIG = 'horde-live-traversal-admission-v0';
 
 export interface HillHordeSameScenePrefixFrame {
   index: number;
-  kind: 'no-history-control' | 'actor-prefix' | 'after-departure';
+  kind:
+    | 'no-history-control'
+    | 'actor-prefix'
+    | 'actor-departed'
+    | 'after-departure';
   timestampMs: number;
   prefixSampleCount: number;
   actor: LermHordeLiveBodyMotionSample | null;
@@ -90,12 +94,15 @@ export function createHillHordeSameScenePrefixReplay(
 ): HillHordeSameScenePrefixReplay {
   validateSources(admission, motion);
 
-  const prefixFrames = MOTION_SEQUENCES.map((sequence, index) => {
-    const actor = motion.samples[sequence];
+  const prefixFrames = motion.samples.map((actor, sequence) => {
     const prefixSampleCount = sequence + 1;
-    const { terrain } = terrainForPrefix(admission, prefixSampleCount, sequence === 14);
+    const { terrain } = terrainForPrefix(
+      admission,
+      prefixSampleCount,
+      sequence === motion.samples.length - 1,
+    );
     return frame(
-      index + 1,
+      sequence + 1,
       'actor-prefix',
       actor.timestampMs,
       prefixSampleCount,
@@ -134,7 +141,15 @@ export function createHillHordeSameScenePrefixReplay(
     ),
     ...prefixFrames,
     frame(
-      7,
+      prefixFrames.length + 1,
+      'actor-departed',
+      (motion.samples.at(-1)?.timestampMs ?? 0) + 1,
+      admission.traversal.orderedRootCount,
+      null,
+      finalPrefix.terrain,
+    ),
+    frame(
+      prefixFrames.length + 2,
       'after-departure',
       Math.max(1230, (motion.samples.at(-1)?.timestampMs ?? 0) + 520),
       admission.traversal.orderedRootCount,
@@ -210,6 +225,13 @@ export function renderHillHordeSameScenePrefixReplaySvg(
 ): string {
   const panels = replay.frames.map(renderPanel).join('');
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" data-schema="${replay.schema}" data-route="${replay.route}"><rect width="100%" height="100%" fill="#06100d"/>${panels}</svg>`;
+}
+
+export function renderHillHordeSameScenePrefixFrameSvg(
+  frame: HillHordeSameScenePrefixFrame,
+): string {
+  const localFrame = { ...frame, index: 0 };
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PANEL_WIDTH}" height="${PANEL_HEIGHT}" viewBox="0 0 ${PANEL_WIDTH} ${PANEL_HEIGHT}" data-schema="${HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_SCHEMA}" data-route="${HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_ROUTE}" data-frame-index="${frame.index}"><rect width="100%" height="100%" fill="#06100d"/>${renderPanel(localFrame)}</svg>`;
 }
 
 function terrainForPrefix(
@@ -455,6 +477,8 @@ function validateMotionIdentity(
     motion.claimBoundary.bodyArticulationTruth !== true ||
     motion.claimBoundary.articulationClass !==
       'authored_procedural_presentation' ||
+    motion.claimBoundary.sameSceneConsumerExerciseTruth !== false ||
+    motion.claimBoundary.perFrameIncrementalAdmissionTruth !== false ||
     motion.claimBoundary.liveContactTruth !== false ||
     motion.claimBoundary.producerRigMotionTruth !== false ||
     motion.claimBoundary.morphologyPortability !== false ||
@@ -465,8 +489,8 @@ function validateMotionIdentity(
 }
 
 function renderPanel(frame: HillHordeSameScenePrefixFrame): string {
-  const x0 = (frame.index % 4) * PANEL_WIDTH;
-  const y0 = Math.floor(frame.index / 4) * PANEL_HEIGHT;
+  const x0 = (frame.index % PANEL_COLUMNS) * PANEL_WIDTH;
+  const y0 = Math.floor(frame.index / PANEL_COLUMNS) * PANEL_HEIGHT;
   const terrain = frame.terrain;
   const heights = terrain.samples.map(({ height }) => height);
   const minHeight = Math.min(...heights);
@@ -513,8 +537,10 @@ function renderPanel(frame: HillHordeSameScenePrefixFrame): string {
   const title =
     frame.kind === 'no-history-control'
       ? 'no-history control'
+      : frame.kind === 'actor-departed'
+        ? 'actor departed · retained prefix'
       : frame.kind === 'after-departure'
-        ? 'after departure'
+        ? 'later after departure'
         : `t ${frame.timestampMs} ms · root ${frame.actor?.sequence}`;
   const prefix = `prefix ${frame.prefixSampleCount}/15`;
   return `<g data-panel="${frame.index}" data-same-scene="true">

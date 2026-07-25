@@ -19,13 +19,19 @@ import {
 import {
   LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
   composeLermHordeLiveBodyMotion,
+  verifyLermHordeSameSceneConsumerEvidence,
 } from '../src/lerm-horde-live-body-motion.js';
+import * as bodyMotionModule from '../src/lerm-horde-live-body-motion.js';
 import {
   HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_SCHEMA,
   createHillHordeSameScenePrefixReplay,
   renderHillHordeSameScenePrefixReplaySvg,
 } from '../src/hill-horde-same-scene-prefix-replay.js';
-import { runHillHordeSameScenePrefixWitnessCli } from '../src/hill-horde-same-scene-prefix-replay-witness.js';
+import {
+  createHillHordeSameSceneConsumerEvidence,
+  runHillHordeSameScenePrefixWitnessCli,
+} from '../src/hill-horde-same-scene-prefix-replay-witness.js';
+import * as witnessModule from '../src/hill-horde-same-scene-prefix-replay-witness.js';
 
 const sha256 = (path: string) =>
   createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -102,22 +108,41 @@ const admission = composeHordeTraversalIntoLiveHill({
 const motion = composeLermHordeLiveBodyMotion(admission);
 const replay = createHillHordeSameScenePrefixReplay(admission, motion);
 
+assert.equal(
+  typeof Reflect.get(
+    bodyMotionModule,
+    'verifyLermHordeSameSceneConsumerEvidence',
+  ),
+  'function',
+  'Hill must consume Horde verifier f916a93 rather than self-certifying the rendezvous',
+);
+assert.equal(
+  typeof Reflect.get(witnessModule, 'createHillHordeSameSceneConsumerEvidence'),
+  'function',
+  'Hill witness must export the source-bound adapter that feeds its actual common-world replay into Horde verification',
+);
+
 assert.equal(replay.schema, HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_SCHEMA);
-assert.equal(replay.frames.length, 8);
+assert.equal(replay.frames.length, 18);
 assert.equal(replay.frames[0].kind, 'no-history-control');
 assert.equal(replay.frames[0].actor, null);
 assert.equal(replay.frames[0].prefixSampleCount, 0);
 assert.equal(replay.frames.at(-1)?.kind, 'after-departure');
 assert.equal(replay.frames.at(-1)?.actor, null);
+const immediateDeparture = replay.frames.find(
+  (frame) => frame.kind === 'actor-departed',
+);
+assert.ok(immediateDeparture);
+assert.equal(immediateDeparture.actor, null);
 
 const motionFrames = replay.frames.filter((frame) => frame.kind === 'actor-prefix');
 assert.deepEqual(
   motionFrames.map(({ prefixSampleCount }) => prefixSampleCount),
-  [1, 4, 7, 10, 13, 15],
+  Array.from({ length: 15 }, (_, index) => index + 1),
 );
 assert.deepEqual(
   motionFrames.map(({ actor }) => actor?.sequence),
-  [0, 3, 6, 9, 12, 14],
+  Array.from({ length: 15 }, (_, index) => index),
 );
 motionFrames.forEach((frame) => {
   assert.ok(frame.actor);
@@ -138,8 +163,13 @@ for (let index = 1; index < prefixExposure.length; index += 1) {
 assert.equal(prefixExposure[0], 0);
 assert.equal(
   motionFrames.at(-1)?.terrain.witness.producerTrafficFieldChecksum,
-  replay.frames.at(-1)?.terrain.witness.producerTrafficFieldChecksum,
+  immediateDeparture.terrain.witness.producerTrafficFieldChecksum,
   'departure must retain the final elapsed traffic field',
+);
+assert.equal(
+  motionFrames.at(-1)?.terrain.witness.topologyChecksum,
+  immediateDeparture.terrain.witness.topologyChecksum,
+  'immediate departure must preserve the exact final Hill snapshot',
 );
 assert.equal(
   motionFrames.at(-1)?.terrain.witness.producerTrafficFieldChecksum,
@@ -152,13 +182,14 @@ assert.notEqual(
 );
 
 const svg = renderHillHordeSameScenePrefixReplaySvg(replay);
-assert.equal((svg.match(/data-same-scene="true"/g) ?? []).length, 8);
-assert.equal((svg.match(/data-actual-hill-terrain="true"/g) ?? []).length, 8);
-assert.equal((svg.match(/data-visible-lerm-body="true"/g) ?? []).length, 6);
-assert.equal((svg.match(/data-actor-absent="true"/g) ?? []).length, 2);
+assert.equal((svg.match(/data-same-scene="true"/g) ?? []).length, 18);
+assert.equal((svg.match(/data-actual-hill-terrain="true"/g) ?? []).length, 18);
+assert.equal((svg.match(/data-visible-lerm-body="true"/g) ?? []).length, 15);
+assert.equal((svg.match(/data-actor-absent="true"/g) ?? []).length, 3);
 assert.match(svg, /prefix 1\/15/);
 assert.match(svg, /prefix 15\/15/);
-assert.match(svg, /after departure/);
+assert.match(svg, /actor departed · retained prefix/);
+assert.match(svg, /later after departure/);
 
 assert.throws(
   () =>
@@ -288,6 +319,50 @@ substitutedMotions.forEach(({ name, value }) => {
 });
 
 const tempDir = mkdtempSync('/tmp/lerms-hill-horde-prefix-contracts.');
+const directOutputPath = join(tempDir, 'direct-common-world.svg');
+const directEvidenceReportPath = join(tempDir, 'direct-hill-evidence.json');
+writeFileSync(directOutputPath, svg);
+writeFileSync(
+  directEvidenceReportPath,
+  `${JSON.stringify({
+    ok: true,
+    schema: 'lerms.hill-of-hills.horde-same-scene-consumer-evidence.v0',
+    source: {
+      route: replay.route,
+      hillRevision: replay.source.hillRevision,
+      actorId: replay.source.actorId,
+    },
+    output: {
+      effectivePath: directOutputPath,
+      sha256: sha256(directOutputPath),
+      frameCount: motion.samples.length + 1,
+    },
+  }, null, 2)}\n`,
+);
+const directEvidence = createHillHordeSameSceneConsumerEvidence(
+  replay,
+  motion,
+  {
+    hillEvidenceReportPath: directEvidenceReportPath,
+    requestedOutputPath: directOutputPath,
+    effectiveOutputPath: directOutputPath,
+  },
+);
+const directVerification = verifyLermHordeSameSceneConsumerEvidence(
+  motion,
+  directEvidence,
+);
+assert.equal(directEvidence.authority, 'hill_consumer_execution');
+assert.equal(directEvidence.frames.length, motion.samples.length + 1);
+assert.equal(directEvidence.frames.at(-1)?.body.present, false);
+assert.equal(
+  directEvidence.frames.at(-1)?.pressure.trafficChecksum,
+  directEvidence.frames.at(-2)?.pressure.trafficChecksum,
+);
+assert.equal(directVerification.machineContractAccepted, true);
+assert.equal(directVerification.visualOutcomeAccepted, false);
+assert.deepEqual(directVerification.pending, ['horde_visual_inspection']);
+
 const hordeReportPath = join(tempDir, 'horde-report.json');
 writeFileSync(hordeReportPath, `${JSON.stringify(hordeReport, null, 2)}\n`);
 
@@ -308,6 +383,8 @@ const witnessArgs = (imageOut: string, reportOut: string) => [
   LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
   '--image-out',
   imageOut,
+  '--hill-evidence-out',
+  `${reportOut}.hill-evidence.json`,
   '--report-out',
   reportOut,
 ];
@@ -331,9 +408,57 @@ assert.equal(
   'lerms/hill-of-hills/horde-same-scene-prefix-replay',
 );
 assert.equal(successReport.inputs.effective.presenterRevision, cleanSource.head);
-assert.equal(successReport.replay.frames.length, 8);
+assert.equal(successReport.replay.frames.length, 18);
+assert.equal(
+  successReport.consumer.verification.machineContractAccepted,
+  true,
+);
+assert.equal(successReport.consumer.verification.visualOutcomeAccepted, false);
+assert.deepEqual(successReport.consumer.verification.pending, [
+  'horde_visual_inspection',
+]);
+assert.equal(successReport.consumer.evidence.frames.length, 16);
+assert.equal(
+  new Set(successReport.consumer.evidence.witness.frameImageSha256s).size,
+  16,
+);
+assert.equal(
+  successReport.consumer.evidence.source.hillEvidenceReportSha256,
+  sha256(`${successReportPath}.hill-evidence.json`),
+);
 assert.equal(successReport.visualStatus, 'rendered_uninspected');
 assert.ok(existsSync(successImagePath));
+assert.ok(existsSync(`${successReportPath}.hill-evidence.json`));
+
+const substitutedImagePath = join(tempDir, 'substituted-render.svg');
+const substitutedReportPath = join(tempDir, 'substituted-render.json');
+assert.equal(
+  runHillHordeSameScenePrefixWitnessCli(
+    witnessArgs(substitutedImagePath, substitutedReportPath),
+    {
+      render: (candidate) =>
+        renderHillHordeSameScenePrefixReplaySvg(candidate).replace(
+          'traffic ',
+          'traffiq ',
+        ),
+      sourceIdentity: () => cleanSource,
+    },
+  ),
+  1,
+  'a structurally complete substituted renderer must not manufacture verifier acceptance',
+);
+const substitutedReport = JSON.parse(
+  readFileSync(substitutedReportPath, 'utf8'),
+);
+assert.equal(substitutedReport.ok, false);
+assert.equal(substitutedReport.failurePhase, 'consumer-verification');
+assert.equal(substitutedReport.primaryOutputWritten, true);
+assert.match(
+  substitutedReport.error,
+  /does not match the canonical Hill replay/,
+);
+assert.ok(existsSync(substitutedImagePath));
+assert.ok(existsSync(`${substitutedReportPath}.hill-evidence.json`));
 
 const wrongSourceImagePath = join(tempDir, 'wrong-source.svg');
 const wrongSourceReportPath = join(tempDir, 'wrong-source.json');
@@ -375,6 +500,24 @@ assert.equal(blankReport.ok, false);
 assert.equal(blankReport.failurePhase, 'render');
 assert.equal(blankReport.primaryOutputWritten, false);
 assert.equal(existsSync(blankImagePath), false);
+
+const aliasedImagePath = join(tempDir, 'aliased-evidence.svg');
+const aliasedReportPath = join(tempDir, 'aliased-evidence.json');
+const aliasedArgs = witnessArgs(aliasedImagePath, aliasedReportPath);
+const hillEvidenceIndex = aliasedArgs.indexOf('--hill-evidence-out');
+aliasedArgs[hillEvidenceIndex + 1] = producerReceiptPath;
+assert.equal(
+  runHillHordeSameScenePrefixWitnessCli(aliasedArgs, {
+    render: renderHillHordeSameScenePrefixReplaySvg,
+    sourceIdentity: () => cleanSource,
+  }),
+  1,
+);
+const aliasedReport = JSON.parse(readFileSync(aliasedReportPath, 'utf8'));
+assert.equal(aliasedReport.ok, false);
+assert.equal(aliasedReport.failurePhase, 'argument-parse');
+assert.equal(aliasedReport.primaryOutputWritten, false);
+assert.equal(existsSync(aliasedImagePath), false);
 
 const argumentReportPath = join(tempDir, 'argument-failure.json');
 assert.equal(
