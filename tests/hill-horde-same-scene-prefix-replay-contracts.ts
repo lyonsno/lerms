@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { LermHordeProducerHistoryCompositionReceipt } from '../src/lerm-horde-producer-history-composition.js';
 import {
@@ -277,3 +278,27 @@ assert.equal(
 const argumentReport = JSON.parse(readFileSync(argumentReportPath, 'utf8'));
 assert.equal(argumentReport.ok, false);
 assert.equal(argumentReport.failurePhase, 'argument-parse');
+
+const subprocessReportPath = join(tempDir, 'subprocess-argument-failure.json');
+const witnessEntryPath = fileURLToPath(
+  new URL(
+    '../src/hill-horde-same-scene-prefix-replay-witness.js',
+    import.meta.url,
+  ),
+);
+const subprocess = spawnSync(
+  process.execPath,
+  [witnessEntryPath, '--report-out', subprocessReportPath],
+  { encoding: 'utf8' },
+);
+assert.equal(
+  subprocess.status,
+  1,
+  'compiled CLI must execute even when /tmp and /private/tmp spellings differ',
+);
+assert.match(subprocess.stderr, /missing required --horde-report/);
+const subprocessReport = JSON.parse(
+  readFileSync(subprocessReportPath, 'utf8'),
+);
+assert.equal(subprocessReport.ok, false);
+assert.equal(subprocessReport.failurePhase, 'argument-parse');

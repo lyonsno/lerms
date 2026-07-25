@@ -413,5 +413,6 @@ function sha256(bytes: string | Uint8Array): string {
 
 const isMain =
   process.argv[1] !== undefined &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  realpathSync(resolve(process.argv[1])) ===
+    realpathSync(fileURLToPath(import.meta.url));
 if (isMain) process.exitCode = runHillHordeSameScenePrefixWitnessCli();
