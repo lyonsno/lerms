@@ -76,6 +76,10 @@ const identity: HillAnalyticImpactSupportIdentity = {
 const frameA = { terrain: terrainAt(100.104), identity, worldTime: 100.104 };
 const frameB = { terrain: terrainAt(100.604), identity, worldTime: 100.604 };
 const supportedWorldTime = { min: frameA.worldTime, max: frameB.worldTime };
+const publishedBounds = {
+  maximumSpatialLipschitz: 3,
+  maximumSignedDistanceRate: 2
+};
 const frameAt = (worldTime: number) => {
   if (Math.abs(worldTime - frameA.worldTime) < 1e-9) return frameA;
   if (Math.abs(worldTime - frameB.worldTime) < 1e-9) return frameB;
@@ -88,7 +92,8 @@ const frameAt = (worldTime: number) => {
 
 const query = createQuery(frameAt, frameA, {
   supportedWorldTime,
-  validationFrames: [frameA, frameB]
+  validationFrames: [frameA, frameB],
+  ...publishedBounds
 });
 assertHillAnalyticImpactSupportQuery(query);
 
@@ -135,7 +140,8 @@ expectReject(
       identity: { ...identity, artifactSha256: 'missing' }
     }, {
       supportedWorldTime,
-      validationFrames: [frameA, frameB]
+      validationFrames: [frameA, frameB],
+      ...publishedBounds
     }),
   /artifact SHA-256/i
 );
@@ -148,7 +154,8 @@ expectReject(
       identity: { ...identity, stale: undefined } as unknown as HillAnalyticImpactSupportIdentity
     }, {
       supportedWorldTime,
-      validationFrames: [frameA, frameB]
+      validationFrames: [frameA, frameB],
+      ...publishedBounds
     }),
   /identity.*stale|stale.*identity/i
 );
@@ -164,7 +171,8 @@ expectReject(
       } as unknown as HillAnalyticImpactSupportIdentity
     }, {
       supportedWorldTime,
-      validationFrames: [frameA, frameB]
+      validationFrames: [frameA, frameB],
+      ...publishedBounds
     }),
   /fallback/i
 );
@@ -186,7 +194,8 @@ const driftQuery = createQuery(
   frameA,
   {
     supportedWorldTime,
-    validationFrames: [frameA, frameB]
+    validationFrames: [frameA, frameB],
+    ...publishedBounds
   }
 );
 expectReject(
@@ -200,7 +209,8 @@ const substitutedFrameQuery = createQuery(
   frameA,
   {
     supportedWorldTime,
-    validationFrames: [frameA, frameB]
+    validationFrames: [frameA, frameB],
+    ...publishedBounds
   }
 );
 expectReject(
@@ -215,6 +225,7 @@ expectReject(
     createQuery(frameAt, frameA, {
       supportedWorldTime,
       validationFrames: [frameA, frameB],
+      ...publishedBounds,
       maximumSpatialLipschitz: 0.5
     }),
   /spatial Lipschitz.*understate/i
@@ -226,9 +237,48 @@ expectReject(
     createQuery(frameAt, frameA, {
       supportedWorldTime,
       validationFrames: [frameA, frameB],
+      ...publishedBounds,
       maximumSignedDistanceRate: 0
     }),
   /temporal.*understate|signed-distance rate.*understate/i
+);
+
+expectReject(
+  'missing explicit spatial bound',
+  () =>
+    createQuery(frameAt, frameA, {
+      supportedWorldTime,
+      validationFrames: [frameA, frameB],
+      maximumSignedDistanceRate: publishedBounds.maximumSignedDistanceRate
+    }),
+  /explicit.*spatial|spatial.*required/i
+);
+
+expectReject(
+  'missing explicit temporal bound',
+  () =>
+    createQuery(frameAt, frameA, {
+      supportedWorldTime,
+      validationFrames: [frameA, frameB],
+      maximumSpatialLipschitz: publishedBounds.maximumSpatialLipschitz
+    }),
+  /explicit.*temporal|temporal.*required/i
+);
+
+const offGridUnderboundQuery = createQuery(frameAt, frameA, {
+  supportedWorldTime,
+  validationFrames: [frameA, frameB],
+  maximumSpatialLipschitz: 2.75,
+  maximumSignedDistanceRate: publishedBounds.maximumSignedDistanceRate
+});
+expectReject(
+  'off-grid local spatial underbound',
+  () =>
+    offGridUnderboundQuery.sampleSignedDistance(
+      [4.6, 3, -1.8666666666666667],
+      frameA.worldTime
+    ),
+  /local.*spatial|spatial.*bound/i
 );
 
 const staticTerrain = createHillOfHillsTerrain(defaultHillOfHillsParams, {
@@ -243,6 +293,7 @@ const staticFrame = { terrain: staticTerrain, identity: staticIdentity, worldTim
 const staticQuery = createQuery(() => staticFrame, staticFrame, {
   supportedWorldTime: { min: 20, max: 20 },
   validationFrames: [staticFrame],
+  maximumSpatialLipschitz: 3,
   maximumSignedDistanceRate: 0
 });
 assert(staticQuery.maximumSignedDistanceRate === 0, 'static support lawfully publishes temporal rate zero');

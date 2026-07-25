@@ -5,12 +5,20 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve
+} from 'node:path';
 
 const EXACT_EXPORT_SUBPATH = './hill-of-hills/analytic-impact-support';
 const REQUIRED_EXPORTS = [
@@ -55,6 +63,94 @@ function digest(algorithm, bytes) {
   return createHash(algorithm).update(bytes).digest();
 }
 
+function git(cwd, args) {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  }).trim();
+}
+
+function packageSourceIdentity(packageDir, sourceRevision) {
+  if (!/^[0-9a-f]{40}$/i.test(sourceRevision)) {
+    throw new Error('requested source revision must be an exact Git revision');
+  }
+  const repositoryRoot = realpathSync(
+    git(packageDir, ['rev-parse', '--show-toplevel'])
+  );
+  const repositoryHead = git(repositoryRoot, ['rev-parse', 'HEAD']);
+  if (repositoryHead !== sourceRevision) {
+    throw new Error(
+      `requested source revision ${sourceRevision} differs from package repository HEAD ${repositoryHead}`
+    );
+  }
+  const manifestPath = join(packageDir, 'package.json');
+  const tsconfigPath = join(packageDir, 'tsconfig.json');
+  if (!existsSync(tsconfigPath)) {
+    throw new Error(`package TypeScript config does not exist: ${tsconfigPath}`);
+  }
+  const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'));
+  if (!Array.isArray(tsconfig.files) || tsconfig.files.length === 0) {
+    throw new Error('package TypeScript config must name exact source files');
+  }
+  const sourcePaths = [
+    manifestPath,
+    tsconfigPath,
+    ...tsconfig.files.map((path) => resolve(packageDir, path))
+  ].map((path) => realpathSync(path));
+  const repositoryPaths = sourcePaths.map((path) => {
+    const repositoryPath = relative(repositoryRoot, path);
+    if (
+      repositoryPath.length === 0 ||
+      repositoryPath === '..' ||
+      repositoryPath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
+    ) {
+      throw new Error(`package source escapes its repository: ${path}`);
+    }
+    return repositoryPath;
+  });
+  git(repositoryRoot, [
+    'ls-files',
+    '--error-unmatch',
+    '--',
+    ...repositoryPaths
+  ]);
+  const dirty = git(repositoryRoot, [
+    'status',
+    '--porcelain=v1',
+    '--untracked-files=all',
+    '--',
+    ...repositoryPaths
+  ]);
+  if (dirty.length > 0) {
+    throw new Error(`package-relevant source is dirty:\n${dirty}`);
+  }
+  const sourceTreeSha256 = packageSourceTreeSha256(
+    repositoryRoot,
+    repositoryPaths
+  );
+  return {
+    repositoryRoot,
+    repositoryHead,
+    repositoryPaths: Object.freeze([...repositoryPaths].sort()),
+    sourceTreeSha256
+  };
+}
+
+function packageSourceTreeSha256(repositoryRoot, repositoryPaths) {
+  const hash = createHash('sha256');
+  for (const repositoryPath of [...repositoryPaths].sort()) {
+    const bytes = readFileSync(join(repositoryRoot, repositoryPath));
+    hash.update(repositoryPath);
+    hash.update('\0');
+    hash.update(String(bytes.length));
+    hash.update('\0');
+    hash.update(bytes);
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
 function writeReport(reportPath, report) {
   mkdirSync(dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
@@ -90,6 +186,7 @@ if (config) {
     fallbackRoute: null,
     artifactFreshness: 'not_built'
   };
+  writeReport(reportPath, report);
   let consumerDir;
 
   try {
@@ -106,18 +203,39 @@ if (config) {
       manifestPath
     };
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const expectedTarballName = `${manifest.name
+      .replace(/^@/, '')
+      .replace('/', '-')}-${manifest.version}.tgz`;
+    const expectedTarballPath = join(config.outputDir, expectedTarballName);
+    rmSync(expectedTarballPath, { force: true });
     const exportEntry = manifest.exports?.[config.exportSubpath];
     const effectiveImport = exportEntry?.import;
     if (typeof effectiveImport !== 'string') {
       throw new Error(`requested export subpath is not published: ${config.exportSubpath}`);
     }
+    report.failurePhase = 'validate-source-identity';
+    const sourceIdentity = packageSourceIdentity(
+      config.packageDir,
+      config.sourceRevision
+    );
     report.effective = {
       packageName: manifest.name,
       packageVersion: manifest.version,
       exportSubpath: config.exportSubpath,
       importTarget: effectiveImport,
-      packageCoordinate: `${manifest.name}${config.exportSubpath.slice(1)}`
+      packageCoordinate: `${manifest.name}${config.exportSubpath.slice(1)}`,
+      sourceRevision: sourceIdentity.repositoryHead,
+      repositoryRoot: sourceIdentity.repositoryRoot,
+      repositoryHead: sourceIdentity.repositoryHead,
+      repositoryPaths: sourceIdentity.repositoryPaths,
+      sourceTreeSha256: sourceIdentity.sourceTreeSha256
     };
+    report.lastTrustworthyEvidence = {
+      phase: 'package-source-identity-verified',
+      sourceRevision: sourceIdentity.repositoryHead,
+      sourceTreeSha256: sourceIdentity.sourceTreeSha256
+    };
+    writeReport(reportPath, report);
 
     report.failurePhase = 'build-package';
     execFileSync('npm', ['run', 'build'], {
@@ -125,13 +243,15 @@ if (config) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     });
+    const postBuildSourceTreeSha256 = packageSourceTreeSha256(
+      sourceIdentity.repositoryRoot,
+      sourceIdentity.repositoryPaths
+    );
+    if (postBuildSourceTreeSha256 !== sourceIdentity.sourceTreeSha256) {
+      throw new Error('package-relevant source changed during build');
+    }
 
     report.failurePhase = 'pack-package';
-    const expectedTarballName = `${manifest.name
-      .replace(/^@/, '')
-      .replace('/', '-')}-${manifest.version}.tgz`;
-    const expectedTarballPath = join(config.outputDir, expectedTarballName);
-    rmSync(expectedTarballPath, { force: true });
     const packOutput = execFileSync(
       'npm',
       ['pack', '--json', '--pack-destination', config.outputDir],

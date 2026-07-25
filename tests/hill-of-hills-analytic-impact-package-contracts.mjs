@@ -1,14 +1,17 @@
 import { spawnSync } from 'node:child_process';
 import {
+  cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const packageManifest = resolve(
   'packages/hill-of-hills-support/package.json'
@@ -37,6 +40,54 @@ if (typeof manifest.exports?.[exportSubpath]?.import !== 'string') {
   throw new Error('package manifest does not publish the analytic support runtime');
 }
 
+function runCommand(command, args, cwd) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(' ')} failed: ${result.stderr || result.stdout}`
+    );
+  }
+  return result.stdout.trim();
+}
+
+const testRoot = mkdtempSync(
+  join(tmpdir(), 'lerms-hill-impact-package-contract-')
+);
+const outputDir = join(testRoot, 'output');
+const fixtureRoot = join(testRoot, 'fixture-repo');
+const fixturePackageDir = join(
+  fixtureRoot,
+  'packages',
+  'hill-of-hills-support'
+);
+mkdirSync(fixturePackageDir, { recursive: true });
+cpSync(packageManifest, join(fixturePackageDir, 'package.json'));
+const packageTsconfig = resolve(
+  'packages/hill-of-hills-support/tsconfig.json'
+);
+cpSync(packageTsconfig, join(fixturePackageDir, 'tsconfig.json'));
+const tsconfig = JSON.parse(readFileSync(packageTsconfig, 'utf8'));
+for (const file of tsconfig.files) {
+  const source = resolve(dirname(packageTsconfig), file);
+  const target = resolve(fixturePackageDir, file);
+  mkdirSync(dirname(target), { recursive: true });
+  cpSync(source, target);
+}
+symlinkSync(resolve('node_modules'), join(fixtureRoot, 'node_modules'), 'dir');
+runCommand('git', ['init', '-q'], fixtureRoot);
+runCommand('git', ['config', 'user.name', 'Hill Package Contract'], fixtureRoot);
+runCommand(
+  'git',
+  ['config', 'user.email', 'hill-package-contract@example.invalid'],
+  fixtureRoot
+);
+runCommand('git', ['add', '.'], fixtureRoot);
+runCommand('git', ['commit', '-q', '-m', 'fixture package source'], fixtureRoot);
+const fixtureRevision = runCommand('git', ['rev-parse', 'HEAD'], fixtureRoot);
+
 function runWitness(outputDir, extraArgs = []) {
   return spawnSync(
     process.execPath,
@@ -44,6 +95,10 @@ function runWitness(outputDir, extraArgs = []) {
       witnessPath,
       '--output-dir',
       outputDir,
+      '--package-dir',
+      fixturePackageDir,
+      '--source-revision',
+      fixtureRevision,
       ...extraArgs
     ],
     {
@@ -60,10 +115,6 @@ function readReport(outputDir) {
   }
   return JSON.parse(readFileSync(reportPath, 'utf8'));
 }
-
-const outputDir = mkdtempSync(
-  join(tmpdir(), 'lerms-hill-impact-package-contract-')
-);
 
 try {
   const success = runWitness(outputDir);
@@ -101,6 +152,10 @@ try {
   }
   if (
     !/^[0-9a-f]{40}$/.test(successReport.requested.sourceRevision) ||
+    successReport.requested.sourceRevision !== fixtureRevision ||
+    successReport.effective.sourceRevision !== fixtureRevision ||
+    successReport.effective.repositoryHead !== fixtureRevision ||
+    !/^[0-9a-f]{64}$/.test(successReport.effective.sourceTreeSha256) ||
     !/^[0-9a-f]{64}$/.test(successReport.artifact.sha256) ||
     !successReport.artifact.integrity.startsWith('sha512-')
   ) {
@@ -124,6 +179,52 @@ try {
         `clean-installed package omitted required export: ${requiredExport}`
       );
     }
+  }
+
+  const falseRevision = 'b'.repeat(40);
+  const wrongRevision = runWitness(outputDir, [
+    '--source-revision',
+    falseRevision
+  ]);
+  if (wrongRevision.status === 0) {
+    throw new Error('package witness accepted a claimed revision different from package source HEAD');
+  }
+  const wrongRevisionReport = readReport(outputDir);
+  if (
+    wrongRevisionReport.ok !== false ||
+    wrongRevisionReport.failurePhase !== 'validate-source-identity' ||
+    wrongRevisionReport.primaryOutputWritten !== false ||
+    wrongRevisionReport.artifactFreshness !== 'not_built' ||
+    wrongRevisionReport.requested.sourceRevision !== falseRevision
+  ) {
+    throw new Error('package witness did not fail loud on claimed-revision substitution');
+  }
+  if (existsSync(successReport.artifact.path)) {
+    throw new Error('package witness retained stale primary output after source-identity failure');
+  }
+
+  const fixtureAnalyticSource = resolve(
+    fixturePackageDir,
+    '../../src/terrain/hill-of-hills-analytic-impact-support.ts'
+  );
+  const cleanAnalyticSource = readFileSync(fixtureAnalyticSource, 'utf8');
+  writeFileSync(
+    fixtureAnalyticSource,
+    `${cleanAnalyticSource}\n// dirty source must not inherit committed identity\n`
+  );
+  const dirtySource = runWitness(outputDir);
+  writeFileSync(fixtureAnalyticSource, cleanAnalyticSource);
+  if (dirtySource.status === 0) {
+    throw new Error('package witness accepted dirty package-relevant source');
+  }
+  const dirtySourceReport = readReport(outputDir);
+  if (
+    dirtySourceReport.ok !== false ||
+    dirtySourceReport.failurePhase !== 'validate-source-identity' ||
+    dirtySourceReport.primaryOutputWritten !== false ||
+    dirtySourceReport.artifactFreshness !== 'not_built'
+  ) {
+    throw new Error('package witness did not fail loud on dirty source substitution');
   }
 
   writeFileSync(
@@ -188,7 +289,7 @@ try {
     throw new Error('package witness reused stale evidence on a successful rerun');
   }
 } finally {
-  rmSync(outputDir, { recursive: true, force: true });
+  rmSync(testRoot, { recursive: true, force: true });
 }
 
 process.stdout.write('hill analytic impact package contracts passed\n');

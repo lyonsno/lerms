@@ -38,8 +38,8 @@ export interface HillAnalyticImpactSupportWorldTimeInterval {
 export interface HillAnalyticImpactSupportCreateOptions {
   supportedWorldTime: HillAnalyticImpactSupportWorldTimeInterval;
   validationFrames: readonly HillAnalyticImpactSupportFrame[];
-  maximumSpatialLipschitz?: number;
-  maximumSignedDistanceRate?: number;
+  maximumSpatialLipschitz: number;
+  maximumSignedDistanceRate: number;
 }
 
 export interface HillAnalyticImpactSupportSample {
@@ -150,6 +150,7 @@ export function createHillAnalyticImpactSupportQuery(
         normal: Object.freeze([...sample.normal]) as unknown as readonly [number, number, number]
       };
       assertFiniteSupportSample(result);
+      assertLocalSampleWithinSpatialBound(result, maximumSpatialLipschitz);
       return result;
     }
   };
@@ -298,7 +299,9 @@ function resolveSpatialLipschitzBound(
   declared: number | undefined,
   derived: number
 ): number {
-  if (declared === undefined) return derived;
+  if (declared === undefined) {
+    throw new Error('Hill analytic impact support requires an explicit source-authoritative spatial Lipschitz bound');
+  }
   if (!Number.isFinite(declared) || declared <= 0) {
     throw new Error('Hill analytic impact support spatial Lipschitz bound must be finite and positive');
   }
@@ -312,7 +315,9 @@ function resolveTemporalRateBound(
   declared: number | undefined,
   derived: number
 ): number {
-  if (declared === undefined) return derived;
+  if (declared === undefined) {
+    throw new Error('Hill analytic impact support requires an explicit source-authoritative temporal signed-distance rate');
+  }
   if (!Number.isFinite(declared) || declared < 0) {
     throw new Error('Hill analytic impact support temporal signed-distance rate must be finite and non-negative');
   }
@@ -348,5 +353,24 @@ function assertFiniteSupportSample(sample: HillAnalyticImpactSupportSample): voi
   const normalLength = Math.hypot(...sample.normal);
   if (!Number.isFinite(normalLength) || normalLength <= 0 || Math.abs(normalLength - 1) > 1e-5) {
     throw new Error('Hill analytic impact support produced a non-unit normal');
+  }
+}
+
+function assertLocalSampleWithinSpatialBound(
+  sample: HillAnalyticImpactSupportSample,
+  maximumSpatialLipschitz: number
+): void {
+  const normalY = sample.normal[1];
+  if (!Number.isFinite(normalY) || normalY <= 0) {
+    throw new Error('Hill analytic impact support produced a non-heightfield normal');
+  }
+  const localSpatialLipschitz = 1 / normalY;
+  const tolerance = Number.EPSILON * Math.max(
+    1,
+    localSpatialLipschitz,
+    maximumSpatialLipschitz
+  ) * 16;
+  if (localSpatialLipschitz > maximumSpatialLipschitz + tolerance) {
+    throw new Error('Hill analytic impact support local sample exceeds the declared spatial Lipschitz bound');
   }
 }
