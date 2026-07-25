@@ -85,6 +85,16 @@ assert.match(
   /runtimeFetch\('\/sidecar\/stop'[\s\S]*runtimeFetch\('\/chronology\/flush'[\s\S]*assertLiveRuntimeHealth/,
   'shutdown stops publishers, drains chronology, and refreshes visible persistence truth',
 );
+assert.match(
+  liveHandSource,
+  /async function stop\(\)[\s\S]*recordStoppedLandmarkerInference\('hand_control_stopped'\)[\s\S]*disposeLandmarkerWorker/,
+  'shutdown explicitly accounts for a MediaPipe inference terminated before worker output',
+);
+assert.match(
+  liveHandSource,
+  /submittedFrameCount[\s\S]*stoppedInferenceCount[\s\S]*latestStoppedInference/,
+  'stopped MediaPipe inference remains visible in the operator receipt',
+);
 assert.match(liveHandSource, /manoRegeneratorAvailable[\s\S]*native_mano_regeneration/, 'hybrid start fails before camera output when native MANO regeneration is unavailable');
 assert.match(
   liveHandSource,

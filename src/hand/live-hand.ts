@@ -242,7 +242,9 @@ let landmarkerInFlightCaptureId: string | null = null;
 let landmarkerFramesSubmitted = 0;
 let landmarkerFramesDropped = 0;
 let landmarkerFramesSuppressed = 0;
+let landmarkerFramesStopped = 0;
 let latestLandmarkerFailure: Record<string, unknown> | null = null;
+let latestStoppedInference: Record<string, unknown> | null = null;
 let latestFastIngestReceipt: Record<string, unknown> | null = null;
 let latestFastDeliveryFailure: Record<string, unknown> | null = null;
 let latestSupersession: LiveHandFastDeliveryLineage | null = null;
@@ -456,7 +458,7 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
     : fluidError ? ' | fluid error' : ' | fluid pending';
   const delivery = fastDeliveryMailbox.snapshot();
   const fast = sourceMode === 'hybrid_mano'
-    ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} busy ${landmarkerFramesSuppressed} delivered ${delivery.completedCount} superseded ${delivery.supersededBeforePostCount} pending ${delivery.pendingCaptureId ? 1 : 0}`
+    ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} stopped ${landmarkerFramesStopped} busy ${landmarkerFramesSuppressed} delivered ${delivery.completedCount} superseded ${delivery.supersededBeforePostCount} pending ${delivery.pendingCaptureId ? 1 : 0}`
     : '';
   routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fast}${fluid}`;
 }
@@ -763,6 +765,20 @@ function disposeLandmarkerWorker(): void {
   rejectLandmarkerInitialization = null;
   landmarkerInFlightCaptureId = null;
   pendingFastCaptureMetrics.clear();
+}
+
+function recordStoppedLandmarkerInference(reason: string): void {
+  const captureId = landmarkerInFlightCaptureId;
+  if (captureId === null) return;
+  pendingFastCaptureMetrics.delete(captureId);
+  landmarkerFramesStopped += 1;
+  latestStoppedInference = {
+    schema: 'lerms.live-hand-fast-inference-stop.v0',
+    captureId,
+    reason,
+    stoppedAtMs: Date.now(),
+    primaryOutputWritten: false,
+  };
 }
 
 function failLandmarkerWorker(worker: Worker, error: Error, report: Record<string, unknown> | null = null): void {
@@ -1400,6 +1416,8 @@ async function start(): Promise<void> {
   landmarkerFramesSubmitted = 0;
   landmarkerFramesDropped = 0;
   landmarkerFramesSuppressed = 0;
+  landmarkerFramesStopped = 0;
+  latestStoppedInference = null;
   running = true;
   routeModeControl.disabled = true;
   toggle.textContent = 'Stop Hand';
@@ -1424,6 +1442,7 @@ async function stop(): Promise<void> {
   fastDeliveryMailbox.discardPending();
   await fastDeliveryMailbox.whenIdle();
   disposeCaptureWorker(new Error('hand control stopped'));
+  recordStoppedLandmarkerInference('hand_control_stopped');
   disposeLandmarkerWorker();
   stateAbortController?.abort();
   stateAbortController = null;
@@ -1721,8 +1740,10 @@ function collectLiveHandDebugState(): Record<string, unknown> {
       latestDeliveryFailure: latestFastDeliveryFailure,
       submittedFrameCount: landmarkerFramesSubmitted,
       droppedFrameCount: landmarkerFramesDropped,
+      stoppedInferenceCount: landmarkerFramesStopped,
       busySuppressedFrameCount: landmarkerFramesSuppressed,
       inFlightCaptureId: landmarkerInFlightCaptureId,
+      latestStoppedInference,
       workerLandmarkerMs: distribution(landmarkerWorkerMs),
       runtimePostMs: distribution(fastPathPostMs),
       delivery: {
