@@ -38,6 +38,13 @@ import {
   type LiveHandLandmarkerWorkerResult,
 } from './live-hand-landmarker-contract.js';
 import {
+  LiveHandFastDeliveryMailbox,
+  coalesceFastDeliveryLineage,
+  type LiveHandFastDeliveryItem,
+  type LiveHandFastDeliveryLineage,
+  type LiveHandFastDeliverySupersession,
+} from './live-hand-fast-delivery.js';
+import {
   planLiveHandSourceFrame,
   resolveLiveHandAnchorIntervalMs,
   type LiveHandSourceMode,
@@ -190,6 +197,7 @@ let cameraFrameFallbackTimer: number | null = null;
 let capturePostAbortController: AbortController | null = null;
 let stateAbortController: AbortController | null = null;
 let lastStateSequence = 0;
+let lastAppliedStateSequence = 0;
 let frameSequence = 0;
 let lastAnchorCaptureAtMs: number | null = null;
 let lastLiveAt = 0;
@@ -236,6 +244,8 @@ let landmarkerFramesDropped = 0;
 let landmarkerFramesSuppressed = 0;
 let latestLandmarkerFailure: Record<string, unknown> | null = null;
 let latestFastIngestReceipt: Record<string, unknown> | null = null;
+let latestFastDeliveryFailure: Record<string, unknown> | null = null;
+let latestSupersession: LiveHandFastDeliveryLineage | null = null;
 let articulatedFixture: ArticulatedFixture | null = null;
 let articulatedFixtureStartedAt = 0;
 let articulatedFixtureFrameIndex = -1;
@@ -263,6 +273,21 @@ const pendingFastCaptureMetrics = new Map<string, {
   capturedAtMs: number;
   captureAcquireMs: number;
 }>();
+interface FastLandmarkDeliveryItem extends LiveHandFastDeliveryItem {
+  runGeneration: number;
+  result: LiveHandLandmarkerWorkerResult;
+  payload: Record<string, unknown>;
+  captureMetrics: {
+    capturedAtMs: number;
+    captureAcquireMs: number;
+  };
+  supersededBeforePost: LiveHandFastDeliveryLineage[];
+}
+const fastDeliveryMailbox = new LiveHandFastDeliveryMailbox<FastLandmarkDeliveryItem>(
+  deliverFastLandmarkResult,
+  recordFastDeliverySupersession,
+  recordFastDeliveryFailure,
+);
 const pendingCaptureWorkerResults = new Map<string, {
   resolve: (result: LiveHandCaptureWorkerResult) => void;
   reject: (error: Error) => void;
@@ -429,8 +454,9 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
   const fluid = fluidSolver?.available
     ? ` | juice ${juiceBudgetAuthority === 'macro_control' ? `${liveJuiceBudget.effectiveBudget.toFixed(0)} ${liveJuiceBudget.zone}` : 'custom'} | fluid ${effectiveParticleCount ?? 'unverified'}p effective / ${liveFluidEconomics.requestedParticleCount}p requested | release req ${liveFluidEconomics.sourceFluxParticlesPerSecond.toFixed(0)} / derived ${effectiveReleaseRate?.toFixed(0) ?? 'unverified'}pps | active ${activeParticleCount ?? liveInlets?.initialActiveParticleCount ?? 'diag-pending'} / dormant ${dormantParticleCount ?? liveInlets?.initialDormantParticleCount ?? 'diag-pending'} | residence 1.65s @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
     : fluidError ? ' | fluid error' : ' | fluid pending';
+  const delivery = fastDeliveryMailbox.snapshot();
   const fast = sourceMode === 'hybrid_mano'
-    ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} busy ${landmarkerFramesSuppressed}`
+    ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} busy ${landmarkerFramesSuppressed} delivered ${delivery.completedCount} superseded ${delivery.supersededBeforePostCount} pending ${delivery.pendingCaptureId ? 1 : 0}`
     : '';
   routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fast}${fluid}`;
 }
@@ -749,7 +775,73 @@ function failLandmarkerWorker(worker: Worker, error: Error, report: Record<strin
   setStatus(error.message, 'error');
 }
 
-async function handleLandmarkerResult(worker: Worker, value: unknown): Promise<void> {
+function releaseLandmarkerInferenceSlot(expectedCaptureId: string): void {
+  if (landmarkerInFlightCaptureId !== expectedCaptureId) {
+    throw new Error(`landmarker inference slot does not belong to ${expectedCaptureId}`);
+  }
+  landmarkerInFlightCaptureId = null;
+}
+
+function recordFastDeliverySupersession(
+  supersession: LiveHandFastDeliverySupersession<FastLandmarkDeliveryItem>,
+): void {
+  supersession.replacement.supersededBeforePost = coalesceFastDeliveryLineage(
+    supersession.superseded.supersededBeforePost,
+    supersession.superseded.captureId,
+    supersession.replacement.captureId,
+  );
+  supersession.replacement.payload.delivery = {
+    schema: 'hand-state.browser-fast-delivery.v0',
+    supersededBeforePost: supersession.replacement.supersededBeforePost,
+  };
+  latestSupersession = supersession.replacement.supersededBeforePost.at(-1) ?? null;
+}
+
+function recordFastDeliveryFailure(item: FastLandmarkDeliveryItem, error: unknown): void {
+  if (!isCaptureRunCurrent(item.runGeneration, captureRunGeneration, running)) return;
+  const message = error instanceof Error ? error.message : String(error);
+  latestFastDeliveryFailure = {
+    schema: 'lerms.live-hand-fast-delivery-failure.v0',
+    captureId: item.captureId,
+    failurePhase: 'post_fast_landmarks',
+    error: message,
+    primaryOutputWritten: false,
+  };
+  deactivateFluidInlets('hand_state_delivery_error');
+  setStatus(`fast hand delivery failed | ${message}`, 'error');
+  setRouteTruth();
+}
+
+async function deliverFastLandmarkResult(item: FastLandmarkDeliveryItem): Promise<void> {
+  const postStartedAt = performance.now();
+  const receipt = await runtimeFetch('/fast-landmarks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(item.payload),
+  });
+  if (!isCaptureRunCurrent(item.runGeneration, captureRunGeneration, running)) return;
+  const postDurationMs = performance.now() - postStartedAt;
+  latestFastIngestReceipt = receipt;
+  fastPathPostMs.push(postDurationMs);
+  const frameId = String(item.payload.frameId);
+  if (receipt.fallbackReason === null && receipt.effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
+    const joinedReceipt = latencyReceiptJoiner.registerCapture(frameId, {
+      capturedAtMs: item.captureMetrics.capturedAtMs,
+      captureAcquireMs: item.captureMetrics.captureAcquireMs,
+      captureRoute: LIVE_HAND_LANDMARKER_WORKER_ROUTE,
+      captureWorkerMs: item.result.workerProcessingMs,
+      producerPostMs: postDurationMs,
+    });
+    if (joinedReceipt) armLatencySample(joinedReceipt);
+  } else {
+    latencyReceiptJoiner.resolveWithoutPresentation(frameId);
+  }
+  latencyReceiptJoiner.prune(Date.now(), 10_000);
+  applySequencedRuntimeState(receipt.state, 'fast_ingest_response');
+  setRouteTruth();
+}
+
+function handleLandmarkerResult(worker: Worker, value: unknown): void {
   const expectedCaptureId = landmarkerInFlightCaptureId;
   if (!expectedCaptureId) {
     failLandmarkerWorker(worker, new Error(`${LIVE_HAND_LANDMARKER_WORKER_ROUTE} returned an unrequested result`));
@@ -757,28 +849,20 @@ async function handleLandmarkerResult(worker: Worker, value: unknown): Promise<v
   }
   try {
     const result = normalizeLandmarkerWorkerResult(value, expectedCaptureId);
-    const payload = createFastLandmarkPayload(result);
-    const postStartedAt = performance.now();
-    const receipt = await runtimeFetch('/fast-landmarks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const postDurationMs = performance.now() - postStartedAt;
-    latestFastIngestReceipt = receipt;
-    landmarkerWorkerMs.push(result.workerLandmarkerMs);
-    fastPathPostMs.push(postDurationMs);
     const captureMetrics = pendingFastCaptureMetrics.get(result.captureId);
     if (!captureMetrics) throw new Error(`missing fast capture metrics for ${result.captureId}`);
-    const joinedReceipt = latencyReceiptJoiner.registerCapture(String(payload.frameId), {
-      capturedAtMs: captureMetrics.capturedAtMs,
-      captureAcquireMs: captureMetrics.captureAcquireMs,
-      captureRoute: LIVE_HAND_LANDMARKER_WORKER_ROUTE,
-      captureWorkerMs: result.workerProcessingMs,
-      producerPostMs: postDurationMs,
+    const payload = createFastLandmarkPayload(result);
+    pendingFastCaptureMetrics.delete(expectedCaptureId);
+    releaseLandmarkerInferenceSlot(expectedCaptureId);
+    landmarkerWorkerMs.push(result.workerLandmarkerMs);
+    fastDeliveryMailbox.enqueue({
+      captureId: result.captureId,
+      runGeneration: captureRunGeneration,
+      result,
+      payload,
+      captureMetrics,
+      supersededBeforePost: [],
     });
-    if (joinedReceipt) armLatencySample(joinedReceipt);
-    latencyReceiptJoiner.prune(Date.now(), 10_000);
   } catch (error) {
     failLandmarkerWorker(
       worker,
@@ -786,9 +870,6 @@ async function handleLandmarkerResult(worker: Worker, value: unknown): Promise<v
       value && typeof value === 'object' ? value as Record<string, unknown> : null,
     );
     return;
-  } finally {
-    pendingFastCaptureMetrics.delete(expectedCaptureId);
-    if (landmarkerInFlightCaptureId === expectedCaptureId) landmarkerInFlightCaptureId = null;
   }
   setRouteTruth();
 }
@@ -1174,6 +1255,37 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
   };
 }
 
+function applySequencedRuntimeState(
+  value: unknown,
+  deliverySource: 'fast_ingest_response' | 'long_poll',
+): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${deliverySource} did not return a runtime state envelope`);
+  }
+  const state = value as Record<string, unknown>;
+  const sequence = Number(state.eventSequence);
+  if (!Number.isSafeInteger(sequence) || sequence < 0) {
+    throw new Error(`${deliverySource} runtime state sequence is invalid`);
+  }
+  const delivery = state.eventDelivery;
+  if (!delivery || typeof delivery !== 'object' || Array.isArray(delivery)) {
+    throw new Error(`${deliverySource} runtime state delivery identity is missing`);
+  }
+  const mode = (delivery as Record<string, unknown>).mode;
+  if (mode !== deliverySource) {
+    throw new Error(`${deliverySource} returned ${String(mode)} delivery identity`);
+  }
+  lastStateSequence = Math.max(lastStateSequence, sequence);
+  if (sequence < lastAppliedStateSequence) return false;
+  if (sequence === lastAppliedStateSequence) {
+    if (deliverySource !== 'long_poll' || state.status !== 'fallback') return false;
+  } else {
+    lastAppliedStateSequence = sequence;
+  }
+  applyState(state);
+  return true;
+}
+
 function applyState(state: Record<string, unknown>): void {
   if (captureWorkerError) {
     deactivateFluidInlets('capture_worker_failed');
@@ -1210,8 +1322,7 @@ async function streamState(): Promise<void> {
     try {
       const state = await runtimeFetch(`/state/next?after_sequence=${lastStateSequence}&timeout_ms=1000&max_age_ms=${maxFrameAgeMs}`, { signal: controller.signal });
       if (!running) return;
-      if (Number.isFinite(state.eventSequence)) lastStateSequence = Number(state.eventSequence);
-      applyState(state);
+      applySequencedRuntimeState(state, 'long_poll');
     } catch (error) {
       if (!running || (error instanceof DOMException && error.name === 'AbortError')) return;
       deactivateFluidInlets('hand_state_delivery_error');
@@ -1234,6 +1345,10 @@ async function start(): Promise<void> {
   landmarkerWorkerError = null;
   latestLandmarkerFailure = null;
   latestFastIngestReceipt = null;
+  latestFastDeliveryFailure = null;
+  latestSupersession = null;
+  await fastDeliveryMailbox.whenIdle();
+  fastDeliveryMailbox.resetCounters();
   ensureCaptureWorker();
   setStatus('verifying runtime');
   runtimeRoute = assertLiveRuntimeHealth(await runtimeFetch('/health'));
@@ -1278,6 +1393,7 @@ async function start(): Promise<void> {
     fluidFrameDecisionCounts[reason] = 0;
   }
   lastStateSequence = 0;
+  lastAppliedStateSequence = 0;
   captureRunGeneration += 1;
   const runGeneration = captureRunGeneration;
   lastAnchorCaptureAtMs = null;
@@ -1305,6 +1421,8 @@ async function stop(): Promise<void> {
   cameraFrameFallbackTimer = null;
   capturePostAbortController?.abort();
   capturePostAbortController = null;
+  fastDeliveryMailbox.discardPending();
+  await fastDeliveryMailbox.whenIdle();
   disposeCaptureWorker(new Error('hand control stopped'));
   disposeLandmarkerWorker();
   stateAbortController?.abort();
@@ -1315,21 +1433,35 @@ async function stop(): Promise<void> {
   deactivateFluidInlets('hand_control_stopped');
   await flushLatencySamples();
   const receiptJoinState = latencyReceiptJoiner.snapshot();
+  const fastDeliveryState = fastDeliveryMailbox.snapshot();
   const missingEvidenceError = benchmarkAcceptedFrameCount > 0 && latencySamples.length === 0
     ? `telemetry failure: rendered ${benchmarkAcceptedFrameCount} live MANO frames but recorded 0 viewer latency samples`
-    : receiptJoinState.discardedFrameCount > 0
+    : fastDeliveryState.failedCount > 0
+      ? `telemetry failure: ${fastDeliveryState.failedCount} fast delivery request(s) failed`
+      : receiptJoinState.discardedFrameCount > 0
       || receiptJoinState.discardedCaptureCount > 0
       || receiptJoinState.pendingFrameCount > 0
       || receiptJoinState.pendingCaptureCount > 0
       || benchmarkDroppedBeforeRender > 0
       || pendingLatencySample !== null
-      ? `telemetry incomplete: ${receiptJoinState.pendingFrameCount} unmatched frames, ${receiptJoinState.pendingCaptureCount} unmatched captures, ${receiptJoinState.discardedFrameCount} discarded frames, ${receiptJoinState.discardedCaptureCount} discarded captures, ${benchmarkDroppedBeforeRender} superseded, ${pendingLatencySample ? 1 : 0} awaiting render`
+      ? `telemetry incomplete: ${receiptJoinState.pendingFrameCount} unmatched frames, ${receiptJoinState.pendingCaptureCount} unmatched captures, ${receiptJoinState.discardedFrameCount} discarded frames, ${receiptJoinState.discardedCaptureCount} discarded captures, ${receiptJoinState.resolvedWithoutPresentationCount} resolved without presentation, ${benchmarkDroppedBeforeRender} superseded, ${pendingLatencySample ? 1 : 0} awaiting render`
       : null;
   if (missingEvidenceError) lastBenchmarkError = missingEvidenceError;
   const benchmarkFailure = missingEvidenceError
     || (unflushedLatencySamples.length > 0 ? lastBenchmarkError || 'telemetry failure: viewer latency samples remain unflushed' : null);
   try {
     await runtimeFetch('/sidecar/stop', { method: 'POST' });
+    await runtimeFetch('/chronology/flush', { method: 'POST' });
+    runtimeRoute = assertLiveRuntimeHealth(await runtimeFetch('/health'));
+    if (runtimeRoute.emittedStateChronology.queueDepth !== 0) {
+      throw new Error('emitted state chronology did not drain');
+    }
+    if (
+      runtimeRoute.emittedStateChronology.lastWrittenSequence !== null
+      && runtimeRoute.emittedStateChronology.lastWrittenSequence < lastStateSequence
+    ) {
+      throw new Error('emitted state chronology trails the last consumed runtime sequence');
+    }
     setStatus(benchmarkFailure || 'runtime stopped', benchmarkFailure ? 'error' : 'idle');
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error), 'error');
@@ -1586,12 +1718,18 @@ function collectLiveHandDebugState(): Record<string, unknown> {
       workerError: landmarkerWorkerError,
       latestFailure: latestLandmarkerFailure,
       latestIngestReceipt: latestFastIngestReceipt,
+      latestDeliveryFailure: latestFastDeliveryFailure,
       submittedFrameCount: landmarkerFramesSubmitted,
       droppedFrameCount: landmarkerFramesDropped,
       busySuppressedFrameCount: landmarkerFramesSuppressed,
       inFlightCaptureId: landmarkerInFlightCaptureId,
       workerLandmarkerMs: distribution(landmarkerWorkerMs),
       runtimePostMs: distribution(fastPathPostMs),
+      delivery: {
+        ...fastDeliveryMailbox.snapshot(),
+        supersededBeforePostCount: fastDeliveryMailbox.snapshot().supersededBeforePostCount,
+        latestSupersession,
+      },
     },
     fluid: fluidSolver?.available ? {
       pinnedRevision: KAMINOS_FLUID_REVISION,

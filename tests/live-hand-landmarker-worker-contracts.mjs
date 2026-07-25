@@ -65,6 +65,26 @@ assert.match(
 assert.match(liveHandSource, /postAnchorFrame\(runGeneration, captureId, captureTimestampMs, anchorFrame/, 'the anchor clone keeps the shared capture id');
 assert.match(liveHandSource, /postLandmarkerFrame\(captureId, captureTimestampMs, sourceFrame/, 'the MediaPipe frame keeps the shared capture id');
 assert.match(liveHandSource, /runtimeFetch\('\/fast-landmarks'/, 'browser landmarks post to the runtime-owned fusion endpoint');
+assert.match(
+  liveHandSource,
+  /function handleLandmarkerResult[\s\S]*releaseLandmarkerInferenceSlot\([\s\S]*fastDeliveryMailbox\.enqueue/,
+  'MediaPipe completion releases camera admission before the runtime delivery mailbox',
+);
+assert.match(
+  liveHandSource,
+  /applySequencedRuntimeState\(receipt\.state,\s*'fast_ingest_response'\)/,
+  'the accepted fast POST response can present its exact fused state without a second long poll',
+);
+assert.match(
+  liveHandSource,
+  /supersededBeforePostCount[\s\S]*latestSupersession/,
+  'coalesced fast observations remain explicit in operator-visible telemetry',
+);
+assert.match(
+  liveHandSource,
+  /runtimeFetch\('\/sidecar\/stop'[\s\S]*runtimeFetch\('\/chronology\/flush'[\s\S]*assertLiveRuntimeHealth/,
+  'shutdown stops publishers, drains chronology, and refreshes visible persistence truth',
+);
 assert.match(liveHandSource, /manoRegeneratorAvailable[\s\S]*native_mano_regeneration/, 'hybrid start fails before camera output when native MANO regeneration is unavailable');
 assert.match(
   liveHandSource,

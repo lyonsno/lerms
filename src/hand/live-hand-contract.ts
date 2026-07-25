@@ -19,6 +19,15 @@ export interface RuntimeRouteTruth {
 export interface RuntimeHealthTruth extends RuntimeRouteTruth {
   manoRegeneratorAvailable: boolean;
   hybridGeometryMode: string;
+  runtimeRunId: string;
+  emittedStateChronology: {
+    path: string;
+    statusPath: string;
+    queueDepth: number;
+    writtenCount: number;
+    lastWrittenSequence: number | null;
+    failure: null;
+  };
 }
 
 export interface NormalizedManoFrame extends RuntimeRouteTruth {
@@ -167,6 +176,11 @@ export function assertLiveRuntimeHealth(value: unknown): RuntimeHealthTruth {
   if (burstMode !== 'monolithic' && burstMode !== 'chunked') throw new Error(`unsupported burstMode: ${burstMode}`);
   if (burstMode === 'chunked' && chunkSegments < 2) throw new Error('chunked runtime must expose at least 2 segments');
   if (burstMode === 'monolithic' && chunkSegments !== 0) throw new Error('monolithic runtime must expose 0 segments');
+  const chronology = record(health.emittedStateChronology, 'emitted state chronology');
+  if (chronology.failure !== null) throw new Error('emitted state chronology reports a persistence failure');
+  const lastWrittenSequence = chronology.lastWrittenSequence === null
+    ? null
+    : finiteNonNegative(chronology.lastWrittenSequence, 'chronology last written sequence');
   return {
     runtimeOwner: LIVE_HAND_RUNTIME_OWNER,
     burstMode,
@@ -174,6 +188,15 @@ export function assertLiveRuntimeHealth(value: unknown): RuntimeHealthTruth {
     chunkYieldMs,
     manoRegeneratorAvailable: health.manoRegeneratorAvailable === true,
     hybridGeometryMode: text(health.hybridGeometryMode, 'hybrid geometry mode'),
+    runtimeRunId: text(health.runtimeRunId, 'runtime run id'),
+    emittedStateChronology: {
+      path: text(chronology.path, 'chronology path'),
+      statusPath: text(chronology.statusPath, 'chronology status path'),
+      queueDepth: finiteNonNegative(chronology.queueDepth, 'chronology queue depth'),
+      writtenCount: finiteNonNegative(chronology.writtenCount, 'chronology written count'),
+      lastWrittenSequence,
+      failure: null,
+    },
   };
 }
 

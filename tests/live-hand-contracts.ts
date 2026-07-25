@@ -12,6 +12,10 @@ import {
   isCaptureRunCurrent,
   normalizeCaptureWorkerResult,
 } from '../src/hand/live-hand-capture-contract.js';
+import {
+  LiveHandFastDeliveryMailbox,
+  coalesceFastDeliveryLineage,
+} from '../src/hand/live-hand-fast-delivery.js';
 import { LiveHandLatencyReceiptJoiner } from '../src/hand/live-hand-latency-receipt.js';
 import {
   planLiveHandSourceFrame,
@@ -62,6 +66,15 @@ const health = {
   sidecarRuntimeConfig: { burstMode: 'chunked', chunkSegments: 7, chunkYieldMs: 0.2 },
   manoRegeneratorAvailable: true,
   hybridGeometryMode: 'native_mano_regeneration',
+  runtimeRunId: 'runtime-run-1',
+  emittedStateChronology: {
+    path: '/tmp/runtime/emitted-state-chronology.jsonl',
+    statusPath: '/tmp/runtime/emitted-state-chronology-status.json',
+    queueDepth: 0,
+    writtenCount: 12,
+    lastWrittenSequence: 12,
+    failure: null,
+  },
 };
 const healthTruth = assertLiveRuntimeHealth(health);
 assert(healthTruth.burstMode === 'chunked', 'preserves chunked route identity');
@@ -69,10 +82,26 @@ assert(healthTruth.chunkSegments === 7, 'preserves effective chunk segment count
 assert(healthTruth.chunkYieldMs === 0.2, 'preserves effective chunk yield');
 assert(healthTruth.manoRegeneratorAvailable, 'preserves MANO regenerator availability');
 assert(healthTruth.hybridGeometryMode === 'native_mano_regeneration', 'preserves effective hybrid geometry identity');
+assert(healthTruth.runtimeRunId === 'runtime-run-1', 'preserves runtime-run chronology identity');
+assert(
+  healthTruth.emittedStateChronology.writtenCount === 12
+    && healthTruth.emittedStateChronology.lastWrittenSequence === 12,
+  'preserves emitted-state chronology progress',
+);
 
 assertThrows(
   () => assertLiveRuntimeHealth({ ...health, runtimeOwner: 'perceptasia' }),
   'runtime owner',
+);
+assertThrows(
+  () => assertLiveRuntimeHealth({
+    ...health,
+    emittedStateChronology: {
+      ...health.emittedStateChronology,
+      failure: { failurePhase: 'append_emitted_state_chronology' },
+    },
+  }),
+  'persistence failure',
 );
 
 const workerBlob = new Blob(['jpeg'], { type: 'image/jpeg' });
@@ -129,6 +158,57 @@ receiptJoiner.prune(12_001, 10_000);
 assert(
   receiptJoiner.snapshot().discardedFrameCount === 1,
   'a live frame whose capture timing never arrives is counted as discarded evidence',
+);
+receiptJoiner.resolveWithoutPresentation('known-fast-fallback');
+assert(
+  receiptJoiner.snapshot().resolvedWithoutPresentationCount === 1,
+  'a known fallback closes capture accounting without pretending it rendered',
+);
+
+const mailboxStarts: string[] = [];
+const mailboxSupersessions: string[] = [];
+let releaseFirstMailboxDelivery!: () => void;
+const firstMailboxDelivery = new Promise<void>(resolve => {
+  releaseFirstMailboxDelivery = resolve;
+});
+const mailbox = new LiveHandFastDeliveryMailbox<{ captureId: string }>(
+  async item => {
+    mailboxStarts.push(item.captureId);
+    if (item.captureId === 'fast-a') await firstMailboxDelivery;
+  },
+  supersession => {
+    mailboxSupersessions.push(
+      `${supersession.superseded.captureId}->${supersession.replacement.captureId}:${supersession.reason}`,
+    );
+  },
+  errorItem => {
+    throw new Error(`unexpected mailbox failure for ${errorItem.captureId}`);
+  },
+);
+mailbox.enqueue({ captureId: 'fast-a' });
+mailbox.enqueue({ captureId: 'fast-b' });
+mailbox.enqueue({ captureId: 'fast-c' });
+assert(
+  mailbox.snapshot().activeCaptureId === 'fast-a' && mailbox.snapshot().pendingCaptureId === 'fast-c',
+  'one active delivery retains only the latest pending observation',
+);
+assert(
+  mailboxSupersessions[0] === 'fast-b->fast-c:newer_fast_observation_before_post',
+  'replacing pending work records exact superseded and replacement capture ids',
+);
+releaseFirstMailboxDelivery();
+await mailbox.whenIdle();
+assert(mailboxStarts.join(',') === 'fast-a,fast-c', 'obsolete pending work never enters runtime delivery');
+assert(
+  mailbox.snapshot().completedCount === 2 && mailbox.snapshot().supersededBeforePostCount === 1,
+  'mailbox completion and supersession accounting close exactly',
+);
+const firstLineage = coalesceFastDeliveryLineage([], 'fast-b', 'fast-c');
+const transitiveLineage = coalesceFastDeliveryLineage(firstLineage, 'fast-c', 'fast-d');
+assert(
+  transitiveLineage.map(row => `${row.captureId}->${row.replacementCaptureId}`).join(',')
+    === 'fast-b->fast-d,fast-c->fast-d',
+  'transitive coalescing attributes every unposted observation to the state that actually reaches runtime',
 );
 
 assert(LIVE_HAND_FLUID_FRAME_INTERVAL_MS === 1000 / 60, 'fluid simulation targets the 60 Hz interaction cadence');
