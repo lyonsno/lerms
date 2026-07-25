@@ -5,11 +5,9 @@ import {
 } from './live-hand-contract.js';
 
 export const LIVE_FINGER_FLUID_ADAPTER_CONTRACT = 'hand-state-distal-axis-full-extension-emitters-v1' as const;
-export const KAMINOS_FLUID_REVISION = '71d09e78fbf16c9edecde3ea72a82ba17b656bf2' as const;
+export const KAMINOS_FLUID_REVISION = 'c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35' as const;
 export const FULL_EXTENSION_THRESHOLD = 0.86 as const;
 export const LERMS_LIVE_FLUID_PARTICLE_COUNT = 2_400 as const;
-export const PINNED_KAMINOS_LIVE_INLET_RESIDENCE_SECONDS = 1.65 as const;
-export const PINNED_KAMINOS_LIVE_INLET_MAXIMUM_TRAVEL_DISTANCE = 2.4 as const;
 export const LIVE_FLUID_CAMERA = Object.freeze({
   fovRadians: Math.PI / 3.15,
   yaw: 0,
@@ -85,12 +83,12 @@ export interface PinnedKaminosLiveInletRuntimeAuthority {
     packetId: string | null;
     sourceRoute: string | null;
     particleCount: number | null;
-    activeParticleBudget: null;
+    activeParticleBudget: number | null;
     expectedParticleReleaseRate: number | null;
     opticalDensityScale: null;
     reconstructionRadiusScale: null;
-    residenceSeconds: typeof PINNED_KAMINOS_LIVE_INLET_RESIDENCE_SECONDS;
-    maximumTravelDistance: typeof PINNED_KAMINOS_LIVE_INLET_MAXIMUM_TRAVEL_DISTANCE;
+    residenceSeconds: number | null;
+    maximumTravelDistance: number | null;
     inlets: readonly {
       id: string;
       radius: number;
@@ -100,11 +98,11 @@ export interface PinnedKaminosLiveInletRuntimeAuthority {
   };
   support: {
     particleCount: 'solver_initialization_receipt';
-    activeParticleBudget: 'unsupported_by_pinned_runtime';
-    sourceFlux: 'derived_from_aperture_and_speed';
-    opticalDensity: 'unsupported_metadata_coupled_to_speed';
-    reconstructionRadius: 'unsupported_metadata_coupled_to_aperture';
-    lifetime: 'unsupported_metadata_hard_recycle';
+    activeParticleBudget: 'canonical_release_pool_budget';
+    sourceFlux: 'canonical_requested_effective_release_rate';
+    opticalDensity: 'consumer_owned_not_applied_to_physical_inlet';
+    reconstructionRadius: 'consumer_owned_not_applied_to_physical_inlet';
+    lifetime: 'canonical_residence_seconds';
   };
   fallbackActive: boolean;
   fallbackReason: string | null;
@@ -143,6 +141,7 @@ export interface LiveFingerFluidEmitter {
   radius: number;
   strength: number;
   source_flux_particles_per_second: number;
+  active_budget_particles: number;
   optical_density_scale: number;
   reconstruction_radius_scale: number;
   lifetime_seconds: number;
@@ -420,15 +419,32 @@ export function createPinnedKaminosLiveInletRuntimeAuthority(
       packetId?: unknown;
       sourceRoute?: unknown;
       expectedParticleReleaseRate?: unknown;
+      economicsContract?: unknown;
+      poolCapacity?: unknown;
+      effectiveReleasePoolBudget?: unknown;
+      unallocatedDormantParticleCount?: unknown;
     } | null;
     liveInlets: {
+      contract?: unknown;
       packetId?: unknown;
       sourceRoute?: unknown;
       expectedParticleReleaseRate?: unknown;
+      poolCapacity?: unknown;
+      requestedReleasePoolBudget?: unknown;
+      effectiveReleasePoolBudget?: unknown;
+      unallocatedDormantParticleCount?: unknown;
       inlets?: unknown;
     } | null;
   },
 ): PinnedKaminosLiveInletRuntimeAuthority {
+  const economicsContract = 'requested-effective-release-pool-residence-v1';
+  const nonnegativeNumber = (value: unknown): number | null => (
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+  );
+  const nonnegativeInteger = (value: unknown): number | null => {
+    const numeric = nonnegativeNumber(value);
+    return numeric !== null && Number.isSafeInteger(numeric) ? numeric : null;
+  };
   const effectiveParticleCount = Number.isSafeInteger(runtime.effectiveParticleCount)
     && Number(runtime.effectiveParticleCount) > 0
     ? Number(runtime.effectiveParticleCount)
@@ -445,8 +461,9 @@ export function createPinnedKaminosLiveInletRuntimeAuthority(
     && liveReleaseValue >= 0
     ? liveReleaseValue
     : null;
-  const inlets = Array.isArray(runtime.liveInlets?.inlets)
-    ? runtime.liveInlets.inlets.flatMap((value): PinnedKaminosLiveInletRuntimeAuthority['effective']['inlets'][number][] => {
+  const rawInlets = Array.isArray(runtime.liveInlets?.inlets) ? runtime.liveInlets.inlets : null;
+  const inlets = rawInlets
+    ? rawInlets.flatMap((value): PinnedKaminosLiveInletRuntimeAuthority['effective']['inlets'][number][] => {
       if (!value || typeof value !== 'object') return [];
       const inlet = value as Record<string, unknown>;
       if (typeof inlet.id !== 'string'
@@ -464,6 +481,56 @@ export function createPinnedKaminosLiveInletRuntimeAuthority(
       }];
     })
     : [];
+  const activeRuntimeInlets = rawInlets?.filter((value): value is Record<string, unknown> => (
+    !!value && typeof value === 'object' && (value as Record<string, unknown>).active === true
+  )) ?? [];
+  const activeInletEconomics = activeRuntimeInlets.map(inlet => {
+    const requested = inlet.requested && typeof inlet.requested === 'object'
+      ? inlet.requested as Record<string, unknown>
+      : {};
+    const effective = inlet.effective && typeof inlet.effective === 'object'
+      ? inlet.effective as Record<string, unknown>
+      : {};
+    const opticalDensity = inlet.opticalDensity && typeof inlet.opticalDensity === 'object'
+      ? inlet.opticalDensity as Record<string, unknown>
+      : {};
+    const reconstructionRadius = inlet.reconstructionRadius && typeof inlet.reconstructionRadius === 'object'
+      ? inlet.reconstructionRadius as Record<string, unknown>
+      : {};
+    return {
+      requestedParticleReleaseRate: nonnegativeNumber(requested.particleReleaseRate),
+      requestedReleasePoolBudget: nonnegativeInteger(requested.releasePoolBudget),
+      requestedResidenceSeconds: nonnegativeNumber(requested.residenceSeconds),
+      effectiveParticleReleaseRate: nonnegativeNumber(effective.particleReleaseRate),
+      effectiveReleasePoolBudget: nonnegativeInteger(effective.releasePoolBudget),
+      effectiveResidenceSeconds: nonnegativeNumber(effective.residenceSeconds),
+      requestedOpticalDensityScale: nonnegativeNumber(opticalDensity.requested),
+      effectiveOpticalDensityScale: opticalDensity.effective,
+      opticalDensityAuthority: opticalDensity.authority,
+      requestedReconstructionRadiusScale: nonnegativeNumber(reconstructionRadius.requested),
+      effectiveReconstructionRadiusScale: reconstructionRadius.effective,
+      reconstructionRadiusAuthority: reconstructionRadius.authority,
+    };
+  });
+  const requestedReleasePoolBudget = nonnegativeInteger(runtime.liveInlets?.requestedReleasePoolBudget);
+  const effectiveReleasePoolBudget = nonnegativeInteger(runtime.liveInlets?.effectiveReleasePoolBudget);
+  const poolCapacity = nonnegativeInteger(runtime.liveInlets?.poolCapacity);
+  const unallocatedDormantParticleCount = nonnegativeInteger(runtime.liveInlets?.unallocatedDormantParticleCount);
+  const requestedParticleReleaseRate = activeInletEconomics.reduce(
+    (sum, inlet) => sum + (inlet.requestedParticleReleaseRate ?? 0),
+    0,
+  );
+  const plannedParticleReleaseRate = activeInletEconomics.reduce(
+    (sum, inlet) => sum + (inlet.effectiveParticleReleaseRate ?? 0),
+    0,
+  );
+  const effectiveResidenceSeconds = activeInletEconomics.length > 0
+    && activeInletEconomics.every(inlet => inlet.effectiveResidenceSeconds === activeInletEconomics[0].effectiveResidenceSeconds)
+    ? activeInletEconomics[0].effectiveResidenceSeconds
+    : null;
+  const expectedActiveParticleBudget = activeInletEconomics.length > 0
+    ? economics.requestedActiveParticleBudget
+    : 0;
   const expectedPacketId = typeof runtime.expectedPacketId === 'string' && runtime.expectedPacketId.length > 0
     ? runtime.expectedPacketId
     : null;
@@ -478,6 +545,9 @@ export function createPinnedKaminosLiveInletRuntimeAuthority(
     : null;
   const receiptReleaseValue = runtime.receipt?.expectedParticleReleaseRate;
   const receiptReleaseRate = typeof receiptReleaseValue === 'number' ? receiptReleaseValue : Number.NaN;
+  const receiptPoolCapacity = nonnegativeInteger(runtime.receipt?.poolCapacity);
+  const receiptEffectiveReleasePoolBudget = nonnegativeInteger(runtime.receipt?.effectiveReleasePoolBudget);
+  const receiptUnallocatedDormantParticleCount = nonnegativeInteger(runtime.receipt?.unallocatedDormantParticleCount);
   const packetEconomicsMatch = runtime.packetEconomics !== null
     && runtime.packetEconomics !== undefined
     && [
@@ -503,8 +573,16 @@ export function createPinnedKaminosLiveInletRuntimeAuthority(
     || expectedParticleReleaseRate === null
     || !Number.isFinite(receiptReleaseRate)
     || receiptReleaseRate < 0
-    || !Array.isArray(runtime.liveInlets?.inlets)
-    || inlets.length !== runtime.liveInlets?.inlets?.length
+    || rawInlets === null
+    || inlets.length !== rawInlets.length
+    || poolCapacity === null
+    || requestedReleasePoolBudget === null
+    || effectiveReleasePoolBudget === null
+    || unallocatedDormantParticleCount === null
+    || receiptPoolCapacity === null
+    || receiptEffectiveReleasePoolBudget === null
+    || receiptUnallocatedDormantParticleCount === null
+    || activeInletEconomics.some(inlet => Object.values(inlet).some(value => value === undefined))
   );
   const identityMatch = !malformed
     && packetId === expectedPacketId
@@ -512,14 +590,49 @@ export function createPinnedKaminosLiveInletRuntimeAuthority(
     && sourceRoute === expectedSourceRoute
     && sourceRoute === receiptSourceRoute
     && expectedParticleReleaseRate === receiptReleaseRate
+    && expectedParticleReleaseRate === plannedParticleReleaseRate
+    && requestedParticleReleaseRate === (activeInletEconomics.length > 0
+      ? economics.sourceFluxParticlesPerSecond
+      : 0)
+    && runtime.liveInlets?.contract === economicsContract
+    && runtime.receipt?.economicsContract === economicsContract
+    && poolCapacity === effectiveParticleCount
+    && poolCapacity === receiptPoolCapacity
+    && requestedReleasePoolBudget === expectedActiveParticleBudget
+    && effectiveReleasePoolBudget === expectedActiveParticleBudget
+    && effectiveReleasePoolBudget === receiptEffectiveReleasePoolBudget
+    && unallocatedDormantParticleCount === (effectiveParticleCount ?? -1) - expectedActiveParticleBudget
+    && unallocatedDormantParticleCount === receiptUnallocatedDormantParticleCount
+    && activeInletEconomics.every(inlet => (
+      inlet.requestedReleasePoolBudget !== null
+      && inlet.effectiveReleasePoolBudget === inlet.requestedReleasePoolBudget
+      && inlet.requestedResidenceSeconds === economics.lifetimeSeconds
+      && inlet.effectiveResidenceSeconds === economics.lifetimeSeconds
+      && inlet.requestedOpticalDensityScale === economics.opticalDensityScale
+      && inlet.effectiveOpticalDensityScale === null
+      && inlet.opticalDensityAuthority === 'consumer_owned_not_applied'
+      && inlet.requestedReconstructionRadiusScale === economics.reconstructionRadiusScale
+      && inlet.effectiveReconstructionRadiusScale === null
+      && inlet.reconstructionRadiusAuthority === 'consumer_owned_not_applied'
+    ))
     && packetEconomicsMatch
     && runtime.packetAuthority?.simulation_safe === true
     && runtime.packetAuthority?.stale === false;
   const complete = !economics.fallbackActive && evidencePresent && !malformed && identityMatch;
+  const staleOrMismatchedIdentity = evidencePresent && (
+    packetId !== expectedPacketId
+    || packetId !== receiptPacketId
+    || sourceRoute !== expectedSourceRoute
+    || sourceRoute !== receiptSourceRoute
+    || runtime.packetAuthority?.simulation_safe !== true
+    || runtime.packetAuthority?.stale !== false
+  );
   const authority = economics.fallbackActive
     ? 'invalid_requested_economics'
     : !evidencePresent
       ? 'missing_runtime_receipt'
+      : staleOrMismatchedIdentity
+        ? 'stale_or_mismatched_runtime_receipt'
       : malformed
         ? 'malformed_runtime_receipt'
         : complete
@@ -535,21 +648,21 @@ export function createPinnedKaminosLiveInletRuntimeAuthority(
       packetId,
       sourceRoute,
       particleCount: effectiveParticleCount,
-      activeParticleBudget: null,
+      activeParticleBudget: effectiveReleasePoolBudget,
       expectedParticleReleaseRate,
       opticalDensityScale: null,
       reconstructionRadiusScale: null,
-      residenceSeconds: PINNED_KAMINOS_LIVE_INLET_RESIDENCE_SECONDS,
-      maximumTravelDistance: PINNED_KAMINOS_LIVE_INLET_MAXIMUM_TRAVEL_DISTANCE,
+      residenceSeconds: effectiveResidenceSeconds,
+      maximumTravelDistance: null,
       inlets,
     },
     support: {
       particleCount: 'solver_initialization_receipt',
-      activeParticleBudget: 'unsupported_by_pinned_runtime',
-      sourceFlux: 'derived_from_aperture_and_speed',
-      opticalDensity: 'unsupported_metadata_coupled_to_speed',
-      reconstructionRadius: 'unsupported_metadata_coupled_to_aperture',
-      lifetime: 'unsupported_metadata_hard_recycle',
+      activeParticleBudget: 'canonical_release_pool_budget',
+      sourceFlux: 'canonical_requested_effective_release_rate',
+      opticalDensity: 'consumer_owned_not_applied_to_physical_inlet',
+      reconstructionRadius: 'consumer_owned_not_applied_to_physical_inlet',
+      lifetime: 'canonical_residence_seconds',
     },
     fallbackActive: !complete,
     fallbackReason: complete ? null : authority,
@@ -645,18 +758,30 @@ export function createLiveFingerFluidEmitterPacket(
       active,
     };
   });
-  const activeEmitterCount = Math.max(1, emitterDrafts.filter(emitter => emitter.active).length);
-  const emitters = emitterDrafts.map(emitter => ({
-    ...emitter,
-    radius: emitter.radius * economics.reconstructionRadiusScale,
-    strength: emitter.strength * economics.opticalDensityScale,
-    source_flux_particles_per_second: emitter.active
-      ? economics.sourceFluxParticlesPerSecond / activeEmitterCount
-      : 0,
-    optical_density_scale: economics.opticalDensityScale,
-    reconstruction_radius_scale: economics.reconstructionRadiusScale,
-    lifetime_seconds: economics.lifetimeSeconds,
-  }));
+  const activeEmitterCount = emitterDrafts.filter(emitter => emitter.active).length;
+  let remainingActiveBudget = activeEmitterCount > 0 ? economics.requestedActiveParticleBudget : 0;
+  let remainingActiveEmitters = activeEmitterCount;
+  const emitters = emitterDrafts.map(emitter => {
+    const activeBudget = emitter.active
+      ? Math.floor(remainingActiveBudget / remainingActiveEmitters)
+      : 0;
+    if (emitter.active) {
+      remainingActiveBudget -= activeBudget;
+      remainingActiveEmitters -= 1;
+    }
+    return {
+      ...emitter,
+      radius: emitter.radius * economics.reconstructionRadiusScale,
+      strength: emitter.strength * economics.opticalDensityScale,
+      source_flux_particles_per_second: emitter.active
+        ? economics.sourceFluxParticlesPerSecond / activeEmitterCount
+        : 0,
+      active_budget_particles: activeBudget,
+      optical_density_scale: economics.opticalDensityScale,
+      reconstruction_radius_scale: economics.reconstructionRadiusScale,
+      lifetime_seconds: economics.lifetimeSeconds,
+    };
+  });
   return {
     packet_id: `lerms-hand-fluid-${frame.eventSequence}`,
     route_identity: frame.effectiveRoute,

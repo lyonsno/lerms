@@ -334,8 +334,19 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
   const effectiveReleaseRate = Number.isFinite(latestLiveInletReceipt?.expectedParticleReleaseRate)
     ? Number(latestLiveInletReceipt?.expectedParticleReleaseRate)
     : fluidDebugNumber(liveInlets, 'expectedParticleReleaseRate');
+  const effectiveActiveBudget = Number.isFinite(latestLiveInletReceipt?.effectiveReleasePoolBudget)
+    ? Number(latestLiveInletReceipt?.effectiveReleasePoolBudget)
+    : fluidDebugNumber(liveInlets, 'effectiveReleasePoolBudget');
+  const activeRuntimeInlet = Array.isArray(liveInlets?.inlets)
+    ? liveInlets.inlets.find(value => (
+      !!value && typeof value === 'object' && (value as Record<string, unknown>).active === true
+    )) as Record<string, unknown> | undefined
+    : undefined;
+  const effectiveResidence = activeRuntimeInlet?.effective && typeof activeRuntimeInlet.effective === 'object'
+    ? fluidDebugNumber(activeRuntimeInlet.effective as Record<string, unknown>, 'residenceSeconds')
+    : null;
   const fluid = fluidSolver?.available
-    ? ` | juice ${juiceBudgetAuthority === 'macro_control' ? `${liveJuiceBudget.effectiveBudget.toFixed(0)} ${liveJuiceBudget.zone}` : 'custom'} | fluid ${effectiveParticleCount ?? 'unverified'}p effective / ${liveFluidEconomics.requestedParticleCount}p requested | release req ${liveFluidEconomics.sourceFluxParticlesPerSecond.toFixed(0)} / derived ${effectiveReleaseRate?.toFixed(0) ?? 'unverified'}pps | active ${activeParticleCount ?? liveInlets?.initialActiveParticleCount ?? 'diag-pending'} / dormant ${dormantParticleCount ?? liveInlets?.initialDormantParticleCount ?? 'diag-pending'} | residence 1.65s @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
+    ? ` | juice ${juiceBudgetAuthority === 'macro_control' ? `${liveJuiceBudget.effectiveBudget.toFixed(0)} ${liveJuiceBudget.zone}` : 'custom'} | fluid ${effectiveParticleCount ?? 'unverified'}p effective / ${liveFluidEconomics.requestedParticleCount}p requested | pool ${effectiveActiveBudget ?? 'unverified'} effective / ${liveFluidEconomics.requestedActiveParticleBudget} requested | release ${effectiveReleaseRate?.toFixed(0) ?? 'unverified'} effective / ${liveFluidEconomics.sourceFluxParticlesPerSecond.toFixed(0)} requested pps | active ${activeParticleCount ?? liveInlets?.initialActiveParticleCount ?? 'diag-pending'} / dormant ${dormantParticleCount ?? liveInlets?.initialDormantParticleCount ?? 'diag-pending'} | residence ${effectiveResidence?.toFixed(1) ?? 'unverified'} effective / ${liveFluidEconomics.lifetimeSeconds.toFixed(1)} requested s @ ${KAMINOS_FLUID_REVISION.slice(0, 8)}`
     : fluidError ? ' | fluid error' : ' | fluid pending';
   routeTruth.textContent = `${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fluid}`;
 }
@@ -402,6 +413,10 @@ async function applyDensityBenchFixture(fingerCase: 'one-finger' | 'five-finger'
       strength: 1.15 * liveFluidEconomics.opticalDensityScale,
       source_flux_particles_per_second: active
         ? liveFluidEconomics.sourceFluxParticlesPerSecond / activeCount
+        : 0,
+      active_budget_particles: active
+        ? Math.floor(liveFluidEconomics.requestedActiveParticleBudget / activeCount)
+          + (index < liveFluidEconomics.requestedActiveParticleBudget % activeCount ? 1 : 0)
         : 0,
       optical_density_scale: liveFluidEconomics.opticalDensityScale,
       reconstruction_radius_scale: liveFluidEconomics.reconstructionRadiusScale,
@@ -582,6 +597,8 @@ function createFluidEnvelopeAssayPacket({
       radius: radius * liveFluidEconomics.reconstructionRadiusScale,
       strength: strength * liveFluidEconomics.opticalDensityScale,
       source_flux_particles_per_second: liveFluidEconomics.sourceFluxParticlesPerSecond / emitterCount,
+      active_budget_particles: Math.floor(liveFluidEconomics.requestedActiveParticleBudget / emitterCount)
+        + (index < liveFluidEconomics.requestedActiveParticleBudget % emitterCount ? 1 : 0),
       optical_density_scale: liveFluidEconomics.opticalDensityScale,
       reconstruction_radius_scale: liveFluidEconomics.reconstructionRadiusScale,
       lifetime_seconds: liveFluidEconomics.lifetimeSeconds,

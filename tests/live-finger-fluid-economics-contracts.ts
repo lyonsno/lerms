@@ -67,6 +67,10 @@ assert(packet.economics.lifetimeSeconds === 7.5, 'preserves lifetime separately 
 assert(packet.economics.defaultSubstitution === false, 'non-default requests must not be laundered as defaults');
 assert(packet.economics.fallbackActive === false, 'valid economics cannot claim fallback authority');
 assert(packet.emitters.every(emitter => emitter.source_flux_particles_per_second === 128), 'source flux is distributed across five active emitters');
+assert(
+  packet.emitters.reduce((sum, emitter) => sum + emitter.active_budget_particles, 0) === 960,
+  'active occupancy is distributed into the canonical GPU release-pool budget',
+);
 assert(packet.emitters.every(emitter => emitter.optical_density_scale === 2.75), 'emitter packet carries visible-density policy to the solver');
 
 type RuntimeAuthorityFactory = (
@@ -111,15 +115,42 @@ const verifiedRuntime = createRuntimeAuthority(packet.economics, {
   receipt: {
     packetId: packet.packet_id,
     sourceRoute: packet.source_route,
-    expectedParticleReleaseRate: 875.25,
+    expectedParticleReleaseRate: 600,
+    economicsContract: 'requested-effective-release-pool-residence-v1',
+    poolCapacity: 2400,
+    effectiveReleasePoolBudget: 960,
+    unallocatedDormantParticleCount: 1440,
   },
   liveInlets: {
+    contract: 'requested-effective-release-pool-residence-v1',
     packetId: packet.packet_id,
     sourceRoute: packet.source_route,
-    expectedParticleReleaseRate: 875.25,
+    expectedParticleReleaseRate: 600,
+    poolCapacity: 2400,
+    requestedReleasePoolBudget: 960,
+    effectiveReleasePoolBudget: 960,
+    unallocatedDormantParticleCount: 1440,
     inlets: [
-      { id: 'index', radius: 0.12, maximumSpeed: 1.8, active: true },
-      { id: 'middle', radius: 0.14, maximumSpeed: 1.9, active: true },
+      {
+        id: 'index',
+        radius: 0.12,
+        maximumSpeed: 1.8,
+        active: true,
+        requested: { particleReleaseRate: 320, releasePoolBudget: 480, residenceSeconds: 7.5 },
+        effective: { particleReleaseRate: 300, releasePoolBudget: 480, residenceSeconds: 7.5 },
+        opticalDensity: { requested: 2.75, effective: null, authority: 'consumer_owned_not_applied' },
+        reconstructionRadius: { requested: 1.9, effective: null, authority: 'consumer_owned_not_applied' },
+      },
+      {
+        id: 'middle',
+        radius: 0.14,
+        maximumSpeed: 1.9,
+        active: true,
+        requested: { particleReleaseRate: 320, releasePoolBudget: 480, residenceSeconds: 7.5 },
+        effective: { particleReleaseRate: 300, releasePoolBudget: 480, residenceSeconds: 7.5 },
+        opticalDensity: { requested: 2.75, effective: null, authority: 'consumer_owned_not_applied' },
+        reconstructionRadius: { requested: 1.9, effective: null, authority: 'consumer_owned_not_applied' },
+      },
     ],
   },
 });
@@ -127,19 +158,52 @@ assert(verifiedRuntime.schema === 'lerms.live-finger-fluid-runtime-authority.v0'
 assert(verifiedRuntime.complete === true, 'effective inlet receipt completes runtime authority');
 assert(verifiedRuntime.authority === 'pinned_runtime_receipt', 'effective values name pinned runtime receipt authority');
 assert(verifiedRuntime.effective.particleCount === 2400, 'effective allocation comes from solver initialization');
-assert(verifiedRuntime.effective.activeParticleBudget === null, 'pinned runtime has no effective active-budget control');
-assert(verifiedRuntime.effective.expectedParticleReleaseRate === 875.25, 'effective release comes from the runtime release plan');
+assert(verifiedRuntime.effective.activeParticleBudget === 960, 'effective active occupancy comes from the GPU release-pool plan');
+assert(verifiedRuntime.effective.expectedParticleReleaseRate === 600, 'effective release comes from the runtime release plan');
 assert(verifiedRuntime.effective.opticalDensityScale === null, 'pinned runtime has no independent optical-density control');
 assert(verifiedRuntime.effective.reconstructionRadiusScale === null, 'pinned runtime has no independent reconstruction-radius control');
-assert(verifiedRuntime.effective.residenceSeconds === 1.65, 'effective residence reports the pinned hard recycle age');
-assert(verifiedRuntime.effective.maximumTravelDistance === 2.4, 'effective residence reports the pinned distance recycle');
+assert(verifiedRuntime.effective.residenceSeconds === 7.5, 'effective residence reports the requested canonical lifetime');
+assert(verifiedRuntime.effective.maximumTravelDistance === null, 'unrequested distance residence is not invented');
 assert(verifiedRuntime.effective.packetId === packet.packet_id, 'effective state is joined to the exact packet id');
 assert(verifiedRuntime.effective.sourceRoute === packet.source_route, 'effective state is joined to the exact source route');
-assert(verifiedRuntime.support.activeParticleBudget === 'unsupported_by_pinned_runtime', 'active-budget support fails loud');
-assert(verifiedRuntime.support.sourceFlux === 'derived_from_aperture_and_speed', 'source release names its actual coupled controls');
-assert(verifiedRuntime.support.opticalDensity === 'unsupported_metadata_coupled_to_speed', 'optics request names its physical speed coupling');
-assert(verifiedRuntime.support.reconstructionRadius === 'unsupported_metadata_coupled_to_aperture', 'reconstruction request names its aperture coupling');
-assert(verifiedRuntime.support.lifetime === 'unsupported_metadata_hard_recycle', 'lifetime request names its hard recycle override');
+assert(verifiedRuntime.support.activeParticleBudget === 'canonical_release_pool_budget', 'active-budget support names canonical GPU ownership');
+assert(verifiedRuntime.support.sourceFlux === 'canonical_requested_effective_release_rate', 'source release names canonical requested/effective authority');
+assert(verifiedRuntime.support.opticalDensity === 'consumer_owned_not_applied_to_physical_inlet', 'optics stays visibly consumer-owned');
+assert(verifiedRuntime.support.reconstructionRadius === 'consumer_owned_not_applied_to_physical_inlet', 'reconstruction stays visibly consumer-owned');
+assert(verifiedRuntime.support.lifetime === 'canonical_residence_seconds', 'lifetime names canonical GPU residence authority');
+
+const defaultedBudgetRuntime = createRuntimeAuthority(packet.economics, {
+  effectiveParticleCount: 2400,
+  expectedPacketId: packet.packet_id,
+  expectedSourceRoute: packet.source_route,
+  packetAuthority: packet.authority,
+  packetEconomics: packet.economics,
+  receipt: {
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: 600,
+    economicsContract: 'requested-effective-release-pool-residence-v1',
+    poolCapacity: 2400,
+    effectiveReleasePoolBudget: 2400,
+    unallocatedDormantParticleCount: 0,
+  },
+  liveInlets: {
+    contract: 'requested-effective-release-pool-residence-v1',
+    packetId: packet.packet_id,
+    sourceRoute: packet.source_route,
+    expectedParticleReleaseRate: 600,
+    poolCapacity: 2400,
+    requestedReleasePoolBudget: 0,
+    effectiveReleasePoolBudget: 2400,
+    unallocatedDormantParticleCount: 0,
+    inlets: [],
+  },
+});
+assert(defaultedBudgetRuntime.complete === false, 'a defaulted full-pool budget cannot replace the requested active occupancy');
+assert(
+  defaultedBudgetRuntime.authority === 'stale_or_mismatched_runtime_receipt',
+  'default-substituted occupancy fails requested/effective identity',
+);
 
 const missingRuntime = createRuntimeAuthority(packet.economics, {
   effectiveParticleCount: null,
@@ -158,12 +222,12 @@ const staleRuntime = createRuntimeAuthority(packet.economics, {
   receipt: {
     packetId: packet.packet_id,
     sourceRoute: packet.source_route,
-    expectedParticleReleaseRate: 875.25,
+    expectedParticleReleaseRate: 600,
   },
   liveInlets: {
     packetId: 'older-packet',
     sourceRoute: packet.source_route,
-    expectedParticleReleaseRate: 875.25,
+    expectedParticleReleaseRate: 600,
     inlets: [{ id: 'index', radius: 0.12, maximumSpeed: 1.8, active: true }],
   },
 });
