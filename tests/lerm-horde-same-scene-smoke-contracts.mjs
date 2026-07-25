@@ -76,6 +76,15 @@ assert.match(
 );
 for (const requiredBrowserCheck of [
   'smokeStatus',
+  'carrierStatus',
+  'carrierReceiptComplete',
+  'initialPauseHeld',
+  'oneOperatorPlay',
+  'exactCarrierVisible',
+  'hiddenGlyphAbsent',
+  'carrierCanvasNonblank',
+  'carrierCanvasMotionPixels',
+  'railFrameVerified',
   'requestedRoute',
   'effectiveRoute',
   'playbackAdvanced',
@@ -91,6 +100,23 @@ for (const requiredBrowserCheck of [
     browserWitness,
     new RegExp(requiredBrowserCheck),
     `the browser witness must report ${requiredBrowserCheck}`,
+  );
+}
+for (const exactCarrierIdentity of [
+  'carrierBodySha256',
+  'carrierRegistrationSha256',
+  'carrierRailRevision',
+  'carrierRailModuleSha256',
+  'carrierRailHistorySha256',
+  'effectiveRailId',
+  'carrierPresentationRevision',
+  'carrierPlaybackRevision',
+  'effectiveEvaluatorRoute',
+]) {
+  assert.match(
+    browserWitness,
+    new RegExp(exactCarrierIdentity),
+    `the browser witness must preserve exact ${exactCarrierIdentity} identity`,
   );
 }
 for (const exactIdentityField of [

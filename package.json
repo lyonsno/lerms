@@ -13,6 +13,7 @@
     "witness:hill-horde-same-scene-prefix": "out=$(mktemp -d /tmp/lerms-hill-horde-same-scene-prefix-witness.XXXXXX) && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --strict --skipLibCheck --outDir \"$out\" --noEmit false src/hill-horde-same-scene-prefix-replay-witness.ts && node \"$out/hill-horde-same-scene-prefix-replay-witness.js\"",
     "test:lerm-horde-same-scene-verification": "out=$(mktemp -d /tmp/lerms-horde-same-scene-verification-test.XXXXXX) && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --strict --skipLibCheck --outDir \"$out\" --noEmit false tests/lerm-horde-same-scene-consumer-verification-contracts.ts && node \"$out/tests/lerm-horde-same-scene-consumer-verification-contracts.js\"",
     "test:lerm-horde-same-scene-smoke": "node --experimental-strip-types tests/lerm-horde-same-scene-smoke-contracts.mjs",
+    "test:lerm-horde-3d-carrier": "node --experimental-strip-types tests/lerm-horde-3d-carrier-contracts.mjs",
     "witness:lerm-horde-same-scene-smoke": "node tests/lerm-horde-same-scene-browser-witness.mjs",
     "witness:lerm-horde-live-body-motion": "out=$(mktemp -d /tmp/lerms-horde-live-body-motion-witness.XXXXXX) && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --strict --skipLibCheck --outDir \"$out\" --noEmit false src/lerm-horde-live-body-motion-witness.ts && node \"$out/lerm-horde-live-body-motion-witness.js\"",
     "witness:hill-horde-live-admission": "out=$(mktemp -d /tmp/lerms-hill-horde-live-admission-witness.XXXXXX) && tsc --target ES2022 --module ES2022 --moduleResolution Bundler --strict --skipLibCheck --outDir \"$out\" --noEmit false src/hill-horde-live-traversal-admission-witness.ts && node \"$out/hill-horde-live-traversal-admission-witness.js\"",
@@ -38,10 +39,13 @@
     "witness:lerm-horde-stable-rail": "node --experimental-strip-types src/lerm-horde-stable-rail-visual-witness.ts"
   },
   "dependencies": {
+    "three": "^0.185.1",
     "vite": "^8.1.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
+    "@types/three": "^0.185.1",
+    "postcss": "^8.5.23",
     "typescript": "^5.5.0"
   }
 }

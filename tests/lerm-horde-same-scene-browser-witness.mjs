@@ -27,6 +27,24 @@ const EXPECTED_MANIFEST_SHA256 =
   'c8a25168cbbf9d45f7f2b225ab630e088f14a5b97f8b5cb561af7258e335c341';
 const EXPECTED_SVG_SHA256 =
   'f657e3365833e5e0465a208ea367ce6c40a429125528f82f25fa71dda39e626c';
+const EXPECTED_CARRIER_SHA256 =
+  '8fed20d958ef48797c14ad1d3846a50eae05d43e6ae67f8805060b02f1abde8e';
+const EXPECTED_REGISTRATION_SHA256 =
+  'a63fa02ffa7a144234eef3b9902ac9d349fd413d93a19c87ee1464b0b61ca7f9';
+const EXPECTED_RAIL_REVISION =
+  'ced6db3d2ed3325ae86f781ab9d7d565dc6d5f58';
+const EXPECTED_RAIL_MODULE_SHA256 =
+  'ffce984721d00468856e70bd0805961a852d8690bcd402d1dc5ae96ad1ec88f0';
+const EXPECTED_RAIL_HISTORY_SHA256 =
+  'c56627554f5cacb8f151361419bfe70177e2d86490193e30b2f148a11b430b2e';
+const EXPECTED_RAIL_ID =
+  'lerm-horde-719024-control-crossing-v0-left-longitudinal-short-rail';
+const EXPECTED_PRESENTATION_REVISION =
+  '6217fff858c0b12e330499baf28127f9122826f7';
+const EXPECTED_PLAYBACK_REVISION =
+  'fbe2e851130bd142b64727a494809141b9954cef';
+const EXPECTED_EVALUATOR_ROUTE =
+  'kaminos/fitted-proxy-rig/arbitrary-phase-plus-semantic-probes-v0';
 const CHROME =
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
@@ -40,6 +58,24 @@ const report = {
   failurePhase: null,
   ok: false,
   smokeStatus: null,
+  carrierStatus: null,
+  carrierReceiptComplete: false,
+  initialPauseHeld: false,
+  oneOperatorPlay: false,
+  exactCarrierVisible: false,
+  hiddenGlyphAbsent: false,
+  carrierCanvasNonblank: false,
+  carrierCanvasMotionPixels: 0,
+  railFrameVerified: false,
+  carrierBodySha256: null,
+  carrierRegistrationSha256: null,
+  carrierRailRevision: null,
+  carrierRailModuleSha256: null,
+  carrierRailHistorySha256: null,
+  effectiveRailId: null,
+  carrierPresentationRevision: null,
+  carrierPlaybackRevision: null,
+  effectiveEvaluatorRoute: null,
   requestedRoute: null,
   effectiveRoute: null,
   presenterRevision: null,
@@ -117,6 +153,25 @@ async function runWitness() {
   const identity = await browser.evaluate(`(() => ({
     effectiveUrl: location.href,
     smokeStatus: document.documentElement.dataset.smokeStatus ?? null,
+    carrierStatus: document.documentElement.dataset.carrierStatus ?? null,
+    carrierBodySha256:
+      document.documentElement.dataset.carrierBodySha256 ?? null,
+    carrierRegistrationSha256:
+      document.documentElement.dataset.carrierRegistrationSha256 ?? null,
+    carrierRailRevision:
+      document.documentElement.dataset.carrierRailRevision ?? null,
+    carrierRailModuleSha256:
+      document.documentElement.dataset.carrierRailModuleSha256 ?? null,
+    carrierRailHistorySha256:
+      document.documentElement.dataset.carrierRailHistorySha256 ?? null,
+    effectiveRailId:
+      document.documentElement.dataset.effectiveRailId ?? null,
+    carrierPresentationRevision:
+      document.documentElement.dataset.carrierPresentationRevision ?? null,
+    carrierPlaybackRevision:
+      document.documentElement.dataset.carrierPlaybackRevision ?? null,
+    effectiveEvaluatorRoute:
+      document.documentElement.dataset.effectiveEvaluatorRoute ?? null,
     requestedRoute: document.documentElement.dataset.requestedRoute ?? null,
     effectiveRoute: document.documentElement.dataset.effectiveRoute ?? null,
     presenterRevision:
@@ -148,34 +203,160 @@ async function runWitness() {
   assert.equal(report.manifestSha256, EXPECTED_MANIFEST_SHA256);
   assert.equal(report.svgSha256, EXPECTED_SVG_SHA256);
   assert.equal(report.sourceStatus, 'exact-accepted-replay');
+  assert.equal(report.carrierStatus, 'verified-paused');
+  assert.equal(report.carrierBodySha256, EXPECTED_CARRIER_SHA256);
+  assert.equal(
+    report.carrierRegistrationSha256,
+    EXPECTED_REGISTRATION_SHA256,
+  );
+  assert.equal(report.carrierRailRevision, EXPECTED_RAIL_REVISION);
+  assert.equal(report.carrierRailModuleSha256, EXPECTED_RAIL_MODULE_SHA256);
+  assert.equal(report.carrierRailHistorySha256, EXPECTED_RAIL_HISTORY_SHA256);
+  assert.equal(report.effectiveRailId, EXPECTED_RAIL_ID);
+  assert.equal(
+    report.carrierPresentationRevision,
+    EXPECTED_PRESENTATION_REVISION,
+  );
+  assert.equal(report.carrierPlaybackRevision, EXPECTED_PLAYBACK_REVISION);
+  assert.equal(report.effectiveEvaluatorRoute, EXPECTED_EVALUATOR_ROUTE);
 
-  report.phase = 'playback';
+  report.phase = 'paused-containment';
   const initialFrame = await browser.evaluate(
     `document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex`,
   );
   await delay(1_100);
-  const advancedFrame = await browser.evaluate(
+  const heldInitialFrame = await browser.evaluate(
     `document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex`,
   );
-  report.playbackAdvanced = advancedFrame !== initialFrame;
-  assert.ok(report.playbackAdvanced, 'timed replay did not advance');
+  report.initialPauseHeld =
+    initialFrame === '1' &&
+    heldInitialFrame === initialFrame &&
+    (await browser.evaluate(
+      `document.documentElement.dataset.operatorPlayCount`,
+    )) === '0';
+  report.pauseHeld = report.initialPauseHeld;
+  assert.ok(
+    report.initialPauseHeld,
+    'exact carrier autoplayed or did not begin on the first authored sample',
+  );
+  const initialCarrierPixels = await readCarrierCentroid(browser);
 
-  report.phase = 'controls';
+  report.phase = 'mid-traversal-carrier';
+  await browser.evaluate(
+    `document.querySelector('.timeline__step[data-frame-index="8"]')?.click()`,
+  );
+  await delay(300);
+  const carrierEvidence = await browser.evaluate(`(() => {
+    const canvas = document.querySelector('.stage__carrier');
+    const viewport = document.querySelector('[data-smoke-viewport]');
+    const panel = viewport?.querySelector('[data-panel="8"]');
+    const glyph = panel?.querySelector('[data-visible-lerm-body="true"]');
+    return {
+      canvasPresent: canvas instanceof HTMLCanvasElement,
+      frameIndex: viewport?.dataset.frameIndex,
+      glyphOpacity: glyph ? getComputedStyle(glyph).opacity : null,
+      carrierIdentity: canvas?.dataset.exactCarrier ?? null,
+    };
+  })()`);
+  const midCarrierPixels = await readCarrierCentroid(browser);
+  report.carrierCanvasNonblank =
+    carrierEvidence.canvasPresent &&
+    midCarrierPixels.nontransparentSamples >= 8;
+  report.carrierCanvasMotionPixels = Number(
+    Math.hypot(
+      midCarrierPixels.centroidX - initialCarrierPixels.centroidX,
+      midCarrierPixels.centroidY - initialCarrierPixels.centroidY,
+    ).toFixed(2),
+  );
+  report.exactCarrierVisible =
+    carrierEvidence.frameIndex === '8' &&
+    carrierEvidence.carrierIdentity === '719024' &&
+    report.carrierCanvasNonblank &&
+    report.carrierCanvasMotionPixels >= 8;
+  report.hiddenGlyphAbsent = carrierEvidence.glyphOpacity === '0';
+  assert.ok(
+    report.exactCarrierVisible,
+    'mid-traversal exact carrier canvas is missing or blank',
+  );
+  assert.ok(
+    report.hiddenGlyphAbsent,
+    'accepted glyph remained visible under the exact 3D carrier',
+  );
+
+  report.phase = 'one-play-completion';
+  await browser.evaluate(
+    `document.querySelector('[data-restart]')?.click()`,
+  );
+  await browser.evaluate(
+    `document.querySelector('[data-speed="1.5"]')?.click()`,
+  );
   await browser.evaluate(
     `document.querySelector('[data-play-toggle]')?.click()`,
   );
-  const pausedFrame = await browser.evaluate(
+  await delay(700);
+  const advancedFrame = await browser.evaluate(
     `document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex`,
   );
-  await delay(800);
-  const heldFrame = await browser.evaluate(
-    `document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex`,
+  report.playbackAdvanced = advancedFrame !== '1';
+  assert.ok(report.playbackAdvanced, 'operator-started traversal did not advance');
+  await waitFor(
+    () =>
+      browser.evaluate(
+        `document.documentElement.dataset.carrierReceiptStatus === 'complete'`,
+      ),
+    12_000,
+    'exact carrier completion receipt',
   );
-  report.pauseHeld = pausedFrame === heldFrame;
-  assert.ok(report.pauseHeld, 'pause control did not hold the current frame');
+  const completed = await browser.evaluate(`(() => ({
+    receipt: window.__lermHorde3dCarrierReport ?? null,
+    operatorPlayCount: document.documentElement.dataset.operatorPlayCount,
+    carrierStatus: document.documentElement.dataset.carrierStatus,
+    frameIndex:
+      document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex,
+  }))()`);
+  report.carrierReceipt = completed.receipt;
+  report.carrierStatus = completed.carrierStatus;
+  report.railFrameVerified =
+    completed.receipt?.identity?.railModuleSha256 ===
+      EXPECTED_RAIL_MODULE_SHA256 &&
+    completed.receipt?.identity?.railHistorySha256 ===
+      EXPECTED_RAIL_HISTORY_SHA256 &&
+    completed.receipt?.identity?.effectiveRailId === EXPECTED_RAIL_ID &&
+    completed.receipt?.samples?.length === 15 &&
+    completed.receipt.samples.every(
+      (sample) =>
+        sample.rootFrameSource ===
+          'ced6db3d.sampleCreatureScaleLocomotionRail' &&
+        sample.rootTransformApplications === 1 &&
+        sample.rootFrameOrigin?.length === 3 &&
+        sample.rootFrameLateral?.length === 3 &&
+        sample.rootFrameNormal?.length === 3 &&
+        sample.rootFrameTangent?.length === 3,
+    );
+  report.carrierReceiptComplete =
+    completed.receipt?.status?.ok === true &&
+    completed.receipt?.status?.phase === 'complete' &&
+    completed.carrierStatus === 'complete';
+  report.oneOperatorPlay =
+    completed.operatorPlayCount === '1' &&
+    completed.receipt?.playback?.operatorPlayCount === 1 &&
+    completed.receipt?.playback?.autoplayObserved === false;
+  assert.ok(
+    report.carrierReceiptComplete,
+    'exact carrier completion receipt is missing, partial, or failed',
+  );
+  assert.ok(
+    report.oneOperatorPlay,
+    'exact carrier traversal did not complete under exactly one operator Play',
+  );
+  assert.ok(
+    report.railFrameVerified,
+    'completion receipt did not preserve all exact rail-derived root frames',
+  );
 
+  report.phase = 'departure';
   await browser.evaluate(
-    `document.querySelector('[data-frame-index="17"]')?.click()`,
+    `document.querySelector('.timeline__step[data-frame-index="17"]')?.click()`,
   );
   await delay(200);
   const departure = await browser.evaluate(`(() => {
@@ -196,7 +377,9 @@ async function runWitness() {
     departure.frameIndex === '17' &&
     departure.frameKind === 'after-departure' &&
     departure.prefixSampleCount === '15' &&
-    departure.bodyAbsent === true;
+    departure.bodyAbsent === true &&
+    completed.receipt?.departure?.bodyVisible === false &&
+    completed.receipt?.departure?.hillHistoryRetained === true;
   assert.ok(
     report.departureBodyAbsent,
     'later Hill frame did not preserve the accepted body-absent state',
@@ -208,7 +391,7 @@ async function runWitness() {
   );
 
   await browser.evaluate(
-    `document.querySelector('[data-frame-index="8"]')?.click()`,
+    `document.querySelector('.timeline__step[data-frame-index="8"]')?.click()`,
   );
   await delay(200);
   const moving = await browser.evaluate(`(() => {
@@ -227,7 +410,9 @@ async function runWitness() {
     moving.frameIndex === '8' &&
     moving.frameKind === 'actor-prefix' &&
     moving.prefixSampleCount === '8' &&
-    moving.bodyVisible === true;
+    moving.bodyVisible === true &&
+    report.exactCarrierVisible &&
+    report.hiddenGlyphAbsent;
   assert.ok(
     report.motionBodyVisible,
     'mid-traversal capture does not contain the accepted moving Lerm body',
@@ -348,6 +533,53 @@ async function runWitness() {
       `Lerm Horde browser witness failed during ${report.failurePhase}: ${report.error}`,
     );
   }
+}
+
+async function readCarrierCentroid(browser) {
+  return browser.evaluate(`(() => {
+    const canvas = document.querySelector('.stage__carrier');
+    const context = canvas?.getContext('webgl2') ?? canvas?.getContext('webgl');
+    if (!canvas || !context) {
+      return {
+        nontransparentSamples: 0,
+        centroidX: Number.NaN,
+        centroidY: Number.NaN,
+      };
+    }
+    const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+    context.readPixels(
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+      context.RGBA,
+      context.UNSIGNED_BYTE,
+      pixels,
+    );
+    let nontransparentSamples = 0;
+    let weightedX = 0;
+    let weightedY = 0;
+    for (let y = 0; y < canvas.height; y += 4) {
+      for (let x = 0; x < canvas.width; x += 4) {
+        const alpha = pixels[(y * canvas.width + x) * 4 + 3];
+        if (alpha === 0) continue;
+        nontransparentSamples += 1;
+        weightedX += x;
+        weightedY += y;
+      }
+    }
+    return {
+      nontransparentSamples,
+      centroidX:
+        nontransparentSamples > 0
+          ? weightedX / nontransparentSamples
+          : Number.NaN,
+      centroidY:
+        nontransparentSamples > 0
+          ? weightedY / nontransparentSamples
+          : Number.NaN,
+    };
+  })()`);
 }
 
 function parseArgs(args) {

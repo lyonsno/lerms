@@ -4,6 +4,24 @@ import {
   type SameSceneSmokeFrame,
   verifyAcceptedSameSceneSmokeSource,
 } from './lerm-horde-same-scene-smoke-contract.js';
+import {
+  EXACT_3D_CARRIER_BODY_SHA256,
+  EXACT_3D_CARRIER_HILL_PRESENTER_REVISION,
+  EXACT_3D_CARRIER_HILL_ROUTE,
+  EXACT_3D_CARRIER_PLAYBACK_REVISION,
+  EXACT_3D_CARRIER_PRESENTATION_REVISION,
+  EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
+  EXACT_3D_CARRIER_RAIL_ID,
+  EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
+  EXACT_3D_CARRIER_RAIL_REVISION,
+  EXACT_3D_CARRIER_REGISTRATION_SHA256,
+  type Exact3dCarrierReceipt,
+  validateExact3dCarrierReceipt,
+} from './lerm-horde-3d-carrier-contract.js';
+import {
+  createExactCarrierRenderer,
+  type ExactCarrierRenderer,
+} from './lerm-horde-3d-carrier-renderer.js';
 
 const PANEL_WIDTH = 360;
 const PANEL_HEIGHT = 360;
@@ -11,8 +29,9 @@ const PANEL_COLUMNS = 6;
 const BASE_FRAME_DURATION_MS = 290;
 const CONTROL_HOLD_MS = 650;
 const DEPARTURE_HOLD_MS = 900;
-const LOOP_HOLD_MS = 1250;
+const TERMINAL_HOLD_MS = 1250;
 
+const stage = required<HTMLElement>('.stage');
 const viewport = required<SVGSVGElement>('[data-smoke-viewport]');
 const statusLabel = required<HTMLElement>('[data-smoke-status-label]');
 const frameKind = required<HTMLElement>('[data-frame-kind]');
@@ -30,12 +49,16 @@ const speedButtons = [
 ];
 
 let frames: readonly SameSceneSmokeFrame[] = [];
-let frameIndex = 0;
-let playing = true;
+let frameIndex = 1;
+let playing = false;
 let speed = 1;
 let frameStartedAt = performance.now();
 let timelineButtons: HTMLButtonElement[] = [];
 let panelGroups: SVGGElement[] = [];
+let carrier: ExactCarrierRenderer | null = null;
+let operatorPlayCount = 0;
+let receiptPublished = false;
+const observedCarrierFrames = new Set<number>();
 
 void initialize();
 
@@ -65,9 +88,12 @@ async function initialize(): Promise<void> {
     );
     frames = source.frames;
     mountSvg(source.svgText);
+    carrier = await createExactCarrierRenderer(stage, viewport, panelGroups);
     createTimeline();
-    renderFrame(0);
+    renderFrame(frameIndex);
     document.documentElement.dataset.smokeStatus = 'verified';
+    document.documentElement.dataset.carrierStatus = 'verified-paused';
+    document.documentElement.dataset.carrierReceiptStatus = 'pending-play';
     document.documentElement.dataset.requestedRoute = source.requestedRoute;
     document.documentElement.dataset.effectiveRoute = source.effectiveRoute;
     document.documentElement.dataset.presenterRevision =
@@ -80,7 +106,29 @@ async function initialize(): Promise<void> {
     document.documentElement.dataset.manifestSha256 = source.manifestSha256;
     document.documentElement.dataset.svgSha256 = source.svgSha256;
     document.documentElement.dataset.sourceStatus = source.sourceStatus;
-    statusLabel.textContent = 'Source exact / replay active';
+    document.documentElement.dataset.carrierBodySha256 =
+      EXACT_3D_CARRIER_BODY_SHA256;
+    document.documentElement.dataset.carrierRegistrationSha256 =
+      EXACT_3D_CARRIER_REGISTRATION_SHA256;
+    document.documentElement.dataset.carrierRailRevision =
+      EXACT_3D_CARRIER_RAIL_REVISION;
+    document.documentElement.dataset.carrierRailModuleSha256 =
+      carrier.railModuleSha256;
+    document.documentElement.dataset.carrierRailHistorySha256 =
+      carrier.railHistorySha256;
+    document.documentElement.dataset.effectiveRailId = carrier.effectiveRailId;
+    document.documentElement.dataset.carrierPresentationRevision =
+      EXACT_3D_CARRIER_PRESENTATION_REVISION;
+    document.documentElement.dataset.carrierPlaybackRevision =
+      EXACT_3D_CARRIER_PLAYBACK_REVISION;
+    document.documentElement.dataset.effectiveEvaluatorRoute =
+      carrier.effectiveEvaluatorRoute;
+    document.documentElement.dataset.operatorPlayCount = '0';
+    document.documentElement.dataset.bodyVertexCount = String(
+      carrier.bodyVertexCount,
+    );
+    statusLabel.textContent = 'Exact carrier / paused';
+    updatePlayState(false);
     window.requestAnimationFrame(tick);
   } catch (error) {
     failSmoke(error);
@@ -120,6 +168,7 @@ function createTimeline(): void {
     button.setAttribute('aria-label', frameLabel(frame));
     button.title = frameLabel(frame);
     button.addEventListener('click', () => {
+      updatePlayState(false);
       frameIndex = frame.index;
       frameStartedAt = performance.now();
       renderFrame(frameIndex);
@@ -135,7 +184,13 @@ function tick(timestamp: number): void {
     frames.length > 0 &&
     timestamp - frameStartedAt >= frameDuration(frames[frameIndex]) / speed
   ) {
-    frameIndex = (frameIndex + 1) % frames.length;
+    if (frameIndex === frames.length - 1) {
+      updatePlayState(false);
+      publishReceipt();
+      window.requestAnimationFrame(tick);
+      return;
+    }
+    frameIndex += 1;
     frameStartedAt = timestamp;
     renderFrame(frameIndex);
   }
@@ -158,6 +213,10 @@ function renderFrame(index: number): void {
   panelGroups.forEach((panel, panelIndex) => {
     panel.style.display = panelIndex === index ? 'inline' : 'none';
   });
+  carrier?.renderFrame(index);
+  if (carrier && index >= 1 && index <= 15) {
+    observedCarrierFrames.add(index);
+  }
   viewport.classList.remove('stage__viewport--advance');
   void viewport.getBoundingClientRect();
   viewport.classList.add('stage__viewport--advance');
@@ -180,7 +239,7 @@ function renderFrame(index: number): void {
 function frameDuration(frame: SameSceneSmokeFrame): number {
   if (frame.kind === 'no-history-control') return CONTROL_HOLD_MS;
   if (frame.kind === 'actor-departed') return DEPARTURE_HOLD_MS;
-  if (frame.kind === 'after-departure') return LOOP_HOLD_MS;
+  if (frame.kind === 'after-departure') return TERMINAL_HOLD_MS;
   return BASE_FRAME_DURATION_MS;
 }
 
@@ -202,18 +261,34 @@ function updatePlayState(nextPlaying: boolean): void {
   frameStartedAt = performance.now();
   playToggle.setAttribute(
     'aria-label',
-    playing ? 'Pause replay' : 'Play replay',
+    playing ? 'Pause traversal' : 'Play traversal',
   );
-  playToggle.title = playing ? 'Pause replay' : 'Play replay';
+  playToggle.title = playing ? 'Pause traversal' : 'Play traversal';
   playIcon.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+  statusLabel.textContent = playing
+    ? 'Exact carrier / traversing'
+    : receiptPublished
+      ? 'Exact carrier / complete'
+      : 'Exact carrier / paused';
 }
 
-playToggle.addEventListener('click', () => updatePlayState(!playing));
-restart.addEventListener('click', () => {
-  frameIndex = 0;
-  frameStartedAt = performance.now();
+playToggle.addEventListener('click', () => {
+  if (playing) {
+    updatePlayState(false);
+    return;
+  }
+  if (frameIndex === frames.length - 1 || receiptPublished) {
+    resetTraversal();
+  }
+  if (operatorPlayCount >= 1) return;
+  operatorPlayCount += 1;
+  document.documentElement.dataset.operatorPlayCount =
+    String(operatorPlayCount);
+  document.documentElement.dataset.carrierReceiptStatus = 'in-progress';
   updatePlayState(true);
-  renderFrame(frameIndex);
+});
+restart.addEventListener('click', () => {
+  resetTraversal();
 });
 speedButtons.forEach((button) => {
   button.addEventListener('click', () => {
@@ -230,16 +305,111 @@ speedButtons.forEach((button) => {
 
 function failSmoke(error: unknown): void {
   document.documentElement.dataset.smokeStatus = 'failed';
-  statusLabel.textContent = 'Source rejected';
+  document.documentElement.dataset.carrierStatus = 'failed';
+  document.documentElement.dataset.carrierReceiptStatus = 'failed';
   failure.hidden = false;
   errorOutput.textContent =
     error instanceof Error ? error.message : String(error);
   viewport.replaceChildren();
   updatePlayState(false);
+  statusLabel.textContent = 'Source rejected';
+}
+
+function resetTraversal(): void {
+  frameIndex = 1;
+  operatorPlayCount = 0;
+  receiptPublished = false;
+  observedCarrierFrames.clear();
+  delete (
+    window as Window & {
+      __lermHorde3dCarrierReport?: Exact3dCarrierReceipt;
+    }
+  ).__lermHorde3dCarrierReport;
+  document.documentElement.dataset.operatorPlayCount = '0';
+  document.documentElement.dataset.carrierReceiptStatus = 'pending-play';
+  updatePlayState(false);
+  renderFrame(frameIndex);
+}
+
+function publishReceipt(): void {
+  if (receiptPublished || !carrier) return;
+  const receipt: Exact3dCarrierReceipt = {
+    schema: 'lerms.horde-3d-carrier-history.v0',
+    status: {
+      ok: true,
+      phase: 'complete',
+      fallbackStatus: 'none',
+      staleStatus: 'fresh',
+      failurePhase: null,
+    },
+    identity: {
+      bodySha256: EXACT_3D_CARRIER_BODY_SHA256,
+      registrationSha256: EXACT_3D_CARRIER_REGISTRATION_SHA256,
+      railRevision: EXACT_3D_CARRIER_RAIL_REVISION,
+      railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
+      railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
+      effectiveRailId: EXACT_3D_CARRIER_RAIL_ID,
+      presentationRevision: EXACT_3D_CARRIER_PRESENTATION_REVISION,
+      playbackRevision: EXACT_3D_CARRIER_PLAYBACK_REVISION,
+      requestedHillRoute: EXACT_3D_CARRIER_HILL_ROUTE,
+      effectiveHillRoute: EXACT_3D_CARRIER_HILL_ROUTE,
+      hillPresenterRevision: EXACT_3D_CARRIER_HILL_PRESENTER_REVISION,
+      effectiveEvaluatorRoute: carrier.effectiveEvaluatorRoute,
+    },
+    playback: {
+      initialState: 'paused',
+      operatorPlayCount,
+      autoplayObserved: false,
+    },
+    composition: {
+      carrierIdentity: '719024',
+      speciesAuthority: 'non-lerm-engineering-carrier',
+      rootTransformPath: 'evaluator-world-positions',
+      hiddenGlyphFallback: false,
+      supportRootLiftApplications: 0,
+      contactCorrectionApplications: 0,
+    },
+    samples: carrier.samples.map((sample, index) => ({
+      index,
+      sourceDistance: sample.sourceDistance,
+      progress: sample.progress,
+      rootTransformApplications: 1,
+      bodyVisible: observedCarrierFrames.has(index + 1),
+      rootFrameSource: sample.rootFrameSource,
+      rootFrameOrigin: vec3Tuple(sample.rootFrame.origin),
+      rootFrameLateral: vec3Tuple(sample.rootFrame.lateral),
+      rootFrameNormal: vec3Tuple(sample.rootFrame.normal),
+      rootFrameTangent: vec3Tuple(sample.rootFrame.tangent),
+    })),
+    departure: {
+      bodyVisible: false,
+      hillHistoryRetained:
+        frames.at(-2)?.trafficChecksum === frames.at(-1)?.trafficChecksum &&
+        frames.at(-1)?.prefixSampleCount === 15,
+    },
+  };
+  validateExact3dCarrierReceipt(receipt);
+  (
+    window as Window & {
+      __lermHorde3dCarrierReport?: Exact3dCarrierReceipt;
+    }
+  ).__lermHorde3dCarrierReport = receipt;
+  receiptPublished = true;
+  document.documentElement.dataset.carrierStatus = 'complete';
+  document.documentElement.dataset.carrierReceiptStatus = 'complete';
+  statusLabel.textContent = 'Exact carrier / complete';
 }
 
 function required<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
   if (!element) throw new Error(`missing smoke element ${selector}`);
   return element;
+}
+
+function vec3Tuple(vector: {
+  x: number;
+  y: number;
+  z: number;
+}): [number, number, number] {
+  return [vector.x, vector.y, vector.z];
 }
