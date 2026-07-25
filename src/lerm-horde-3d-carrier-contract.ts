@@ -53,6 +53,10 @@ export interface Exact3dCarrierReceipt {
     carrierIdentity: string;
     speciesAuthority: string;
     rootTransformPath: string;
+    hillSupportHeightPath: string;
+    hillSupportHeightApplicationsPerSample: number;
+    hillScreenProjectionPath: string;
+    hillScreenProjectionApplicationsPerSample: number;
     hiddenGlyphFallback: boolean;
     supportRootLiftApplications: number;
     contactCorrectionApplications: number;
@@ -62,8 +66,16 @@ export interface Exact3dCarrierReceipt {
     sourceDistance: number;
     progress: number;
     rootTransformApplications: number;
+    hillSupportHeightApplications: number;
+    hillScreenProjectionApplications: number;
     bodyVisible: boolean;
     rootFrameSource: string;
+    railRootPosition: [number, number, number];
+    hillSupportRootPosition: [number, number, number];
+    supportHeightDelta: number;
+    hillSupportScreenAnchor: [number, number];
+    projectedRootScreenAnchor: [number, number];
+    screenAnchorErrorPx: number;
     rootFrameOrigin: [number, number, number];
     rootFrameLateral: [number, number, number];
     rootFrameNormal: [number, number, number];
@@ -130,6 +142,12 @@ export function validateExact3dCarrierReceipt(
         'non-lerm-engineering-carrier' &&
       receipt.composition.rootTransformPath ===
         'evaluator-world-positions' &&
+      receipt.composition.hillSupportHeightPath ===
+        '0482274.accepted-root-world-y' &&
+      receipt.composition.hillSupportHeightApplicationsPerSample === 1 &&
+      receipt.composition.hillScreenProjectionPath ===
+        '0482274.accepted-support-marker' &&
+      receipt.composition.hillScreenProjectionApplicationsPerSample === 1 &&
       receipt.composition.hiddenGlyphFallback === false &&
       receipt.composition.supportRootLiftApplications === 0 &&
       receipt.composition.contactCorrectionApplications === 0,
@@ -147,10 +165,43 @@ export function validateExact3dCarrierReceipt(
         sample.progress >= 0 &&
         sample.progress <= 1 &&
         sample.rootTransformApplications === 1 &&
+        sample.hillSupportHeightApplications === 1 &&
+        sample.hillScreenProjectionApplications === 1 &&
         sample.bodyVisible === true &&
         sample.rootFrameSource ===
-          'ced6db3d.sampleCreatureScaleLocomotionRail' &&
+          '0482274.acceptedHillRootHeight+ced6db3d.railFrame' &&
+        isFiniteVec3(sample.railRootPosition) &&
+        isFiniteVec3(sample.hillSupportRootPosition) &&
+        Number.isFinite(sample.supportHeightDelta) &&
+        isFiniteVec2(sample.hillSupportScreenAnchor) &&
+        isFiniteVec2(sample.projectedRootScreenAnchor) &&
+        Number.isFinite(sample.screenAnchorErrorPx) &&
+        sample.screenAnchorErrorPx <= 0.5 &&
+        nearlyEqual(
+          sample.screenAnchorErrorPx,
+          vec2Distance(
+            sample.hillSupportScreenAnchor,
+            sample.projectedRootScreenAnchor,
+          ),
+          1e-6,
+        ) &&
         isFiniteVec3(sample.rootFrameOrigin) &&
+        vec3NearlyEqual(
+          sample.rootFrameOrigin,
+          sample.hillSupportRootPosition,
+        ) &&
+        nearlyEqual(
+          sample.railRootPosition[0],
+          sample.hillSupportRootPosition[0],
+        ) &&
+        nearlyEqual(
+          sample.railRootPosition[2],
+          sample.hillSupportRootPosition[2],
+        ) &&
+        nearlyEqual(
+          sample.supportHeightDelta,
+          sample.hillSupportRootPosition[1] - sample.railRootPosition[1],
+        ) &&
         isOrthonormalRightHanded(
           sample.rootFrameLateral,
           sample.rootFrameNormal,
@@ -170,11 +221,29 @@ export function validateExact3dCarrierReceipt(
   requireCarrier(
     receipt.samples[0]?.progress === 0 &&
       receipt.samples.at(-1)?.progress === 1 &&
+      receipt.samples.some(
+        (sample) => Math.abs(sample.supportHeightDelta) > 1e-9,
+      ) &&
       receipt.departure.bodyVisible === false &&
       receipt.departure.hillHistoryRetained === true,
     '3D carrier traversal endpoints or departed Hill history are incomplete',
   );
   return receipt;
+}
+
+function nearlyEqual(left: number, right: number, tolerance = 1e-9): boolean {
+  return Math.abs(left - right) <= tolerance;
+}
+
+function vec3NearlyEqual(
+  left: readonly number[],
+  right: readonly number[],
+): boolean {
+  return (
+    isFiniteVec3(left) &&
+    isFiniteVec3(right) &&
+    left.every((value, index) => nearlyEqual(value, right[index]))
+  );
 }
 
 function requireCarrier(condition: boolean, message: string): asserts condition {
@@ -183,6 +252,14 @@ function requireCarrier(condition: boolean, message: string): asserts condition 
 
 function isFiniteVec3(value: readonly number[]): value is [number, number, number] {
   return value.length === 3 && value.every(Number.isFinite);
+}
+
+function isFiniteVec2(value: readonly number[]): value is [number, number] {
+  return value.length === 2 && value.every(Number.isFinite);
+}
+
+function vec2Distance(left: readonly number[], right: readonly number[]): number {
+  return Math.hypot(left[0] - right[0], left[1] - right[1]);
 }
 
 function isOrthonormalRightHanded(

@@ -85,6 +85,8 @@ for (const requiredBrowserCheck of [
   'carrierCanvasNonblank',
   'carrierCanvasMotionPixels',
   'railFrameVerified',
+  'hillSupportTrackingVerified',
+  'hillScreenTrackingVerified',
   'requestedRoute',
   'effectiveRoute',
   'playbackAdvanced',

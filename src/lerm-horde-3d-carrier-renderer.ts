@@ -95,8 +95,16 @@ export interface CarrierRootSample {
   sourceDistance: number;
   progress: number;
   rootWorld: [number, number, number];
+  railRootPosition: [number, number, number];
+  hillSupportRootPosition: [number, number, number];
+  supportHeightDelta: number;
+  hillSupportScreenAnchor: [number, number];
+  projectedRootScreenAnchor: [number, number];
+  screenAnchorErrorPx: number;
+  hillScreenProjectionApplications: number;
   railId: string;
-  rootFrameSource: 'ced6db3d.sampleCreatureScaleLocomotionRail';
+  rootFrameSource:
+    '0482274.acceptedHillRootHeight+ced6db3d.railFrame';
   rootFrame: CreatureRootFrame;
 }
 
@@ -267,6 +275,12 @@ export async function createExactCarrierRenderer(
       `exact carrier requires 15 accepted actor roots, received ${actorGroups.length}`,
     );
   }
+  const supportMarkers = actorGroups.map((group) =>
+    group.querySelector<SVGCircleElement>('circle[fill="#ffe06f"]'),
+  );
+  if (supportMarkers.some((marker) => marker === null)) {
+    throw new Error('accepted Hill actor roots are missing support markers');
+  }
   const samples = createRootSamples(actorGroups, railHistory, railCore);
   actorGroups.forEach((group) => {
     group.dataset.hiddenByExactCarrier = 'true';
@@ -274,6 +288,56 @@ export async function createExactCarrierRenderer(
   });
 
   let lastFrameIndex = -1;
+  const alignCameraToHillSupport = (
+    sample: CarrierRootSample,
+    supportMarker: SVGCircleElement,
+  ): void => {
+    const width = Math.max(1, stage.clientWidth);
+    const height = Math.max(1, stage.clientHeight);
+    const root = new THREE.Vector3(
+      sample.rootFrame.origin.x,
+      sample.rootFrame.origin.y,
+      sample.rootFrame.origin.z,
+    );
+    camera.clearViewOffset();
+    camera.position.set(root.x + 8, root.y + 7, root.z - 8);
+    camera.lookAt(root);
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+
+    const stageRect = stage.getBoundingClientRect();
+    const markerRect = supportMarker.getBoundingClientRect();
+    const targetX = markerRect.left + markerRect.width / 2 - stageRect.left;
+    const targetY = markerRect.top + markerRect.height / 2 - stageRect.top;
+    if (
+      markerRect.width <= 0 ||
+      markerRect.height <= 0 ||
+      ![targetX, targetY].every(Number.isFinite)
+    ) {
+      throw new Error(
+        `accepted Hill support marker ${sample.frameIndex} is not projectable`,
+      );
+    }
+    camera.setViewOffset(
+      width,
+      height,
+      width / 2 - targetX,
+      height / 2 - targetY,
+      width,
+      height,
+    );
+    camera.updateProjectionMatrix();
+    const projected = root.clone().project(camera);
+    const projectedX = ((projected.x + 1) / 2) * width;
+    const projectedY = ((1 - projected.y) / 2) * height;
+    sample.hillSupportScreenAnchor = [targetX, targetY];
+    sample.projectedRootScreenAnchor = [projectedX, projectedY];
+    sample.screenAnchorErrorPx = Math.hypot(
+      projectedX - targetX,
+      projectedY - targetY,
+    );
+    sample.hillScreenProjectionApplications = 1;
+  };
   const renderFrame = (frameIndex: number): void => {
     if (frameIndex < 1 || frameIndex > 15) {
       mesh.visible = false;
@@ -282,6 +346,11 @@ export async function createExactCarrierRenderer(
       return;
     }
     const sample = samples[frameIndex - 1];
+    const supportMarker = supportMarkers[frameIndex - 1];
+    if (!supportMarker) {
+      throw new Error(`accepted Hill support marker ${frameIndex} is missing`);
+    }
+    alignCameraToHillSupport(sample, supportMarker);
     const rootFrame = sample.rootFrame;
     const positions = evaluateSmoothFittedPhase(
       binding,
@@ -318,6 +387,13 @@ export async function createExactCarrierRenderer(
       camera.bottom = -VIEW_EXTENT / aspect;
     }
     camera.updateProjectionMatrix();
+    if (lastFrameIndex >= 1 && lastFrameIndex <= 15) {
+      const sample = samples[lastFrameIndex - 1];
+      const supportMarker = supportMarkers[lastFrameIndex - 1];
+      if (sample && supportMarker) {
+        alignCameraToHillSupport(sample, supportMarker);
+      }
+    }
     renderer.render(scene, camera);
   };
   resize();
@@ -447,21 +523,33 @@ function createRootSamples(
         `accepted Hill actor root ${index} does not project the exact rail route`,
       );
     }
-    const rootFrame = railSampleRootFrame(sampled);
+    const rootFrame = railSampleRootFrame(sampled, acceptedRootWorld);
     return {
       frameIndex: index + 1,
       sourceDistance: sampled.sourceDistance,
       progress: sampled.progress,
-      rootWorld: sampled.position,
+      rootWorld: acceptedRootWorld,
+      railRootPosition: sampled.position,
+      hillSupportRootPosition: acceptedRootWorld,
+      supportHeightDelta: acceptedRootWorld[1] - sampled.position[1],
+      hillSupportScreenAnchor: [Number.NaN, Number.NaN],
+      projectedRootScreenAnchor: [Number.NaN, Number.NaN],
+      screenAnchorErrorPx: Number.NaN,
+      hillScreenProjectionApplications: 0,
       railId: sampled.railId,
-      rootFrameSource: 'ced6db3d.sampleCreatureScaleLocomotionRail',
+      rootFrameSource:
+        '0482274.acceptedHillRootHeight+ced6db3d.railFrame',
       rootFrame,
     };
   });
 }
 
-function railSampleRootFrame(sample: RailSample): CreatureRootFrame {
-  const [originX, originY, originZ] = sample.position;
+function railSampleRootFrame(
+  sample: RailSample,
+  acceptedHillRoot: [number, number, number],
+): CreatureRootFrame {
+  const [originX, , originZ] = sample.position;
+  const originY = acceptedHillRoot[1];
   const [rightX, rightY, rightZ] = sample.locomotionFrame.right;
   const [upX, upY, upZ] = sample.locomotionFrame.up;
   const [forwardX, forwardY, forwardZ] = sample.locomotionFrame.forward;

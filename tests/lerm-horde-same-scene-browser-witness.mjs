@@ -54,6 +54,7 @@ const report = {
   requestedUrl: options.url,
   effectiveUrl: null,
   viewport: { width: options.width, height: options.height },
+  carrierFrame: options.carrierFrame,
   phase: 'launch',
   failurePhase: null,
   ok: false,
@@ -67,6 +68,8 @@ const report = {
   carrierCanvasNonblank: false,
   carrierCanvasMotionPixels: 0,
   railFrameVerified: false,
+  hillSupportTrackingVerified: false,
+  hillScreenTrackingVerified: false,
   carrierBodySha256: null,
   carrierRegistrationSha256: null,
   carrierRailRevision: null,
@@ -243,13 +246,13 @@ async function runWitness() {
 
   report.phase = 'mid-traversal-carrier';
   await browser.evaluate(
-    `document.querySelector('.timeline__step[data-frame-index="8"]')?.click()`,
+    `document.querySelector('.timeline__step[data-frame-index="${options.carrierFrame}"]')?.click()`,
   );
   await delay(300);
   const carrierEvidence = await browser.evaluate(`(() => {
     const canvas = document.querySelector('.stage__carrier');
     const viewport = document.querySelector('[data-smoke-viewport]');
-    const panel = viewport?.querySelector('[data-panel="8"]');
+    const panel = viewport?.querySelector('[data-panel="${options.carrierFrame}"]');
     const glyph = panel?.querySelector('[data-visible-lerm-body="true"]');
     return {
       canvasPresent: canvas instanceof HTMLCanvasElement,
@@ -269,7 +272,7 @@ async function runWitness() {
     ).toFixed(2),
   );
   report.exactCarrierVisible =
-    carrierEvidence.frameIndex === '8' &&
+    carrierEvidence.frameIndex === String(options.carrierFrame) &&
     carrierEvidence.carrierIdentity === '719024' &&
     report.carrierCanvasNonblank &&
     report.carrierCanvasMotionPixels >= 8;
@@ -326,12 +329,67 @@ async function runWitness() {
     completed.receipt.samples.every(
       (sample) =>
         sample.rootFrameSource ===
-          'ced6db3d.sampleCreatureScaleLocomotionRail' &&
+          '0482274.acceptedHillRootHeight+ced6db3d.railFrame' &&
         sample.rootTransformApplications === 1 &&
         sample.rootFrameOrigin?.length === 3 &&
         sample.rootFrameLateral?.length === 3 &&
         sample.rootFrameNormal?.length === 3 &&
         sample.rootFrameTangent?.length === 3,
+    );
+  report.hillSupportTrackingVerified =
+    completed.receipt?.composition?.hillSupportHeightPath ===
+      '0482274.accepted-root-world-y' &&
+    completed.receipt?.composition?.hillSupportHeightApplicationsPerSample ===
+      1 &&
+    completed.receipt?.samples?.length === 15 &&
+    completed.receipt.samples.some(
+      (sample) => Math.abs(sample.supportHeightDelta) > 1e-9,
+    ) &&
+    completed.receipt.samples.every(
+      (sample) =>
+        sample.hillSupportHeightApplications === 1 &&
+        sample.railRootPosition?.length === 3 &&
+        sample.hillSupportRootPosition?.length === 3 &&
+        sample.rootFrameOrigin?.length === 3 &&
+        nearlyEqual(
+          sample.rootFrameOrigin[1],
+          sample.hillSupportRootPosition[1],
+        ) &&
+        nearlyEqual(
+          sample.rootFrameOrigin[0],
+          sample.railRootPosition[0],
+        ) &&
+        nearlyEqual(
+          sample.rootFrameOrigin[2],
+          sample.railRootPosition[2],
+        ) &&
+        nearlyEqual(
+          sample.supportHeightDelta,
+          sample.hillSupportRootPosition[1] - sample.railRootPosition[1],
+        ),
+    );
+  report.hillScreenTrackingVerified =
+    completed.receipt?.composition?.hillScreenProjectionPath ===
+      '0482274.accepted-support-marker' &&
+    completed.receipt?.composition
+      ?.hillScreenProjectionApplicationsPerSample === 1 &&
+    completed.receipt?.samples?.length === 15 &&
+    completed.receipt.samples.every(
+      (sample) =>
+        sample.hillScreenProjectionApplications === 1 &&
+        sample.hillSupportScreenAnchor?.length === 2 &&
+        sample.projectedRootScreenAnchor?.length === 2 &&
+        sample.screenAnchorErrorPx <= 0.5 &&
+        nearlyEqual(
+          sample.screenAnchorErrorPx,
+          Math.hypot(
+            sample.hillSupportScreenAnchor[0] -
+              sample.projectedRootScreenAnchor[0],
+            sample.hillSupportScreenAnchor[1] -
+              sample.projectedRootScreenAnchor[1],
+          ),
+          1e-6,
+        ),
     );
   report.carrierReceiptComplete =
     completed.receipt?.status?.ok === true &&
@@ -352,6 +410,14 @@ async function runWitness() {
   assert.ok(
     report.railFrameVerified,
     'completion receipt did not preserve all exact rail-derived root frames',
+  );
+  assert.ok(
+    report.hillSupportTrackingVerified,
+    'completion receipt did not apply the accepted Hill support height exactly once',
+  );
+  assert.ok(
+    report.hillScreenTrackingVerified,
+    'completion receipt did not align the rendered root with the accepted Hill support marker',
   );
 
   report.phase = 'departure';
@@ -391,12 +457,12 @@ async function runWitness() {
   );
 
   await browser.evaluate(
-    `document.querySelector('.timeline__step[data-frame-index="8"]')?.click()`,
+    `document.querySelector('.timeline__step[data-frame-index="${options.carrierFrame}"]')?.click()`,
   );
   await delay(200);
   const moving = await browser.evaluate(`(() => {
     const viewport = document.querySelector('[data-smoke-viewport]');
-    const panel = viewport?.querySelector('[data-panel="8"]');
+    const panel = viewport?.querySelector('[data-panel="${options.carrierFrame}"]');
     return {
       frameIndex: viewport?.dataset.frameIndex,
       frameKind: viewport?.dataset.frameKind,
@@ -407,9 +473,9 @@ async function runWitness() {
     };
   })()`);
   report.motionBodyVisible =
-    moving.frameIndex === '8' &&
+    moving.frameIndex === String(options.carrierFrame) &&
     moving.frameKind === 'actor-prefix' &&
-    moving.prefixSampleCount === '8' &&
+    moving.prefixSampleCount === String(options.carrierFrame) &&
     moving.bodyVisible === true &&
     report.exactCarrierVisible &&
     report.hiddenGlyphAbsent;
@@ -596,10 +662,15 @@ function parseArgs(args) {
   const match = /^(\d+)x(\d+)$/.exec(viewport);
   if (!match) throw new Error(`invalid --viewport ${viewport}`);
   const label = values.get('label') ?? 'desktop';
+  const carrierFrame = Number(values.get('carrier-frame') ?? 8);
+  if (!Number.isInteger(carrierFrame) || carrierFrame < 1 || carrierFrame > 15) {
+    throw new Error(`invalid --carrier-frame ${values.get('carrier-frame')}`);
+  }
   return {
     url: values.get('url') ?? 'http://127.0.0.1:4198/smoke.html',
     width: Number(match[1]),
     height: Number(match[2]),
+    carrierFrame,
     report: resolve(
       values.get('report') ??
         `${tmpdir()}/lerms-same-scene-smoke-${label}.json`,
@@ -718,6 +789,10 @@ async function waitFor(predicate, timeoutMs, label) {
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+function nearlyEqual(left, right, tolerance = 1e-9) {
+  return Math.abs(left - right) <= tolerance;
 }
 
 function inspectPng(png) {
