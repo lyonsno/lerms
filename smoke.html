@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en" data-smoke-status="loading">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>LERMS - Same-Scene Replay</title>
+  </head>
+  <body>
+    <main class="smoke-shell" aria-live="polite">
+      <header class="smoke-header">
+        <div>
+          <p class="eyebrow">LERMS / HILL OF HILLS</p>
+          <h1>Same-scene traversal</h1>
+        </div>
+        <div class="frame-readout">
+          <p class="frame-readout__kind" data-frame-kind>Loading replay</p>
+          <p class="frame-readout__time" data-frame-time>t 0 ms</p>
+        </div>
+        <div class="source-state">
+          <span class="source-state__light" aria-hidden="true"></span>
+          <span data-smoke-status-label>Verifying source</span>
+        </div>
+      </header>
+
+      <section class="stage" aria-label="Reviewed Lerm and Hill replay">
+        <svg
+          class="stage__viewport"
+          data-smoke-viewport
+          viewBox="0 0 360 360"
+          role="img"
+          aria-label="Source-bound Lerm traversal on the Hill of Hills"
+        ></svg>
+        <div class="stage__shade" aria-hidden="true"></div>
+        <div class="claim-readout">
+          <span>REVIEWED REPLAY</span>
+          <span>ROOT-ONLY</span>
+          <span>CONTACT 0</span>
+        </div>
+      </section>
+
+      <section class="transport" aria-label="Playback controls">
+        <div class="transport__buttons">
+          <button
+            class="icon-button"
+            type="button"
+            data-play-toggle
+            aria-label="Pause replay"
+            title="Pause replay"
+          >
+            <span data-play-icon aria-hidden="true">&#10074;&#10074;</span>
+          </button>
+          <button
+            class="icon-button"
+            type="button"
+            data-restart
+            aria-label="Restart replay"
+            title="Restart replay"
+          >
+            <span aria-hidden="true">&#8634;</span>
+          </button>
+        </div>
+
+        <div class="timeline" data-timeline aria-label="Replay frames"></div>
+
+        <div class="speed-control" role="group" aria-label="Playback speed">
+          <button type="button" data-speed="0.75">0.75</button>
+          <button type="button" data-speed="1" aria-pressed="true">1</button>
+          <button type="button" data-speed="1.5">1.5</button>
+        </div>
+      </section>
+
+      <footer class="smoke-footer">
+        <div>
+          <span class="footer-label">PREFIX</span>
+          <strong data-prefix>0 / 15</strong>
+        </div>
+        <div>
+          <span class="footer-label">EXPOSURE</span>
+          <strong data-exposure>0</strong>
+        </div>
+        <div class="source-identity">
+          <span class="footer-label">PRESENTER</span>
+          <strong>0482274</strong>
+        </div>
+        <div class="source-identity">
+          <span class="footer-label">VERIFIER</span>
+          <strong>f916a93</strong>
+        </div>
+      </footer>
+
+      <section class="smoke-failure" data-smoke-failure hidden>
+        <p>Smoke source rejected</p>
+        <pre data-smoke-error></pre>
+      </section>
+    </main>
+    <script type="module" src="/src/lerm-horde-same-scene-smoke.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,198 @@
+{
+  "schema": "lerms.horde-same-scene-smoke-manifest.v0",
+  "sourceClass": "exact-accepted-replay",
+  "acceptedReceiptSha256": "c5e087987ebe5e092d7b83d56f3c514c97629413d3e81e5989955b0acf323663",
+  "acceptedSvgSha256": "f657e3365833e5e0465a208ea367ce6c40a429125528f82f25fa71dda39e626c",
+  "route": {
+    "requested": "lerms/hill-of-hills/horde-same-scene-prefix-replay",
+    "effective": "lerms/hill-of-hills/horde-same-scene-prefix-replay"
+  },
+  "identity": {
+    "presenterRevision": "0482274d0612b55969ad6c71f8f5c79c8721ce77",
+    "verifierRevision": "f916a9309ef4ab3f35d3a94d4e6084a3cdd2f474",
+    "verifierModuleBlob": "ae5aec5b6978a6f9d192d0a37aa7a254408201d7"
+  },
+  "status": {
+    "ok": true,
+    "phase": "complete",
+    "fallbackStatus": "none",
+    "staleStatus": "fresh",
+    "failurePhase": null
+  },
+  "output": {
+    "width": 2160,
+    "height": 1080,
+    "imageSha256": "f657e3365833e5e0465a208ea367ce6c40a429125528f82f25fa71dda39e626c"
+  },
+  "authority": {
+    "machineContractAccepted": true,
+    "visualOutcomeAccepted": false,
+    "pending": [
+      "horde_visual_inspection"
+    ]
+  },
+  "frames": [
+    {
+      "index": 0,
+      "kind": "no-history-control",
+      "timestampMs": 0,
+      "prefixSampleCount": 0,
+      "trafficExposureSeconds": 0,
+      "trafficChecksum": "c8f2e6e4",
+      "topologyPossibilityChecksum": "26349850"
+    },
+    {
+      "index": 1,
+      "kind": "actor-prefix",
+      "timestampMs": 0,
+      "prefixSampleCount": 1,
+      "trafficExposureSeconds": 0,
+      "trafficChecksum": "c8f2e6e4",
+      "topologyPossibilityChecksum": "inherited"
+    },
+    {
+      "index": 2,
+      "kind": "actor-prefix",
+      "timestampMs": 174,
+      "prefixSampleCount": 2,
+      "trafficExposureSeconds": 0.10600403850052961,
+      "trafficChecksum": "7a54d305",
+      "topologyPossibilityChecksum": "c23946d9"
+    },
+    {
+      "index": 3,
+      "kind": "actor-prefix",
+      "timestampMs": 348,
+      "prefixSampleCount": 3,
+      "trafficExposureSeconds": 0.21623952551285125,
+      "trafficChecksum": "972b96e5",
+      "topologyPossibilityChecksum": "2ae1997d"
+    },
+    {
+      "index": 4,
+      "kind": "actor-prefix",
+      "timestampMs": 522,
+      "prefixSampleCount": 4,
+      "trafficExposureSeconds": 0.3363641534215946,
+      "trafficChecksum": "ac802544",
+      "topologyPossibilityChecksum": "9b44058e"
+    },
+    {
+      "index": 5,
+      "kind": "actor-prefix",
+      "timestampMs": 696,
+      "prefixSampleCount": 5,
+      "trafficExposureSeconds": 0.4696326058098813,
+      "trafficChecksum": "26989305",
+      "topologyPossibilityChecksum": "661a908c"
+    },
+    {
+      "index": 6,
+      "kind": "actor-prefix",
+      "timestampMs": 870,
+      "prefixSampleCount": 6,
+      "trafficExposureSeconds": 0.6031944297513758,
+      "trafficChecksum": "6e22e840",
+      "topologyPossibilityChecksum": "861c3c9f"
+    },
+    {
+      "index": 7,
+      "kind": "actor-prefix",
+      "timestampMs": 1044,
+      "prefixSampleCount": 7,
+      "trafficExposureSeconds": 0.7041360671114432,
+      "trafficChecksum": "f092e418",
+      "topologyPossibilityChecksum": "8cbdac39"
+    },
+    {
+      "index": 8,
+      "kind": "actor-prefix",
+      "timestampMs": 1218,
+      "prefixSampleCount": 8,
+      "trafficExposureSeconds": 0.8009626361956818,
+      "trafficChecksum": "e6163999",
+      "topologyPossibilityChecksum": "c1be2448"
+    },
+    {
+      "index": 9,
+      "kind": "actor-prefix",
+      "timestampMs": 1392,
+      "prefixSampleCount": 9,
+      "trafficExposureSeconds": 0.9140739533811071,
+      "trafficChecksum": "4b9026cb",
+      "topologyPossibilityChecksum": "95858504"
+    },
+    {
+      "index": 10,
+      "kind": "actor-prefix",
+      "timestampMs": 1566,
+      "prefixSampleCount": 10,
+      "trafficExposureSeconds": 1.0553401169693868,
+      "trafficChecksum": "2f9fcf71",
+      "topologyPossibilityChecksum": "5fbe950b"
+    },
+    {
+      "index": 11,
+      "kind": "actor-prefix",
+      "timestampMs": 1740,
+      "prefixSampleCount": 11,
+      "trafficExposureSeconds": 1.2281340250602388,
+      "trafficChecksum": "13666c08",
+      "topologyPossibilityChecksum": "f504e47c"
+    },
+    {
+      "index": 12,
+      "kind": "actor-prefix",
+      "timestampMs": 1914,
+      "prefixSampleCount": 12,
+      "trafficExposureSeconds": 1.4021340250602388,
+      "trafficChecksum": "827f7e30",
+      "topologyPossibilityChecksum": "bf815fe4"
+    },
+    {
+      "index": 13,
+      "kind": "actor-prefix",
+      "timestampMs": 2088,
+      "prefixSampleCount": 13,
+      "trafficExposureSeconds": 1.5761340250602387,
+      "trafficChecksum": "7dfd13f4",
+      "topologyPossibilityChecksum": "c277f919"
+    },
+    {
+      "index": 14,
+      "kind": "actor-prefix",
+      "timestampMs": 2262,
+      "prefixSampleCount": 14,
+      "trafficExposureSeconds": 1.7501340250602386,
+      "trafficChecksum": "a4f89ceb",
+      "topologyPossibilityChecksum": "d86b55f9"
+    },
+    {
+      "index": 15,
+      "kind": "actor-prefix",
+      "timestampMs": 2436,
+      "prefixSampleCount": 15,
+      "trafficExposureSeconds": 1.9241340250602386,
+      "trafficChecksum": "41fb5be4",
+      "topologyPossibilityChecksum": "b2f9c028"
+    },
+    {
+      "index": 16,
+      "kind": "actor-departed",
+      "timestampMs": 2437,
+      "prefixSampleCount": 15,
+      "trafficExposureSeconds": 1.9241340250602386,
+      "trafficChecksum": "41fb5be4",
+      "topologyPossibilityChecksum": "b2f9c028"
+    },
+    {
+      "index": 17,
+      "kind": "after-departure",
+      "timestampMs": 2956,
+      "prefixSampleCount": 15,
+      "trafficExposureSeconds": 1.9241340250602386,
+      "trafficChecksum": "41fb5be4",
+      "topologyPossibilityChecksum": "c101832b"
+    }
+  ]
+}
