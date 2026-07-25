@@ -86,6 +86,14 @@ interface SameSceneConsumerEvidenceOptions {
   hordeVerifierModuleBlob: string;
 }
 
+export type HillHordeSameSceneConsumerEvidence =
+  LermHordeSameSceneConsumerEvidence & {
+    source: LermHordeSameSceneConsumerEvidence['source'] & {
+      hordeVerifierRevision: string;
+      hordeVerifierModuleBlob: string;
+    };
+  };
+
 export const HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_REVISION =
   'f916a9309ef4ab3f35d3a94d4e6084a3cdd2f474' as const;
 export const HILL_HORDE_REVIEWED_SAME_SCENE_VERIFIER_MODULE_BLOB =
@@ -100,7 +108,7 @@ export function createHillHordeSameSceneConsumerEvidence(
   replay: HillHordeSameScenePrefixReplay,
   motion: LermHordeLiveBodyMotionComposition,
   options: SameSceneConsumerEvidenceOptions,
-): LermHordeSameSceneConsumerEvidence {
+): HillHordeSameSceneConsumerEvidence {
   const movingFrames = replay.frames.filter(
     (frame) => frame.kind === 'actor-prefix',
   );
@@ -237,7 +245,7 @@ export function createHillHordeSameSceneConsumerEvidence(
   if (new Set(frameImageSha256s).size !== frames.length) {
     throw new Error('same-scene consumer evidence frames are not dynamic');
   }
-  const evidence: LermHordeSameSceneConsumerEvidence = {
+  const evidence: HillHordeSameSceneConsumerEvidence = {
     authority: 'hill_consumer_execution',
     source: {
       requestedRoute: HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_ROUTE,
@@ -245,6 +253,8 @@ export function createHillHordeSameSceneConsumerEvidence(
       hillRevision: replay.source.hillRevision,
       hordeComponentRevision:
         LERM_HORDE_REVIEWED_LIVE_BODY_MOTION_REVISION,
+      hordeVerifierRevision: options.hordeVerifierRevision,
+      hordeVerifierModuleBlob: options.hordeVerifierModuleBlob,
       actorId: replay.source.actorId,
       bodySourceRevision: replay.source.bodySourceRevision,
       bodySha256: motion.source.body.sha256,

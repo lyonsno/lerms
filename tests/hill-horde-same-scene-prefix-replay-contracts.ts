@@ -454,6 +454,14 @@ const directVerification = verifyLermHordeSameSceneConsumerEvidence(
   directEvidence,
 );
 assert.equal(directEvidence.authority, 'hill_consumer_execution');
+assert.equal(
+  directEvidence.source.hordeVerifierRevision,
+  REVIEWED_VERIFIER_REVISION,
+);
+assert.equal(
+  directEvidence.source.hordeVerifierModuleBlob,
+  REVIEWED_VERIFIER_MODULE_BLOB,
+);
 assert.equal(directEvidence.frames.length, motion.samples.length + 1);
 assert.equal(directEvidence.frames.at(-1)?.body.present, false);
 assert.equal(
