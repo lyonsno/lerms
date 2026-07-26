@@ -2,6 +2,7 @@ import {
   LIVE_HAND_HYBRID_ROUTE,
   LIVE_HAND_ROUTE,
   assertLiveRuntimeHealth,
+  assertLiveRuntimeSidecarStatus,
   normalizeLiveManoFrame,
   normalizeManoSurface,
   summarizeLiveHandLatency,
@@ -102,6 +103,51 @@ assertThrows(
     },
   }),
   'persistence failure',
+);
+
+const warmingSidecar = assertLiveRuntimeSidecarStatus({
+  runtimeOwner: 'hand-state-runtime',
+  running: true,
+  modelReady: false,
+  modelReadiness: 'warming',
+  modelReadyAtMs: null,
+  modelStartupMs: null,
+  stopReason: null,
+});
+assert(warmingSidecar.modelReadiness === 'warming' && !warmingSidecar.modelReady, 'preserves model warmup truth');
+const readySidecar = assertLiveRuntimeSidecarStatus({
+  runtimeOwner: 'hand-state-runtime',
+  running: true,
+  modelReady: true,
+  modelReadiness: 'ready',
+  modelReadyAtMs: 1250,
+  modelStartupMs: 250,
+  stopReason: null,
+});
+assert(readySidecar.modelReady && readySidecar.modelStartupMs === 250, 'preserves loaded model timing');
+assertThrows(
+  () => assertLiveRuntimeSidecarStatus({
+    runtimeOwner: 'hand-state-runtime',
+    running: true,
+    modelReady: false,
+    modelReadiness: 'ready',
+    modelReadyAtMs: null,
+    modelStartupMs: null,
+    stopReason: null,
+  }),
+  'ready sidecar',
+);
+assertThrows(
+  () => assertLiveRuntimeSidecarStatus({
+    runtimeOwner: 'hand-state-runtime',
+    running: true,
+    modelReady: true,
+    modelReadiness: 'ready',
+    modelReadyAtMs: null,
+    modelStartupMs: null,
+    stopReason: null,
+  }),
+  'readiness timing',
 );
 
 const workerBlob = new Blob(['jpeg'], { type: 'image/jpeg' });

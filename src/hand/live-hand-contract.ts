@@ -30,6 +30,18 @@ export interface RuntimeHealthTruth extends RuntimeRouteTruth {
   };
 }
 
+export type RuntimeSidecarModelReadiness = 'warming' | 'ready' | 'failed_before_ready' | 'stopped';
+
+export interface RuntimeSidecarStatusTruth {
+  runtimeOwner: typeof LIVE_HAND_RUNTIME_OWNER;
+  running: boolean;
+  modelReady: boolean;
+  modelReadiness: RuntimeSidecarModelReadiness;
+  modelReadyAtMs: number | null;
+  modelStartupMs: number | null;
+  stopReason: string | null;
+}
+
 export interface NormalizedManoFrame extends RuntimeRouteTruth {
   eventSequence: number;
   frameId: string;
@@ -197,6 +209,51 @@ export function assertLiveRuntimeHealth(value: unknown): RuntimeHealthTruth {
       lastWrittenSequence,
       failure: null,
     },
+  };
+}
+
+export function assertLiveRuntimeSidecarStatus(value: unknown): RuntimeSidecarStatusTruth {
+  const status = record(value, 'runtime sidecar status');
+  if (status.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER) {
+    throw new Error(`sidecar runtime owner must be ${LIVE_HAND_RUNTIME_OWNER}`);
+  }
+  if (typeof status.running !== 'boolean') throw new Error('sidecar running truth is missing');
+  if (typeof status.modelReady !== 'boolean') throw new Error('sidecar model readiness truth is missing');
+  const modelReadiness = text(status.modelReadiness, 'sidecar model readiness');
+  if (
+    modelReadiness !== 'warming'
+    && modelReadiness !== 'ready'
+    && modelReadiness !== 'failed_before_ready'
+    && modelReadiness !== 'stopped'
+  ) {
+    throw new Error(`unsupported sidecar model readiness: ${modelReadiness}`);
+  }
+  if (modelReadiness === 'ready' && (!status.running || !status.modelReady)) {
+    throw new Error('ready sidecar must be running with a loaded model');
+  }
+  if (modelReadiness === 'warming' && (!status.running || status.modelReady)) {
+    throw new Error('warming sidecar must be running without a loaded model');
+  }
+  if ((modelReadiness === 'failed_before_ready' || modelReadiness === 'stopped') && status.modelReady) {
+    throw new Error(`${modelReadiness} sidecar cannot claim a loaded model`);
+  }
+  const modelReadyAtMs = status.modelReadyAtMs === null
+    ? null
+    : finiteNonNegative(status.modelReadyAtMs, 'sidecar model ready timestamp');
+  const modelStartupMs = status.modelStartupMs === null
+    ? null
+    : finiteNonNegative(status.modelStartupMs, 'sidecar model startup duration');
+  if (status.modelReady && (modelReadyAtMs === null || modelStartupMs === null)) {
+    throw new Error('loaded sidecar model must expose readiness timing');
+  }
+  return {
+    runtimeOwner: LIVE_HAND_RUNTIME_OWNER,
+    running: status.running,
+    modelReady: status.modelReady,
+    modelReadiness,
+    modelReadyAtMs,
+    modelStartupMs,
+    stopReason: status.stopReason === null ? null : text(status.stopReason, 'sidecar stop reason'),
   };
 }
 

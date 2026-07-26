@@ -87,6 +87,21 @@ assert.match(
 );
 assert.match(
   liveHandSource,
+  /async function ensureSidecarModelReady[\s\S]*modelReady[\s\S]*modelReadiness/,
+  'consumer startup distinguishes a launched sidecar process from a loaded WiLoR model',
+);
+assert.match(
+  liveHandSource,
+  /async function start\(\)[\s\S]*ensureSidecarModelReady\(\)[\s\S]*getUserMedia/,
+  'WiLoR model readiness is established before live camera admission can emit no-anchor fallback',
+);
+assert.match(
+  liveHandSource,
+  /async function stop\(\)[\s\S]*runtimeFetch\('\/sidecar\/stop'[\s\S]*runtimeFetch\('\/chronology\/flush'[\s\S]*prewarmSidecarForNextRun/,
+  'Stop preserves evidence closure before prewarming the next run',
+);
+assert.match(
+  liveHandSource,
   /async function stop\(\)[\s\S]*recordStoppedLandmarkerInference\('hand_control_stopped'\)[\s\S]*disposeLandmarkerWorker/,
   'shutdown explicitly accounts for a MediaPipe inference terminated before worker output',
 );

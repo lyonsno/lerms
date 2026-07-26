@@ -10,6 +10,7 @@ import {
   LIVE_HAND_ROUTE,
   MANO_DISPLAY_ORIENTATION,
   assertLiveRuntimeHealth,
+  assertLiveRuntimeSidecarStatus,
   normalizeLiveManoFrame,
   normalizeManoSurface,
   summarizeLiveHandLatency,
@@ -17,6 +18,7 @@ import {
   type NormalizedManoFrame,
   type NormalizedManoSurface,
   type RuntimeHealthTruth,
+  type RuntimeSidecarStatusTruth,
 } from './live-hand-contract.js';
 import {
   LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
@@ -202,6 +204,8 @@ let frameSequence = 0;
 let lastAnchorCaptureAtMs: number | null = null;
 let lastLiveAt = 0;
 let runtimeRoute: RuntimeHealthTruth | null = null;
+let sidecarStatusTruth: RuntimeSidecarStatusTruth | null = null;
+let sidecarWarmup: Promise<RuntimeSidecarStatusTruth> | null = null;
 let targetPositions: Float32Array | null = null;
 let currentPositions: Float32Array | null = null;
 let topologySignature = '';
@@ -460,7 +464,8 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
   const fast = sourceMode === 'hybrid_mano'
     ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} stopped ${landmarkerFramesStopped} busy ${landmarkerFramesSuppressed} delivered ${delivery.completedCount} superseded ${delivery.supersededBeforePostCount} pending ${delivery.pendingCaptureId ? 1 : 0}`
     : '';
-  routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${fast}${fluid}`;
+  const sidecar = sidecarStatusTruth ? ` | WiLoR ${sidecarStatusTruth.modelReadiness}` : ' | WiLoR unverified';
+  routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${sidecar}${fast}${fluid}`;
 }
 
 async function runtimeFetch(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
@@ -468,6 +473,57 @@ async function runtimeFetch(path: string, init: RequestInit = {}): Promise<Recor
   const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : `${path} returned ${response.status}`);
   return payload;
+}
+
+async function waitForSidecarModelReady(): Promise<RuntimeSidecarStatusTruth> {
+  let truth = assertLiveRuntimeSidecarStatus(await runtimeFetch('/sidecar/start', { method: 'POST' }));
+  sidecarStatusTruth = truth;
+  setRouteTruth();
+  while (!truth.modelReady) {
+    if (!truth.running || truth.modelReadiness === 'failed_before_ready') {
+      throw new Error(`WiLoR sidecar ${truth.modelReadiness}${truth.stopReason ? `: ${truth.stopReason}` : ''}`);
+    }
+    if (truth.modelReadiness !== 'warming') {
+      throw new Error(`WiLoR sidecar cannot become ready from ${truth.modelReadiness}`);
+    }
+    if (!running) setStatus('warming WiLoR anchor model');
+    await new Promise(resolve => window.setTimeout(resolve, 100));
+    truth = assertLiveRuntimeSidecarStatus(await runtimeFetch('/sidecar/status'));
+    sidecarStatusTruth = truth;
+    setRouteTruth();
+  }
+  return truth;
+}
+
+async function ensureSidecarModelReady(): Promise<RuntimeSidecarStatusTruth> {
+  if (!sidecarWarmup) {
+    const warmup = waitForSidecarModelReady();
+    sidecarWarmup = warmup;
+    void warmup.catch(() => {
+      if (sidecarWarmup === warmup) sidecarWarmup = null;
+    });
+  }
+  const truth = await sidecarWarmup;
+  if (!truth.modelReady || truth.modelReadiness !== 'ready') {
+    throw new Error(`WiLoR sidecar returned without a loaded model: ${truth.modelReadiness}`);
+  }
+  return truth;
+}
+
+function prewarmSidecarForNextRun(): void {
+  if (fixtureMode || fluidAssayMode) return;
+  void ensureSidecarModelReady().then(truth => {
+    sidecarStatusTruth = truth;
+    setRouteTruth();
+    if (!running && status.dataset.state !== 'error') {
+      setStatus(`WiLoR anchor model loaded in ${truth.modelStartupMs?.toFixed(0) ?? 'unknown'}ms`);
+    }
+  }).catch(error => {
+    if (!running) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`WiLoR prewarm failed | ${message}`, 'error');
+    }
+  });
 }
 
 function updateSurface(surface: NormalizedManoSurface): void {
@@ -1355,8 +1411,12 @@ async function start(): Promise<void> {
   if (routeConfigError) throw new Error(`invalid fluid route: ${routeConfigError}`);
   if (fixtureMode) throw new Error('recorded fixture mode is visual-only');
   if (fluidAssayMode) throw new Error('synthetic fluid envelope assay cannot start live hand capture');
-  setStatus('initializing current Kaminos fluid');
-  await ensureFluidSolver();
+  setStatus('initializing fluid and WiLoR anchor model');
+  const [, modelStatus] = await Promise.all([
+    ensureFluidSolver(),
+    ensureSidecarModelReady(),
+  ]);
+  sidecarStatusTruth = modelStatus;
   captureWorkerError = null;
   landmarkerWorkerError = null;
   latestLandmarkerFailure = null;
@@ -1376,14 +1436,14 @@ async function start(): Promise<void> {
     await ensureLandmarkerWorker();
   }
   setRouteTruth();
-  setStatus('opening camera');
+  setStatus('WiLoR model loaded; opening camera');
   stream = await navigator.mediaDevices.getUserMedia({
     video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
     audio: false,
   });
   video.srcObject = stream;
   await video.play();
-  await runtimeFetch('/sidecar/start', { method: 'POST' });
+  setStatus('acquiring first WiLoR MANO anchor');
   resetBenchmark();
   animationFrameIntervalsMs.length = 0;
   fluidSubmitIntervalsMs.length = 0;
@@ -1470,6 +1530,8 @@ async function stop(): Promise<void> {
     || (unflushedLatencySamples.length > 0 ? lastBenchmarkError || 'telemetry failure: viewer latency samples remain unflushed' : null);
   try {
     await runtimeFetch('/sidecar/stop', { method: 'POST' });
+    sidecarWarmup = null;
+    sidecarStatusTruth = null;
     await runtimeFetch('/chronology/flush', { method: 'POST' });
     runtimeRoute = assertLiveRuntimeHealth(await runtimeFetch('/health'));
     if (runtimeRoute.emittedStateChronology.queueDepth !== 0) {
@@ -1488,6 +1550,7 @@ async function stop(): Promise<void> {
   toggle.textContent = 'Start Hand';
   toggle.dataset.running = 'false';
   routeModeControl.disabled = false;
+  prewarmSidecarForNextRun();
 }
 
 toggle.addEventListener('click', async () => {
@@ -1647,6 +1710,8 @@ window.addEventListener('beforeunload', () => {
   capturePostAbortController?.abort();
   stateAbortController?.abort();
   stream?.getTracks().forEach(track => track.stop());
+  sidecarWarmup = null;
+  sidecarStatusTruth = null;
   navigator.sendBeacon?.(`${runtimeUrl}/sidecar/stop`, new Blob([], { type: 'application/octet-stream' }));
   disposeCaptureWorker(new Error('viewer closed'));
   disposeLandmarkerWorker();
@@ -1997,5 +2062,7 @@ if (routeConfigError) {
       toggle.disabled = true;
     })
     .catch(error => setStatus(error instanceof Error ? error.message : String(error), 'error'));
+} else {
+  prewarmSidecarForNextRun();
 }
 requestAnimationFrame(animate);
