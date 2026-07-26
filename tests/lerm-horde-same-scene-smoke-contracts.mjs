@@ -89,6 +89,7 @@ for (const requiredEvidence of [
   'carrierCanvasMotionPixels',
   'terrainChangedAcrossPrefixes',
   'fullSourceEnvelopeVerified',
+  'sourceEnvelopeSubstitutionRejected',
   'departureBodyAbsent',
   'departureHistoryRetained',
   'carrierReceiptComplete',

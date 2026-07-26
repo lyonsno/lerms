@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { isDeepStrictEqual } from 'node:util';
 import {
   mkdtempSync,
   rmSync,
@@ -30,6 +31,8 @@ const EXPECTED_RAIL_ID =
   'lerm-horde-719024-control-crossing-v0-left-longitudinal-short-rail';
 const EXPECTED_EVALUATOR_ROUTE =
   'kaminos/fitted-proxy-rig/arbitrary-phase-plus-semantic-probes-v0';
+const PRODUCER_RECEIPT_URL =
+  '/vendor/lerms-c0ba891/artifacts/lerm-horde-producer-history/receipt.json';
 const CHROME =
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
@@ -57,6 +60,9 @@ const report = {
   railFrameVerified: false,
   hillSupportTrackingVerified: false,
   fullSourceEnvelopeVerified: false,
+  sourceEnvelopeSubstitutionRejected: false,
+  sourceEnvelopeFrameCount: null,
+  sourceEnvelopeReceiptUrl: null,
   terrainChangedAcrossPrefixes: false,
   departureBodyAbsent: false,
   departureHistoryRetained: false,
@@ -301,6 +307,25 @@ async function runWitness() {
       operatorPlayCount: document.documentElement.dataset.operatorPlayCount,
       carrierStatus: document.documentElement.dataset.carrierStatus,
     }))()`);
+    const expectedSource = await browser.evaluate(`(async () => {
+      const requestedReceiptUrl = ${JSON.stringify(PRODUCER_RECEIPT_URL)};
+      const response = await fetch(requestedReceiptUrl, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(
+          \`canonical producer receipt fetch failed: \${response.status}\`,
+        );
+      }
+      const producerReceipt = await response.json();
+      const module = await import('/src/lerm-horde-full-hill-renderer.ts');
+      const source = module.createFullHillOneRendererSource(producerReceipt);
+      return {
+        requestedReceiptUrl,
+        effectiveReceiptUrl: new URL(response.url).pathname,
+        frames: source.buffers.map((buffer) =>
+          module.createFullHillFrameSourceEnvelope(buffer),
+        ),
+      };
+    })()`);
     report.carrierReceipt = completed.receipt;
     report.carrierStatus = completed.carrierStatus;
     report.carrierReceiptComplete =
@@ -326,34 +351,25 @@ async function runWitness() {
           /^[0-9a-f]{8,64}$/.test(frame.topologyChecksum) &&
           /^[0-9a-f]{8,64}$/.test(frame.trafficChecksum),
       );
+    report.sourceEnvelopeFrameCount = expectedSource.frames.length;
+    report.sourceEnvelopeReceiptUrl = expectedSource.effectiveReceiptUrl;
+    const substitutedEnvelope = structuredClone(expectedSource.frames[10]);
+    substitutedEnvelope.source.timestampMs += 1;
+    report.sourceEnvelopeSubstitutionRejected = !isDeepStrictEqual(
+      substitutedEnvelope,
+      expectedSource.frames[10],
+    );
     report.fullSourceEnvelopeVerified =
+      expectedSource.requestedReceiptUrl === PRODUCER_RECEIPT_URL &&
+      expectedSource.effectiveReceiptUrl === PRODUCER_RECEIPT_URL &&
+      expectedSource.frames.length === 18 &&
       completed.receipt?.terrain?.frames?.length === 18 &&
       completed.receipt.terrain.frames.every(
-        (frame) =>
-          frame.source?.authority === 'live_simulation' &&
-          frame.source?.route ===
-            'hill-of-hills/horde-live-traversal-admission' &&
-          frame.source?.frameId === frame.frameId &&
-          Number.isFinite(frame.source?.timestampMs) &&
-          frame.source?.backend === 'deterministic-cpu-heightfield' &&
-          frame.source?.configId === 'horde-live-traversal-admission-v0' &&
-          frame.source?.fallbackStatus === 'none' &&
-          /^[0-9a-f]{8,64}$/.test(frame.surfaceDetailChecksum) &&
-          /^[0-9a-f]{8,64}$/.test(frame.materialEdgeChecksum) &&
-          frame.producerTraffic?.fieldChecksum === frame.trafficChecksum &&
-          Number.isInteger(frame.producerTraffic?.admittedEpisodeCount) &&
-          frame.producerTraffic.admittedEpisodeCount >= 0 &&
-          Number.isFinite(frame.producerTraffic?.exposureSeconds) &&
-          frame.producerTraffic.exposureSeconds >= 0 &&
-          (frame.topologyPossibilityChecksum === 'inherited' ||
-            /^[0-9a-f]{8,64}$/.test(frame.topologyPossibilityChecksum)) &&
-          typeof frame.supportFrame?.supportClass === 'string' &&
-          frame.supportFrame.supportClass.length > 0 &&
-          typeof frame.supportFrame?.mappingMode === 'string' &&
-          frame.supportFrame.mappingMode.length > 0 &&
-          Number.isInteger(frame.supportFrame?.supportEpoch) &&
-          Number.isInteger(frame.supportFrame?.topologyEpoch) &&
-          /^[0-9a-f]{8,64}$/.test(frame.supportFrame?.checksum),
+        (frame, index) =>
+          isDeepStrictEqual(
+            receiptFrameSourceEnvelope(frame),
+            expectedSource.frames[index],
+          ),
       );
     report.departureHistoryRetained =
       completed.receipt?.departure?.bodyVisible === false &&
@@ -366,6 +382,10 @@ async function runWitness() {
     assert.ok(
       report.hillSupportTrackingVerified,
       'terrain frame identity or checksums were lost',
+    );
+    assert.ok(
+      report.sourceEnvelopeSubstitutionRejected,
+      'source-envelope comparison accepted a substituted source timestamp',
     );
     assert.ok(
       report.fullSourceEnvelopeVerified,
@@ -570,6 +590,22 @@ async function captureScreenshot(browser, outputPath) {
     'primary output is not PNG',
   );
   writeFileSync(outputPath, png);
+}
+
+function receiptFrameSourceEnvelope(frame) {
+  return {
+    frameId: frame.frameId,
+    source: frame.source,
+    sampleChecksum: frame.sampleChecksum,
+    topologyChecksum: frame.topologyChecksum,
+    proxyMaterialChecksum: frame.proxyMaterialChecksum,
+    surfaceDetailChecksum: frame.surfaceDetailChecksum,
+    materialEdgeChecksum: frame.materialEdgeChecksum,
+    trafficChecksum: frame.trafficChecksum,
+    producerTraffic: frame.producerTraffic,
+    topologyPossibilityChecksum: frame.topologyPossibilityChecksum,
+    supportFrame: frame.supportFrame,
+  };
 }
 
 function parseArgs(args) {

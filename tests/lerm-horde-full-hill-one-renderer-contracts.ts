@@ -199,7 +199,9 @@ const receipt: FullHillOneRendererReceipt = {
   },
 };
 
-assert.doesNotThrow(() => validateFullHillOneRendererReceipt(receipt));
+assert.doesNotThrow(() =>
+  validateFullHillOneRendererReceipt(receipt, source.buffers),
+);
 const rejectionCases: Array<[string, (candidate: any) => void]> = [
   ['fallback renderer', (candidate) => (candidate.renderer.effective = 'svg-overlay')],
   ['second canvas', (candidate) => (candidate.renderer.canvasCount = 2)],
@@ -242,6 +244,53 @@ const rejectionCases: Array<[string, (candidate: any) => void]> = [
       delete candidate.terrain.frames[10].materialEdgeChecksum,
   ],
   [
+    'substituted source timestamp',
+    (candidate) => (candidate.terrain.frames[10].source.timestampMs += 1),
+  ],
+  [
+    'substituted producer traffic count',
+    (candidate) =>
+      (candidate.terrain.frames[10].producerTraffic.admittedEpisodeCount += 1),
+  ],
+  [
+    'substituted producer traffic exposure',
+    (candidate) =>
+      (candidate.terrain.frames[10].producerTraffic.exposureSeconds += 0.25),
+  ],
+  [
+    'substituted topology possibility',
+    (candidate) =>
+      (candidate.terrain.frames[10].topologyPossibilityChecksum =
+        'deadbeef'),
+  ],
+  [
+    'substituted support class',
+    (candidate) =>
+      (candidate.terrain.frames[10].supportFrame.supportClass =
+        'adjacent_support'),
+  ],
+  [
+    'substituted support mapping',
+    (candidate) =>
+      (candidate.terrain.frames[10].supportFrame.mappingMode =
+        'adjacent_mapping'),
+  ],
+  [
+    'substituted support epoch',
+    (candidate) =>
+      (candidate.terrain.frames[10].supportFrame.supportEpoch += 1),
+  ],
+  [
+    'substituted topology epoch',
+    (candidate) =>
+      (candidate.terrain.frames[10].supportFrame.topologyEpoch += 1),
+  ],
+  [
+    'substituted support checksum',
+    (candidate) =>
+      (candidate.terrain.frames[10].supportFrame.checksum = 'deadbeef'),
+  ],
+  [
     'stale checksum',
     (candidate) => (candidate.terrain.frames[10].sampleChecksum = 'stale'),
   ],
@@ -252,7 +301,7 @@ for (const [label, mutate] of rejectionCases) {
   const candidate = structuredClone(receipt);
   mutate(candidate);
   assert.throws(
-    () => validateFullHillOneRendererReceipt(candidate),
+    () => validateFullHillOneRendererReceipt(candidate, source.buffers),
     { name: 'Error' },
     `${label} must not close the one-renderer full-Hill contract`,
   );

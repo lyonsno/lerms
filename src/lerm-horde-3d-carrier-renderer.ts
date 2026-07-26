@@ -23,10 +23,7 @@ import type { LermHordeProducerHistoryCompositionReceipt } from './lerm-horde-pr
 import {
   FULL_HILL_ONE_RENDERER_SCHEMA,
   FULL_HILL_RENDERER_ID,
-  FULL_HILL_SOURCE_AUTHORITY,
-  FULL_HILL_SOURCE_BACKEND,
-  FULL_HILL_SOURCE_CONFIG,
-  FULL_HILL_SOURCE_ROUTE,
+  createFullHillFrameSourceEnvelope,
   createFullHillOneRendererSource,
   createHillTerrainGeometry,
   updateHillTerrainGeometry,
@@ -36,7 +33,6 @@ import {
 } from './lerm-horde-full-hill-renderer.js';
 import {
   HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA,
-  type HillOfHillsTerrainBuffer,
 } from './terrain/hill-of-hills.js';
 
 const SOURCE_ROOT = '/vendor/kaminos-6217fff8/artifacts';
@@ -446,45 +442,12 @@ export async function createExactCarrierRenderer(
         frames: fullHillSource.replay.frames.map((frame, index) => {
           const buffer = fullHillSource.buffers[index];
           if (!buffer) throw new Error(`full-Hill buffer ${index} is missing`);
-          requireFullHillSourceEnvelope(buffer);
           return {
             index,
             kind: frame.kind,
             timestampMs: frame.timestampMs,
             prefixSampleCount: frame.prefixSampleCount,
-            frameId: buffer.source.frameId,
-            source: {
-              authority: buffer.source.authority,
-              route: buffer.source.route,
-              frameId: buffer.source.frameId,
-              timestampMs: buffer.source.timestampMs,
-              backend: buffer.source.backend,
-              configId: buffer.source.configId,
-              fallbackStatus: buffer.witness.fallbackStatus,
-            },
-            sampleChecksum: buffer.sampleChecksum,
-            topologyChecksum: buffer.topologyChecksum,
-            proxyMaterialChecksum: buffer.proxyMaterialChecksum,
-            surfaceDetailChecksum: buffer.surfaceDetailChecksum,
-            materialEdgeChecksum: buffer.materialEdgeChecksum,
-            trafficChecksum: buffer.witness.producerTrafficFieldChecksum,
-            producerTraffic: {
-              fieldChecksum: buffer.witness.producerTrafficFieldChecksum,
-              admittedEpisodeCount:
-                buffer.witness.producerTrafficAdmittedEpisodeCount,
-              exposureSeconds:
-                buffer.witness.producerTrafficExposureSeconds,
-            },
-            topologyPossibilityChecksum:
-              buffer.witness.topologyPossibilityChecksum,
-            supportFrame: {
-              supportClass: buffer.witness.supportFrame.supportClass,
-              mappingMode: buffer.witness.supportFrame.mappingMode,
-              supportEpoch: buffer.witness.supportFrame.supportEpoch,
-              topologyEpoch: buffer.witness.supportFrame.topologyEpoch,
-              checksum:
-                buffer.witness.supportFrame.supportFrameChecksum,
-            },
+            ...createFullHillFrameSourceEnvelope(buffer),
           };
         }),
       },
@@ -506,7 +469,10 @@ export async function createExactCarrierRenderer(
           fullHillSource.buffers[17]?.witness.producerTrafficFieldChecksum ?? '',
       },
     };
-    return validateFullHillOneRendererReceipt(receipt);
+    return validateFullHillOneRendererReceipt(
+      receipt,
+      fullHillSource.buffers,
+    );
   };
 
   stage.dataset.carrierAssetSha256 = bodySha256;
@@ -766,34 +732,6 @@ function vec3Equal(
         Math.abs(value - right[index]) <= tolerance,
     )
   );
-}
-
-type VerifiedFullHillBuffer = HillOfHillsTerrainBuffer & {
-  source: HillOfHillsTerrainBuffer['source'] & {
-    authority: typeof FULL_HILL_SOURCE_AUTHORITY;
-    route: typeof FULL_HILL_SOURCE_ROUTE;
-    backend: typeof FULL_HILL_SOURCE_BACKEND;
-    configId: typeof FULL_HILL_SOURCE_CONFIG;
-  };
-  witness: HillOfHillsTerrainBuffer['witness'] & {
-    fallbackStatus: 'none';
-  };
-};
-
-function requireFullHillSourceEnvelope(
-  buffer: HillOfHillsTerrainBuffer,
-): asserts buffer is VerifiedFullHillBuffer {
-  if (
-    buffer.source.authority !== FULL_HILL_SOURCE_AUTHORITY ||
-    buffer.source.route !== FULL_HILL_SOURCE_ROUTE ||
-    buffer.source.backend !== FULL_HILL_SOURCE_BACKEND ||
-    buffer.source.configId !== FULL_HILL_SOURCE_CONFIG ||
-    buffer.witness.fallbackStatus !== 'none'
-  ) {
-    throw new Error(
-      `full-Hill source envelope is substituted for frame ${buffer.source.frameId}`,
-    );
-  }
 }
 
 async function sha256(bytes: ArrayBuffer): Promise<string> {

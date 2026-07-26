@@ -54,6 +54,38 @@ export interface FullHillOneRendererSource {
   buffers: readonly HillOfHillsTerrainBuffer[];
 }
 
+export interface FullHillFrameSourceEnvelope {
+  frameId: string;
+  source: {
+    authority: typeof FULL_HILL_SOURCE_AUTHORITY;
+    route: typeof FULL_HILL_SOURCE_ROUTE;
+    frameId: string;
+    timestampMs: number;
+    backend: typeof FULL_HILL_SOURCE_BACKEND;
+    configId: typeof FULL_HILL_SOURCE_CONFIG;
+    fallbackStatus: 'none';
+  };
+  sampleChecksum: string;
+  topologyChecksum: string;
+  proxyMaterialChecksum: string;
+  surfaceDetailChecksum: string;
+  materialEdgeChecksum: string;
+  trafficChecksum: string;
+  producerTraffic: {
+    fieldChecksum: string;
+    admittedEpisodeCount: number;
+    exposureSeconds: number;
+  };
+  topologyPossibilityChecksum: string;
+  supportFrame: {
+    supportClass: string;
+    mappingMode: string;
+    supportEpoch: number;
+    topologyEpoch: number;
+    checksum: string;
+  };
+}
+
 export interface FullHillOneRendererReceipt {
   schema: typeof FULL_HILL_ONE_RENDERER_SCHEMA;
   status: {
@@ -81,7 +113,7 @@ export interface FullHillOneRendererReceipt {
     triangleCount: number;
     indexOrder: 'z-major-two-triangles-per-cell';
     frameCount: number;
-    frames: Array<{
+    frames: Array<FullHillFrameSourceEnvelope & {
       index: number;
       kind:
         | 'no-history-control'
@@ -90,35 +122,6 @@ export interface FullHillOneRendererReceipt {
         | 'after-departure';
       timestampMs: number;
       prefixSampleCount: number;
-      frameId: string;
-      source: {
-        authority: typeof FULL_HILL_SOURCE_AUTHORITY;
-        route: typeof FULL_HILL_SOURCE_ROUTE;
-        frameId: string;
-        timestampMs: number;
-        backend: typeof FULL_HILL_SOURCE_BACKEND;
-        configId: typeof FULL_HILL_SOURCE_CONFIG;
-        fallbackStatus: 'none';
-      };
-      sampleChecksum: string;
-      topologyChecksum: string;
-      proxyMaterialChecksum: string;
-      surfaceDetailChecksum: string;
-      materialEdgeChecksum: string;
-      trafficChecksum: string;
-      producerTraffic: {
-        fieldChecksum: string;
-        admittedEpisodeCount: number;
-        exposureSeconds: number;
-      };
-      topologyPossibilityChecksum: string;
-      supportFrame: {
-        supportClass: string;
-        mappingMode: string;
-        supportEpoch: number;
-        topologyEpoch: number;
-        checksum: string;
-      };
     }>;
   };
   carrier: {
@@ -163,6 +166,53 @@ export function createFullHillOneRendererSource(
     throw new Error('full-Hill replay is missing canonical frames');
   }
   return { input, replay, buffers };
+}
+
+export function createFullHillFrameSourceEnvelope(
+  buffer: HillOfHillsTerrainBuffer,
+): FullHillFrameSourceEnvelope {
+  validateTerrainBuffer(buffer);
+  requireReceipt(
+    buffer.source.authority === FULL_HILL_SOURCE_AUTHORITY &&
+      buffer.source.route === FULL_HILL_SOURCE_ROUTE &&
+      buffer.source.backend === FULL_HILL_SOURCE_BACKEND &&
+      buffer.source.configId === FULL_HILL_SOURCE_CONFIG &&
+      buffer.witness.fallbackStatus === 'none',
+    `full-Hill source envelope is substituted for frame ${buffer.source.frameId}`,
+  );
+  return {
+    frameId: buffer.source.frameId,
+    source: {
+      authority: FULL_HILL_SOURCE_AUTHORITY,
+      route: FULL_HILL_SOURCE_ROUTE,
+      frameId: buffer.source.frameId,
+      timestampMs: buffer.source.timestampMs,
+      backend: FULL_HILL_SOURCE_BACKEND,
+      configId: FULL_HILL_SOURCE_CONFIG,
+      fallbackStatus: 'none',
+    },
+    sampleChecksum: buffer.sampleChecksum,
+    topologyChecksum: buffer.topologyChecksum,
+    proxyMaterialChecksum: buffer.proxyMaterialChecksum,
+    surfaceDetailChecksum: buffer.surfaceDetailChecksum,
+    materialEdgeChecksum: buffer.materialEdgeChecksum,
+    trafficChecksum: buffer.witness.producerTrafficFieldChecksum,
+    producerTraffic: {
+      fieldChecksum: buffer.witness.producerTrafficFieldChecksum,
+      admittedEpisodeCount:
+        buffer.witness.producerTrafficAdmittedEpisodeCount,
+      exposureSeconds: buffer.witness.producerTrafficExposureSeconds,
+    },
+    topologyPossibilityChecksum:
+      buffer.witness.topologyPossibilityChecksum,
+    supportFrame: {
+      supportClass: buffer.witness.supportFrame.supportClass,
+      mappingMode: buffer.witness.supportFrame.mappingMode,
+      supportEpoch: buffer.witness.supportFrame.supportEpoch,
+      topologyEpoch: buffer.witness.supportFrame.topologyEpoch,
+      checksum: buffer.witness.supportFrame.supportFrameChecksum,
+    },
+  };
 }
 
 export function createHillTerrainGridIndices(
@@ -249,6 +299,7 @@ export function updateHillTerrainGeometry(
 
 export function validateFullHillOneRendererReceipt(
   receipt: FullHillOneRendererReceipt,
+  sourceBuffers: readonly HillOfHillsTerrainBuffer[],
 ): FullHillOneRendererReceipt {
   requireReceipt(
     receipt?.schema === FULL_HILL_ONE_RENDERER_SCHEMA &&
@@ -279,10 +330,18 @@ export function validateFullHillOneRendererReceipt(
       receipt.terrain.triangleCount === 5_546 &&
       receipt.terrain.indexOrder === 'z-major-two-triangles-per-cell' &&
       receipt.terrain.frameCount === FULL_HILL_REPLAY_FRAME_COUNT &&
-      receipt.terrain.frames.length === FULL_HILL_REPLAY_FRAME_COUNT,
+      receipt.terrain.frames.length === FULL_HILL_REPLAY_FRAME_COUNT &&
+      sourceBuffers.length === FULL_HILL_REPLAY_FRAME_COUNT,
     'full-Hill terrain geometry is missing, partial, or remapped',
   );
   receipt.terrain.frames.forEach((frame, index) => {
+    const sourceBuffer = sourceBuffers[index];
+    requireReceipt(
+      sourceBuffer !== undefined,
+      `full-Hill source buffer ${index} is missing`,
+    );
+    const expectedEnvelope =
+      createFullHillFrameSourceEnvelope(sourceBuffer);
     requireReceipt(
       frame.index === index &&
         Number.isFinite(frame.timestampMs) &&
@@ -315,7 +374,8 @@ export function validateFullHillOneRendererReceipt(
         frame.supportFrame.supportEpoch >= 0 &&
         Number.isInteger(frame.supportFrame.topologyEpoch) &&
         frame.supportFrame.topologyEpoch >= 0 &&
-        checksumLike(frame.supportFrame.checksum),
+        checksumLike(frame.supportFrame.checksum) &&
+        frameSourceEnvelopeEqual(frame, expectedEnvelope),
       `full-Hill frame ${index} lost source or checksum identity`,
     );
   });
@@ -453,6 +513,45 @@ function checksumLike(value: string): boolean {
 
 function checksumOrInherited(value: string): boolean {
   return value === 'inherited' || checksumLike(value);
+}
+
+function frameSourceEnvelopeEqual(
+  actual: FullHillFrameSourceEnvelope,
+  expected: FullHillFrameSourceEnvelope,
+): boolean {
+  return (
+    actual.frameId === expected.frameId &&
+    actual.source.authority === expected.source.authority &&
+    actual.source.route === expected.source.route &&
+    actual.source.frameId === expected.source.frameId &&
+    actual.source.timestampMs === expected.source.timestampMs &&
+    actual.source.backend === expected.source.backend &&
+    actual.source.configId === expected.source.configId &&
+    actual.source.fallbackStatus === expected.source.fallbackStatus &&
+    actual.sampleChecksum === expected.sampleChecksum &&
+    actual.topologyChecksum === expected.topologyChecksum &&
+    actual.proxyMaterialChecksum === expected.proxyMaterialChecksum &&
+    actual.surfaceDetailChecksum === expected.surfaceDetailChecksum &&
+    actual.materialEdgeChecksum === expected.materialEdgeChecksum &&
+    actual.trafficChecksum === expected.trafficChecksum &&
+    actual.producerTraffic.fieldChecksum ===
+      expected.producerTraffic.fieldChecksum &&
+    actual.producerTraffic.admittedEpisodeCount ===
+      expected.producerTraffic.admittedEpisodeCount &&
+    actual.producerTraffic.exposureSeconds ===
+      expected.producerTraffic.exposureSeconds &&
+    actual.topologyPossibilityChecksum ===
+      expected.topologyPossibilityChecksum &&
+    actual.supportFrame.supportClass ===
+      expected.supportFrame.supportClass &&
+    actual.supportFrame.mappingMode ===
+      expected.supportFrame.mappingMode &&
+    actual.supportFrame.supportEpoch ===
+      expected.supportFrame.supportEpoch &&
+    actual.supportFrame.topologyEpoch ===
+      expected.supportFrame.topologyEpoch &&
+    actual.supportFrame.checksum === expected.supportFrame.checksum
+  );
 }
 
 function normalizeTerrainColors(colors: Float32Array): Float32Array {
