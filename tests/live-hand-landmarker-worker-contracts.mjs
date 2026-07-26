@@ -92,6 +92,11 @@ assert.match(
 );
 assert.match(
   liveHandSource,
+  /async function ensureSidecarModelReady[\s\S]*runtimeFetch\('\/sidecar\/status'[\s\S]*modelReady[\s\S]*sidecarWarmup = null[\s\S]*beginSidecarModelWarmup/,
+  'camera admission revalidates cached prewarm and replaces stale sidecar authority',
+);
+assert.match(
+  liveHandSource,
   /async function start\(\)[\s\S]*ensureSidecarModelReady\(\)[\s\S]*getUserMedia/,
   'WiLoR model readiness is established before live camera admission can emit no-anchor fallback',
 );

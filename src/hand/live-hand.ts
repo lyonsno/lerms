@@ -495,17 +495,33 @@ async function waitForSidecarModelReady(): Promise<RuntimeSidecarStatusTruth> {
   return truth;
 }
 
-async function ensureSidecarModelReady(): Promise<RuntimeSidecarStatusTruth> {
+function beginSidecarModelWarmup(): Promise<RuntimeSidecarStatusTruth> {
   if (!sidecarWarmup) {
     const warmup = waitForSidecarModelReady();
     sidecarWarmup = warmup;
-    void warmup.catch(() => {
+    void warmup.then(() => {
+      if (sidecarWarmup === warmup) sidecarWarmup = null;
+    }, () => {
       if (sidecarWarmup === warmup) sidecarWarmup = null;
     });
   }
-  const truth = await sidecarWarmup;
+  return sidecarWarmup;
+}
+
+async function ensureSidecarModelReady(): Promise<RuntimeSidecarStatusTruth> {
+  if (sidecarWarmup) await sidecarWarmup;
+  let truth = assertLiveRuntimeSidecarStatus(await runtimeFetch('/sidecar/status'));
+  sidecarStatusTruth = truth;
+  setRouteTruth();
   if (!truth.modelReady || truth.modelReadiness !== 'ready') {
-    throw new Error(`WiLoR sidecar returned without a loaded model: ${truth.modelReadiness}`);
+    sidecarWarmup = null;
+    await beginSidecarModelWarmup();
+    truth = assertLiveRuntimeSidecarStatus(await runtimeFetch('/sidecar/status'));
+    sidecarStatusTruth = truth;
+    setRouteTruth();
+  }
+  if (!truth.running || !truth.modelReady || truth.modelReadiness !== 'ready') {
+    throw new Error(`WiLoR sidecar is not currently model-ready: ${truth.modelReadiness}`);
   }
   return truth;
 }
