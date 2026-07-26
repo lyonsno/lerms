@@ -27,6 +27,11 @@ const ACCEPTANCE_PRESENTATION = 'acceptance-witness';
 const OPERATOR_LIVE_PRESENTATION = 'operator-live';
 const OPERATOR_LIVE_QUERY = 'presentation=operator-live';
 
+type OperatorLiveCaptureControl = {
+  hold: () => void;
+  resume: () => void;
+};
+
 const stage = required<HTMLElement>('[data-smoke-viewport]');
 const statusLabel = required<HTMLElement>('[data-smoke-status-label]');
 const frameKind = required<HTMLElement>('[data-frame-kind]');
@@ -248,10 +253,43 @@ restart.addEventListener('click', () => {
 
 function startOperatorLive(): void {
   if (!carrier) return;
-  document.documentElement.dataset.carrierStatus =
-    'operator-live-running';
-  document.documentElement.dataset.carrierReceiptStatus =
+  const documentState = document.documentElement.dataset;
+  documentState.carrierStatus = 'operator-live-running';
+  documentState.carrierReceiptStatus =
     'not-applicable-operator-live';
+  documentState.captureHold = 'running';
+  documentState.captureHoldCount = '0';
+  (
+    window as Window & {
+      __lermHordeOperatorLiveCapture?: OperatorLiveCaptureControl;
+    }
+  ).__lermHordeOperatorLiveCapture = {
+    hold: () => {
+      if (!operatorLive || !carrier) {
+        throw new Error(
+          'operator-live capture hold requires an active carrier',
+        );
+      }
+      if (documentState.captureHold === 'held') return;
+      updatePlayState(false);
+      documentState.captureHold = 'held';
+      documentState.captureHoldCount = String(
+        Number(documentState.captureHoldCount ?? '0') + 1,
+      );
+      statusLabel.textContent =
+        'Operator live view / witness capture held';
+    },
+    resume: () => {
+      if (!operatorLive || !carrier) {
+        throw new Error(
+          'operator-live capture resume requires an active carrier',
+        );
+      }
+      if (documentState.captureHold === 'running') return;
+      documentState.captureHold = 'running';
+      updatePlayState(true);
+    },
+  };
   updatePlayState(true);
 }
 

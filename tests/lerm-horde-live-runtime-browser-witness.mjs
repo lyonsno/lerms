@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import {
   mkdtempSync,
@@ -44,6 +45,8 @@ const report = {
   wallCouplingSamples: [],
   liveStateSamples: [],
   livePixelSamples: [],
+  sampleScreenshotStates: [],
+  captureHoldCount: 0,
   incrementalAdmissionVerified: false,
   currentHillSupportVerified: false,
   zeroReplayFramesVerified: false,
@@ -269,21 +272,10 @@ async function runWitness() {
     await browser.evaluate(
       `document.querySelector('[data-play-toggle]')?.click()`,
     );
-    let sampleB;
-    await waitFor(async () => {
-      const candidate = await currentState(browser);
-      if (
-        candidate.elapsedMs >= sampleA.elapsedMs + 1_000 &&
-        candidate.admittedIntervalCount >
-          sampleA.admittedIntervalCount &&
-        candidate.sourceDistance > sampleA.sourceDistance
-      ) {
-        sampleB = candidate;
-        return true;
-      }
-      return false;
-    }, 6_000, 'second live in-traversal sample');
-    sampleB = await currentState(browser, true);
+    const sampleB = await waitForAcceptanceSampleAndPause(
+      browser,
+      sampleA,
+    );
     const pixelsB = await readScenePixels(browser);
     await captureScreenshot(browser, options.sampleBScreenshot);
     await browser.evaluate(
@@ -546,33 +538,79 @@ async function runOperatorLiveView(browser) {
   assert.equal(initialUi.presentationLabel, 'AUTO LIVE / LOOPS');
   assert.equal(initialUi.receipt, null);
 
-  await delay(650);
-  let sampleA = await currentState(browser);
-  let pixelsA = await readScenePixels(browser);
-  let sampleB;
-  let pixelsB;
+  let initialSample;
   await waitFor(async () => {
     const candidate = await currentState(browser);
-    if (candidate.operatorLoopCount !== sampleA.operatorLoopCount) {
-      sampleA = candidate;
-      pixelsA = await readScenePixels(browser);
-      return false;
+    if (
+      candidate.operatorLoopCount === 0 &&
+      candidate.elapsedMs >= 200
+    ) {
+      initialSample = candidate;
+      return true;
     }
+    return false;
+  }, 4_000, 'early operator-live sample');
+  assert.ok(initialSample);
+  const sampleAScreenshot = await captureStateBoundScreenshot(
+    browser,
+    options.sampleAScreenshot,
+  );
+  let sampleA = sampleAScreenshot.after;
+  let pixelsA = await readScenePixels(browser);
+  let sampleB;
+  await waitFor(async () => {
+    const candidate = await currentState(browser);
+    assert.equal(
+      candidate.operatorLoopCount,
+      sampleA.operatorLoopCount,
+      'operator-live loop reset before B screenshot',
+    );
     if (
       candidate.elapsedMs >= sampleA.elapsedMs + 400 &&
       candidate.admittedIntervalCount >
         sampleA.admittedIntervalCount
     ) {
       sampleB = candidate;
-      pixelsB = await readScenePixels(browser);
       return true;
     }
     return false;
   }, 4_000, 'same-loop operator-live state pair');
-  sampleB ??= await currentState(browser);
-  pixelsB ??= await readScenePixels(browser);
-  await captureScreenshot(browser, options.sampleBScreenshot);
-  await captureScreenshot(browser, options.sampleAScreenshot);
+  assert.ok(sampleB);
+  const sampleBScreenshot = await captureStateBoundScreenshot(
+    browser,
+    options.sampleBScreenshot,
+  );
+  sampleB = sampleBScreenshot.after;
+  const pixelsB = await readScenePixels(browser);
+  report.sampleScreenshotStates = [
+    sampleAScreenshot,
+    sampleBScreenshot,
+  ];
+  report.captureHoldCount = Number(
+    await browser.evaluate(
+      `document.documentElement.dataset.captureHoldCount`,
+    ),
+  );
+  assert.equal(
+    report.captureHoldCount,
+    2,
+    'operator-live witness did not exercise exactly two capture holds',
+  );
+  assert.equal(
+    sampleAScreenshot.after.operatorLoopCount,
+    sampleBScreenshot.before.operatorLoopCount,
+    'operator-live A/B screenshots crossed a loop reset',
+  );
+  assert.ok(
+    sampleBScreenshot.before.elapsedMs >
+      sampleAScreenshot.after.elapsedMs,
+    'operator-live B screenshot did not follow A screenshot',
+  );
+  assert.notEqual(
+    sampleAScreenshot.sha256,
+    sampleBScreenshot.sha256,
+    'operator-live sampleAScreenshot and sampleBScreenshot are identical',
+  );
   report.liveStateSamples = [sampleA, sampleB];
   report.livePixelSamples = [pixelsA, pixelsB];
   report.liveClockVerified =
@@ -855,6 +893,119 @@ async function captureScreenshot(browser, outputPath) {
     'primary output is not PNG',
   );
   writeFileSync(outputPath, png);
+  return {
+    sha256: createHash('sha256').update(png).digest('hex'),
+    byteLength: png.length,
+  };
+}
+
+async function captureStateBoundScreenshot(browser, outputPath) {
+  await browser.evaluate(`(() => {
+    const capture = window.__lermHordeOperatorLiveCapture;
+    if (!capture) {
+      throw new Error('operator-live capture control is unavailable');
+    }
+    capture.hold();
+  })()`);
+  await waitFor(
+    () =>
+      browser.evaluate(
+        `document.documentElement.dataset.captureHold === 'held'`,
+      ),
+    1_000,
+    'operator-live capture hold',
+  );
+  let before;
+  let after;
+  let screenshot;
+  try {
+    before = await currentState(browser);
+    screenshot = await captureScreenshot(browser, outputPath);
+    after = await currentState(browser);
+    assert.deepEqual(
+      {
+        elapsedMs: after.elapsedMs,
+        tickCount: after.tickCount,
+        operatorLoopCount: after.operatorLoopCount,
+      },
+      {
+        elapsedMs: before.elapsedMs,
+        tickCount: before.tickCount,
+        operatorLoopCount: before.operatorLoopCount,
+      },
+      `${outputPath} advanced while its witness capture was held`,
+    );
+    assert.ok(
+      after.elapsedMs > 0 && after.tickCount < 18,
+      `${outputPath} captured stale operator-live state`,
+    );
+  } finally {
+    await browser.evaluate(
+      `window.__lermHordeOperatorLiveCapture?.resume()`,
+    );
+  }
+  assert.ok(before && after && screenshot);
+  return {
+    path: outputPath,
+    sha256: screenshot.sha256,
+    byteLength: screenshot.byteLength,
+    before,
+    after,
+  };
+}
+
+async function waitForAcceptanceSampleAndPause(browser, sampleA) {
+  return browser.evaluate(`new Promise((resolve, reject) => {
+    const stage = document.querySelector('[data-smoke-viewport]');
+    const playToggle = document.querySelector('[data-play-toggle]');
+    if (!stage || !playToggle) {
+      reject(new Error('acceptance sample controls are unavailable'));
+      return;
+    }
+    const read = () => ({
+      elapsedMs: Number(stage.dataset.elapsedMs),
+      tickCount: Number(stage.dataset.frameIndex),
+      frameKind: stage.dataset.frameKind ?? '',
+      admittedIntervalCount: Number(stage.dataset.admittedIntervalCount),
+      sourceDistance: Number(stage.dataset.sourceDistance),
+      progress: Number(stage.dataset.progress),
+      supportHillSource: stage.dataset.supportHillSource ?? '',
+      terrainSampleChecksum: stage.dataset.terrainSampleChecksum ?? '',
+      terrainTopologyChecksum: stage.dataset.terrainTopologyChecksum ?? '',
+      trafficChecksum: stage.dataset.trafficChecksum ?? '',
+      operatorLoopCount: Number(
+        document.documentElement.dataset.operatorLoopCount
+      ),
+      exposureSeconds: Number(
+        document.querySelector('[data-exposure]')?.textContent ?? '0'
+      ),
+    });
+    let observer;
+    const timeout = setTimeout(() => {
+      observer?.disconnect();
+      reject(new Error(
+        'second live in-traversal sample timed out after 6000 ms'
+      ));
+    }, 6_000);
+    const inspect = () => {
+      const candidate = read();
+      if (
+        candidate.frameKind === 'traversing' &&
+        candidate.elapsedMs >= ${sampleA.elapsedMs + 1_000} &&
+        candidate.admittedIntervalCount >
+          ${sampleA.admittedIntervalCount} &&
+        candidate.sourceDistance > ${sampleA.sourceDistance}
+      ) {
+        clearTimeout(timeout);
+        observer?.disconnect();
+        playToggle.click();
+        resolve(candidate);
+      }
+    };
+    observer = new MutationObserver(inspect);
+    observer.observe(stage, { attributes: true });
+    inspect();
+  })`);
 }
 
 function parseArgs(args) {

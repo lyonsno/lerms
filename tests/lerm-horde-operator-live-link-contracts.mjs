@@ -78,5 +78,30 @@ assert.match(
   /rejected-presentation/,
   'browser witness has no first-class rejected-presentation exercise',
 );
+assert.match(
+  operatorWitnessBody,
+  /sampleScreenshotStates/,
+  'operator-live witness does not bind screenshots to adjacent runtime state',
+);
+assert.match(
+  operatorWitnessBody,
+  /screenshot.*sha256/is,
+  'operator-live witness does not record screenshot content identity',
+);
+assert.match(
+  operatorWitnessBody,
+  /sampleAScreenshot.*sampleBScreenshot.*notEqual/s,
+  'operator-live witness does not reject identical A/B screenshots',
+);
+assert.match(
+  controller,
+  /__lermHordeOperatorLiveCapture/,
+  'operator-live controller exposes no bounded witness capture handshake',
+);
+assert.match(
+  operatorWitnessBody,
+  /captureHoldCount/,
+  'operator-live witness does not record capture hold exercise',
+);
 
 console.log('Lerm Horde operator-live link contracts passed');
