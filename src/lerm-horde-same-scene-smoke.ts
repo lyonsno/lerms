@@ -7,86 +7,83 @@ import {
 } from './lerm-horde-3d-carrier-contract.js';
 import {
   createExactCarrierRenderer,
+  type ExactCarrierLiveRuntimeReceipt,
   type ExactCarrierRenderer,
 } from './lerm-horde-3d-carrier-renderer.js';
 import {
-  FULL_HILL_ONE_RENDERER_SCHEMA,
   FULL_HILL_RENDERER_ID,
-  type FullHillOneRendererReceipt,
 } from './lerm-horde-full-hill-renderer.js';
 import {
-  HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_ROUTE,
-  type HillHordeSameScenePrefixFrame,
-} from './hill-horde-same-scene-prefix-replay.js';
-import { HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA } from './terrain/hill-of-hills.js';
+  LERM_HORDE_LIVE_RUNTIME_ROUTE,
+  LERM_HORDE_LIVE_RUNTIME_SCHEMA,
+  type LermHordeLiveRuntimeState,
+} from './lerm-horde-live-runtime-composition.js';
+import {
+  HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA,
+} from './terrain/hill-of-hills.js';
 
-const BASE_FRAME_DURATION_MS = 290;
-const CONTROL_HOLD_MS = 650;
-const DEPARTURE_HOLD_MS = 900;
-const TERMINAL_HOLD_MS = 1250;
+const LIVE_PRESENTATION_STEP_MS = 200;
 
 const stage = required<HTMLElement>('[data-smoke-viewport]');
 const statusLabel = required<HTMLElement>('[data-smoke-status-label]');
 const frameKind = required<HTMLElement>('[data-frame-kind]');
 const frameTime = required<HTMLElement>('[data-frame-time]');
-const prefix = required<HTMLElement>('[data-prefix]');
+const progress = required<HTMLElement>('[data-progress]');
 const exposure = required<HTMLElement>('[data-exposure]');
-const timeline = required<HTMLElement>('[data-timeline]');
+const liveMeter = required<HTMLElement>('[data-live-meter-fill]');
 const playToggle = required<HTMLButtonElement>('[data-play-toggle]');
 const playIcon = required<HTMLElement>('[data-play-icon]');
 const restart = required<HTMLButtonElement>('[data-restart]');
 const failure = required<HTMLElement>('[data-smoke-failure]');
 const errorOutput = required<HTMLElement>('[data-smoke-error]');
-const speedButtons = [
-  ...document.querySelectorAll<HTMLButtonElement>('[data-speed]'),
-];
 
-let frames: readonly HillHordeSameScenePrefixFrame[] = [];
-let frameIndex = 1;
-let playing = false;
-let speed = 1;
-let frameStartedAt = performance.now();
-let timelineButtons: HTMLButtonElement[] = [];
 let carrier: ExactCarrierRenderer | null = null;
+let playing = false;
 let operatorPlayCount = 0;
 let receiptPublished = false;
+let elapsedMs = 0;
+let liveClockOriginMs: number | null = null;
 
 void initialize();
 
 async function initialize(): Promise<void> {
   try {
     carrier = await createExactCarrierRenderer(stage);
-    frames = carrier.frames;
-    createTimeline();
-    renderFrame(frameIndex);
+    renderState(carrier.state);
 
     const documentState = document.documentElement.dataset;
     documentState.smokeStatus = 'verified';
     documentState.carrierStatus = 'verified-paused';
     documentState.carrierReceiptStatus = 'pending-play';
-    documentState.requestedRoute =
-      HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_ROUTE;
-    documentState.effectiveRoute =
-      HILL_HORDE_SAME_SCENE_PREFIX_REPLAY_ROUTE;
+    documentState.requestedRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
+    documentState.effectiveRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
     documentState.requestedRenderer = FULL_HILL_RENDERER_ID;
     documentState.effectiveRenderer = carrier.rendererId;
-    documentState.sourceStatus = 'canonical-dynamic-full-hill-replay';
-    documentState.fullHillReceiptSchema = FULL_HILL_ONE_RENDERER_SCHEMA;
-    documentState.terrainBufferSchema = HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA;
+    documentState.sourceStatus = 'live-incremental-current-hill';
+    documentState.liveRuntimeSchema = LERM_HORDE_LIVE_RUNTIME_SCHEMA;
+    documentState.terrainBufferSchema =
+      HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA;
     documentState.terrainSampleCount = String(carrier.terrainSampleCount);
-    documentState.terrainTriangleCount = String(carrier.terrainTriangleCount);
+    documentState.terrainTriangleCount = String(
+      carrier.terrainTriangleCount,
+    );
     documentState.depthBits = String(carrier.depthBits);
     documentState.carrierBodySha256 = EXACT_3D_CARRIER_BODY_SHA256;
     documentState.carrierRegistrationSha256 =
       EXACT_3D_CARRIER_REGISTRATION_SHA256;
     documentState.carrierRailRevision = EXACT_3D_CARRIER_RAIL_REVISION;
-    documentState.carrierRailModuleSha256 = carrier.railModuleSha256;
-    documentState.carrierRailHistorySha256 = carrier.railHistorySha256;
+    documentState.carrierRailModuleSha256 =
+      carrier.railModuleSha256;
+    documentState.carrierRailHistorySha256 =
+      carrier.railHistorySha256;
     documentState.effectiveRailId = carrier.effectiveRailId;
-    documentState.effectiveEvaluatorRoute = carrier.effectiveEvaluatorRoute;
+    documentState.effectiveEvaluatorRoute =
+      carrier.effectiveEvaluatorRoute;
     documentState.operatorPlayCount = '0';
+    documentState.precomputedFrameCount = '0';
+    documentState.prefixRebuildCount = '0';
+    documentState.replayConstructorCalls = '0';
     documentState.bodyVertexCount = String(carrier.bodyVertexCount);
-    statusLabel.textContent = 'Full Hill + exact carrier / paused';
     updatePlayState(false);
     window.requestAnimationFrame(tick);
   } catch (error) {
@@ -94,111 +91,93 @@ async function initialize(): Promise<void> {
   }
 }
 
-function createTimeline(): void {
-  timelineButtons = frames.map((frame) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'timeline__step';
-    button.dataset.frameIndex = String(frame.index);
-    button.setAttribute('aria-label', frameLabel(frame));
-    button.title = frameLabel(frame);
-    button.addEventListener('click', () => {
-      updatePlayState(false);
-      frameIndex = frame.index;
-      frameStartedAt = performance.now();
-      renderFrame(frameIndex);
-    });
-    timeline.append(button);
-    return button;
-  });
-}
-
-function tick(timestamp: number): void {
-  if (
-    playing &&
-    frames.length > 0 &&
-    timestamp - frameStartedAt >= frameDuration(frames[frameIndex]) / speed
-  ) {
-    if (frameIndex === frames.length - 1) {
-      updatePlayState(false);
-      publishReceipt();
-      window.requestAnimationFrame(tick);
-      return;
+function tick(clockMs: number): void {
+  if (playing && carrier) {
+    if (liveClockOriginMs === null) {
+      liveClockOriginMs = clockMs - elapsedMs;
     }
-    frameIndex += 1;
-    frameStartedAt = timestamp;
-    renderFrame(frameIndex);
+    const targetElapsedMs = Math.min(
+      carrier.completionElapsedMs,
+      Math.max(elapsedMs, clockMs - liveClockOriginMs),
+    );
+    const publishedElapsedMs =
+      targetElapsedMs >= carrier.completionElapsedMs
+        ? carrier.completionElapsedMs
+        : Math.floor(targetElapsedMs / LIVE_PRESENTATION_STEP_MS) *
+          LIVE_PRESENTATION_STEP_MS;
+    if (publishedElapsedMs > carrier.state.elapsedMs) {
+      elapsedMs = publishedElapsedMs;
+      try {
+        renderState(carrier.advanceTo(elapsedMs));
+        if (elapsedMs >= carrier.completionElapsedMs) {
+          updatePlayState(false);
+          publishReceipt();
+        }
+      } catch (error) {
+        failSmoke(error);
+      }
+    }
   }
   window.requestAnimationFrame(tick);
 }
 
-function renderFrame(index: number): void {
-  const frame = frames[index];
-  if (!frame || !carrier) return;
-  carrier.renderFrame(index);
-
-  stage.dataset.frameIndex = String(index);
-  stage.dataset.frameKind = frame.kind;
-  stage.dataset.prefixSampleCount = String(frame.prefixSampleCount);
-  stage.dataset.terrainSampleChecksum = frame.terrain.witness.sampleChecksum;
+function renderState(state: LermHordeLiveRuntimeState): void {
+  if (!carrier) return;
+  const traversing = state.phase === 'traversing';
+  stage.dataset.frameIndex = String(state.tickCount);
+  stage.dataset.frameKind = state.phase;
+  stage.dataset.elapsedMs = state.elapsedMs.toFixed(3);
+  stage.dataset.prefixSampleCount = String(
+    state.admittedIntervalCount,
+  );
+  stage.dataset.terrainSampleChecksum =
+    state.terrain.witness.sampleChecksum;
   stage.dataset.terrainTopologyChecksum =
-    frame.terrain.witness.topologyChecksum;
+    state.terrain.witness.topologyChecksum;
   stage.dataset.trafficChecksum =
-    frame.terrain.witness.producerTrafficFieldChecksum;
-  stage.classList.remove('stage--advance');
-  void stage.getBoundingClientRect();
-  stage.classList.add('stage--advance');
+    state.terrain.witness.producerTrafficFieldChecksum;
+  stage.dataset.sourceDistance =
+    state.body?.sourceDistance.toFixed(9) ?? '';
+  stage.dataset.progress = state.body?.progress.toFixed(9) ?? '1';
+  stage.dataset.supportHillSource =
+    state.body?.support.renderedHillSourceId ??
+    state.terrain.source.frameId;
+  stage.dataset.admittedIntervalCount = String(
+    state.admittedIntervalCount,
+  );
 
-  frameKind.textContent = displayKind(frame);
-  frameTime.textContent =
-    frame.kind === 'no-history-control'
-      ? 'CONTROL'
-      : `t ${frame.timestampMs} ms`;
-  prefix.textContent = `${frame.prefixSampleCount} / 15`;
+  frameKind.textContent = traversing
+    ? 'Live carrier / current Hill'
+    : 'Carrier departed / Hill continues';
+  frameTime.textContent = `LIVE t ${Math.round(state.elapsedMs)} ms`;
+  const progressAmount = state.body?.progress ?? 1;
+  progress.textContent = `${Math.round(progressAmount * 100)}%`;
   exposure.textContent =
-    frame.terrain.witness.producerTrafficExposureSeconds.toFixed(4);
-  timelineButtons.forEach((button, buttonIndex) => {
-    button.setAttribute(
-      'aria-current',
-      buttonIndex === index ? 'true' : 'false',
-    );
-  });
-}
-
-function frameDuration(frame: HillHordeSameScenePrefixFrame): number {
-  if (frame.kind === 'no-history-control') return CONTROL_HOLD_MS;
-  if (frame.kind === 'actor-departed') return DEPARTURE_HOLD_MS;
-  if (frame.kind === 'after-departure') return TERMINAL_HOLD_MS;
-  return BASE_FRAME_DURATION_MS;
-}
-
-function displayKind(frame: HillHordeSameScenePrefixFrame): string {
-  if (frame.kind === 'no-history-control') return 'No-history control';
-  if (frame.kind === 'actor-departed') return 'Actor departed / pressure held';
-  if (frame.kind === 'after-departure') {
-    return 'Later Hill / traffic retained';
-  }
-  return `Root ${frame.index - 1} / moving prefix`;
-}
-
-function frameLabel(frame: HillHordeSameScenePrefixFrame): string {
-  return `${displayKind(frame)}, prefix ${frame.prefixSampleCount} of 15`;
+    state.terrain.witness.producerTrafficExposureSeconds.toFixed(4);
+  liveMeter.style.setProperty(
+    '--live-progress',
+    `${Math.max(0, Math.min(100, progressAmount * 100))}%`,
+  );
 }
 
 function updatePlayState(nextPlaying: boolean): void {
   playing = nextPlaying;
-  frameStartedAt = performance.now();
+  liveClockOriginMs = nextPlaying
+    ? performance.now() - elapsedMs
+    : null;
   playToggle.setAttribute(
     'aria-label',
-    playing ? 'Pause traversal' : 'Play traversal',
+    playing ? 'Pause live traversal' : 'Start live traversal',
   );
-  playToggle.title = playing ? 'Pause traversal' : 'Play traversal';
+  playToggle.title = playing
+    ? 'Pause live traversal'
+    : 'Start live traversal';
   playIcon.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
   statusLabel.textContent = playing
-    ? 'Full Hill + exact carrier / traversing'
+    ? 'Live rail + current Hill / running'
     : receiptPublished
-      ? 'Full Hill + exact carrier / complete'
-      : 'Full Hill + exact carrier / paused';
+      ? 'Live rail + current Hill / complete'
+      : 'Live rail + current Hill / paused';
 }
 
 playToggle.addEventListener('click', () => {
@@ -206,31 +185,51 @@ playToggle.addEventListener('click', () => {
     updatePlayState(false);
     return;
   }
-  if (frameIndex === frames.length - 1 || receiptPublished) {
+  if (!carrier) return;
+  if (receiptPublished || elapsedMs >= carrier.completionElapsedMs) {
     resetTraversal();
   }
-  if (operatorPlayCount >= 1) return;
-  operatorPlayCount += 1;
-  document.documentElement.dataset.operatorPlayCount =
-    String(operatorPlayCount);
-  document.documentElement.dataset.carrierReceiptStatus = 'in-progress';
+  if (operatorPlayCount === 0) {
+    operatorPlayCount = 1;
+    document.documentElement.dataset.operatorPlayCount = '1';
+  }
+  document.documentElement.dataset.carrierReceiptStatus =
+    'in-progress';
   updatePlayState(true);
 });
 
 restart.addEventListener('click', resetTraversal);
 
-speedButtons.forEach((button) => {
-  button.addEventListener('click', () => {
-    speed = Number(button.dataset.speed ?? '1');
-    frameStartedAt = performance.now();
-    speedButtons.forEach((candidate) => {
-      candidate.setAttribute(
-        'aria-pressed',
-        candidate === button ? 'true' : 'false',
-      );
-    });
-  });
-});
+function resetTraversal(): void {
+  if (!carrier) return;
+  elapsedMs = 0;
+  operatorPlayCount = 0;
+  receiptPublished = false;
+  delete (
+    window as Window & {
+      __lermHordeLiveRuntimeReport?: ExactCarrierLiveRuntimeReceipt;
+    }
+  ).__lermHordeLiveRuntimeReport;
+  document.documentElement.dataset.operatorPlayCount = '0';
+  document.documentElement.dataset.carrierReceiptStatus =
+    'pending-play';
+  renderState(carrier.reset());
+  updatePlayState(false);
+}
+
+function publishReceipt(): void {
+  if (receiptPublished || !carrier) return;
+  const receipt = carrier.createReceipt(operatorPlayCount);
+  (
+    window as Window & {
+      __lermHordeLiveRuntimeReport?: ExactCarrierLiveRuntimeReceipt;
+    }
+  ).__lermHordeLiveRuntimeReport = receipt;
+  receiptPublished = true;
+  document.documentElement.dataset.carrierStatus = 'complete';
+  document.documentElement.dataset.carrierReceiptStatus = 'complete';
+  statusLabel.textContent = 'Live rail + current Hill / complete';
+}
 
 function failSmoke(error: unknown): void {
   document.documentElement.dataset.smokeStatus = 'failed';
@@ -240,36 +239,7 @@ function failSmoke(error: unknown): void {
   errorOutput.textContent =
     error instanceof Error ? error.message : String(error);
   updatePlayState(false);
-  statusLabel.textContent = 'Source rejected';
-}
-
-function resetTraversal(): void {
-  frameIndex = 1;
-  operatorPlayCount = 0;
-  receiptPublished = false;
-  delete (
-    window as Window & {
-      __lermHordeFullHillReport?: FullHillOneRendererReceipt;
-    }
-  ).__lermHordeFullHillReport;
-  document.documentElement.dataset.operatorPlayCount = '0';
-  document.documentElement.dataset.carrierReceiptStatus = 'pending-play';
-  updatePlayState(false);
-  renderFrame(frameIndex);
-}
-
-function publishReceipt(): void {
-  if (receiptPublished || !carrier) return;
-  const receipt = carrier.createReceipt(operatorPlayCount);
-  (
-    window as Window & {
-      __lermHordeFullHillReport?: FullHillOneRendererReceipt;
-    }
-  ).__lermHordeFullHillReport = receipt;
-  receiptPublished = true;
-  document.documentElement.dataset.carrierStatus = 'complete';
-  document.documentElement.dataset.carrierReceiptStatus = 'complete';
-  statusLabel.textContent = 'Full Hill + exact carrier / complete';
+  statusLabel.textContent = 'Live source rejected';
 }
 
 function required<T extends Element>(selector: string): T {

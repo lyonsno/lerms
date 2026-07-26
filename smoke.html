@@ -4,17 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <title>LERMS - Full Hill One-Renderer Traversal</title>
+    <title>LERMS - Live Hill Runtime Composition</title>
   </head>
   <body>
     <main class="smoke-shell" aria-live="polite">
       <header class="smoke-header">
         <div>
           <p class="eyebrow">LERMS / HILL OF HILLS</p>
-          <h1>Full Hill / exact 3D carrier</h1>
+          <h1>Live Hill / exact 3D carrier</h1>
         </div>
         <div class="frame-readout">
-          <p class="frame-readout__kind" data-frame-kind>Loading replay</p>
+          <p class="frame-readout__kind" data-frame-kind>Loading live runtime</p>
           <p class="frame-readout__time" data-frame-time>t 0 ms</p>
         </div>
         <div class="source-state">
@@ -31,6 +31,7 @@
         <div class="stage__shade" aria-hidden="true"></div>
         <div class="claim-readout">
           <span>EXACT 719024</span>
+          <span>LIVE CLOCK</span>
           <span>ONE RENDERER</span>
           <span>ONE DEPTH</span>
           <span>CONTACT 0</span>
@@ -38,14 +39,14 @@
         </div>
       </section>
 
-      <section class="transport" aria-label="Playback controls">
+      <section class="transport" aria-label="Live traversal controls">
         <div class="transport__buttons">
           <button
             class="icon-button"
             type="button"
             data-play-toggle
-            aria-label="Play traversal"
-            title="Play traversal"
+            aria-label="Start live traversal"
+            title="Start live traversal"
           >
             <span data-play-icon aria-hidden="true">&#9654;</span>
           </button>
@@ -60,19 +61,15 @@
           </button>
         </div>
 
-        <div class="timeline" data-timeline aria-label="Replay frames"></div>
-
-        <div class="speed-control" role="group" aria-label="Playback speed">
-          <button type="button" data-speed="0.75">0.75</button>
-          <button type="button" data-speed="1" aria-pressed="true">1</button>
-          <button type="button" data-speed="1.5">1.5</button>
+        <div class="live-meter" aria-label="Live traversal progress">
+          <div class="live-meter__fill" data-live-meter-fill></div>
         </div>
       </section>
 
       <footer class="smoke-footer">
         <div>
-          <span class="footer-label">PREFIX</span>
-          <strong data-prefix>0 / 15</strong>
+          <span class="footer-label">PROGRESS</span>
+          <strong data-progress>0%</strong>
         </div>
         <div>
           <span class="footer-label">EXPOSURE</span>

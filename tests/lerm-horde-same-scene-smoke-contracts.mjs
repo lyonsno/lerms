@@ -8,7 +8,8 @@ const paths = {
   viewer: resolve(root, 'src/lerm-horde-same-scene-smoke.ts'),
   renderer: resolve(root, 'src/lerm-horde-3d-carrier-renderer.ts'),
   adapter: resolve(root, 'src/lerm-horde-full-hill-renderer.ts'),
-  witness: resolve(root, 'tests/lerm-horde-same-scene-browser-witness.mjs'),
+  runtime: resolve(root, 'src/lerm-horde-live-runtime-composition.ts'),
+  witness: resolve(root, 'tests/lerm-horde-live-runtime-browser-witness.mjs'),
   historicalSvg: resolve(
     root,
     'public/smoke/horde-same-scene-0482274/replay.svg',
@@ -47,8 +48,8 @@ assert.match(
 );
 assert.match(
   viewer,
-  /__lermHordeFullHillReport/,
-  'the viewer must publish the full-Hill completion receipt',
+  /__lermHordeLiveRuntimeReport/,
+  'the viewer must publish the live-runtime completion receipt',
 );
 assert.match(
   renderer,
@@ -57,8 +58,13 @@ assert.match(
 );
 assert.match(
   renderer,
-  /updateHillTerrainGeometry\(terrainGeometry, terrainBuffer\)/,
-  'the renderer must update the live terrain for every canonical frame',
+  /createLermHordeLiveRuntime/,
+  'the renderer must consume the incremental live runtime',
+);
+assert.match(
+  renderer,
+  /runtime\.advanceTo\(elapsedMs\)/,
+  'the renderer must advance from elapsed time instead of selecting a frame',
 );
 assert.match(
   renderer,
@@ -72,24 +78,35 @@ assert.match(
 );
 assert.match(
   adapter,
-  /createHillHordeSameScenePrefixReplay\(admission, motion\)/,
-  'the adapter must consume the canonical replay constructor',
-);
-assert.match(
-  adapter,
   /createHillOfHillsTerrainBuffer\(terrain\)/,
   'the adapter must consume Hill source buffers rather than SVG pixels',
 );
+const runtime = readFileSync(paths.runtime, 'utf8');
+assert.doesNotMatch(
+  runtime,
+  /createHillHordeSameScenePrefixReplay|hill-horde-same-scene-prefix-replay/,
+  'the live runtime must not import or call the replay constructor',
+);
+assert.doesNotMatch(
+  viewer,
+  /timeline__step|data-speed|selectFrame|createTimeline/,
+  'the active smoke must not retain replay frame selection or speed controls',
+);
 
 for (const requiredEvidence of [
+  'liveClockVerified',
+  'wallClockCouplingVerified',
+  'incrementalAdmissionVerified',
+  'deterministicRuntimeIdentity',
+  'currentHillSupportVerified',
+  'zeroReplayFramesVerified',
+  'pauseResumeVerified',
   'oneRendererVerified',
   'nativeDepthVerified',
   'fullHillGeometryVerified',
   'carrierCanvasNonblank',
   'carrierCanvasMotionPixels',
-  'terrainChangedAcrossPrefixes',
-  'fullSourceEnvelopeVerified',
-  'sourceEnvelopeSubstitutionRejected',
+  'terrainChangedDuringRuntime',
   'departureBodyAbsent',
   'departureHistoryRetained',
   'carrierReceiptComplete',
@@ -112,7 +129,8 @@ for (const falseClosureProbe of [
   "querySelectorAll('.stage svg')",
   'readPixels',
   'redBodySamples === 0',
-  'hillHistoryRetained === true',
+  'precomputedFrameCount === 0',
+  'replayConstructorCalls === 0',
 ]) {
   assert.match(
     witness,

@@ -180,7 +180,7 @@ html[data-smoke-status="failed"] .source-state__light {
 
 .transport {
   display: grid;
-  grid-template-columns: auto minmax(140px, 1fr) auto;
+  grid-template-columns: auto minmax(140px, 1fr);
   align-items: center;
   gap: 18px;
   min-height: 62px;
@@ -215,61 +215,18 @@ html[data-smoke-status="failed"] .source-state__light {
   outline: none;
 }
 
-.timeline {
-  display: grid;
-  grid-template-columns: repeat(18, minmax(4px, 1fr));
-  gap: 4px;
-  min-width: 0;
-}
-
-.timeline__step {
-  width: 100%;
+.live-meter {
+  position: relative;
   height: 7px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: #315344;
-  cursor: pointer;
-}
-
-.timeline__step[aria-current="true"] {
-  background: #f2cb5d;
-}
-
-.timeline__step:nth-last-child(-n + 2) {
-  background: #54749c;
-}
-
-.timeline__step:nth-last-child(-n + 2)[aria-current="true"] {
-  background: #8abaf1;
-}
-
-.speed-control {
-  display: grid;
-  grid-template-columns: repeat(3, 46px);
-  border: 1px solid #365c4b;
-  border-radius: 4px;
+  min-width: 0;
   overflow: hidden;
+  background: #315344;
 }
 
-.speed-control button {
-  height: 34px;
-  padding: 0;
-  border: 0;
-  border-right: 1px solid #365c4b;
-  background: #0e2119;
-  color: #a8c7b6;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.speed-control button:last-child {
-  border-right: 0;
-}
-
-.speed-control button[aria-pressed="true"] {
-  background: #456c3c;
-  color: #fff8d6;
+.live-meter__fill {
+  width: var(--live-progress, 0%);
+  height: 100%;
+  background: #f2cb5d;
 }
 
 .smoke-footer {
@@ -384,20 +341,10 @@ html[data-smoke-status="failed"] .source-state__light {
   }
 
   .transport {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 10px;
     min-height: 86px;
     padding: 9px 12px;
-  }
-
-  .timeline {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    order: 3;
-  }
-
-  .speed-control {
-    justify-self: end;
   }
 
   .smoke-footer {

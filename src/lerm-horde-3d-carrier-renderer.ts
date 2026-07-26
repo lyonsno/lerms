@@ -21,19 +21,21 @@ import {
 } from './kaminos-719024-fitted-body.js';
 import type { LermHordeProducerHistoryCompositionReceipt } from './lerm-horde-producer-history-composition.js';
 import {
-  FULL_HILL_ONE_RENDERER_SCHEMA,
   FULL_HILL_RENDERER_ID,
-  createFullHillFrameSourceEnvelope,
-  createFullHillOneRendererSource,
   createHillTerrainGeometry,
   updateHillTerrainGeometry,
-  validateFullHillOneRendererReceipt,
-  type FullHillOneRendererReceipt,
-  type FullHillOneRendererSource,
 } from './lerm-horde-full-hill-renderer.js';
 import {
-  HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA,
-} from './terrain/hill-of-hills.js';
+  LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
+} from './lerm-horde-live-body-motion.js';
+import {
+  LERM_HORDE_LIVE_RUNTIME_ROUTE,
+  createLermHordeLiveRuntime,
+  type LermHordeLiveRailSample,
+  type LermHordeLiveRuntime,
+  type LermHordeLiveRuntimeReceipt,
+  type LermHordeLiveRuntimeState,
+} from './lerm-horde-live-runtime-composition.js';
 
 const SOURCE_ROOT = '/vendor/kaminos-6217fff8/artifacts';
 const BODY_PATH = `${SOURCE_ROOT}/motion-ready-719024/creature.glb`;
@@ -84,19 +86,7 @@ interface ProducerHistoryReceipt {
   };
 }
 
-interface RailSample {
-  schema: string;
-  railId: string;
-  sourceDistance: number;
-  progress: number;
-  position: [number, number, number];
-  tangent: [number, number, number];
-  locomotionFrame: {
-    forward: [number, number, number];
-    right: [number, number, number];
-    up: [number, number, number];
-  };
-}
+type RailSample = LermHordeLiveRailSample;
 
 interface RailCoreModule {
   sampleCreatureScaleLocomotionRail(
@@ -120,11 +110,13 @@ export interface CarrierRootSample {
 }
 
 export interface ExactCarrierRenderer {
-  frames: FullHillOneRendererSource['replay']['frames'];
-  samples: readonly CarrierRootSample[];
-  renderFrame(frameIndex: number): void;
+  readonly state: LermHordeLiveRuntimeState;
+  durationMs: number;
+  completionElapsedMs: number;
+  advanceTo(elapsedMs: number): LermHordeLiveRuntimeState;
+  reset(): LermHordeLiveRuntimeState;
   resize(): void;
-  createReceipt(operatorPlayCount: number): FullHillOneRendererReceipt;
+  createReceipt(operatorPlayCount: number): ExactCarrierLiveRuntimeReceipt;
   bodyVertexCount: number;
   terrainSampleCount: number;
   terrainTriangleCount: number;
@@ -134,6 +126,43 @@ export interface ExactCarrierRenderer {
   railModuleSha256: typeof EXACT_3D_CARRIER_RAIL_MODULE_SHA256;
   railHistorySha256: typeof EXACT_3D_CARRIER_RAIL_HISTORY_SHA256;
   effectiveRailId: typeof EXACT_3D_CARRIER_RAIL_ID;
+}
+
+export interface ExactCarrierLiveRuntimeReceipt {
+  schema: 'lerms.horde-live-runtime-renderer.v0';
+  status: {
+    ok: true;
+    phase: 'complete';
+    fallbackStatus: 'none';
+    staleStatus: 'fresh';
+    failurePhase: null;
+  };
+  renderer: {
+    requested: typeof FULL_HILL_RENDERER_ID;
+    effective: typeof FULL_HILL_RENDERER_ID;
+    canvasCount: 1;
+    sceneCount: 1;
+    cameraCount: 1;
+    depthBufferCount: 1;
+    depthBits: number;
+    visibleSvgCount: 0;
+    terrainTextureSubstitution: false;
+  };
+  carrier: {
+    identity: '719024';
+    bodySha256: typeof EXACT_3D_CARRIER_BODY_SHA256;
+    railRevision: typeof EXACT_3D_CARRIER_RAIL_REVISION;
+    railModuleSha256: typeof EXACT_3D_CARRIER_RAIL_MODULE_SHA256;
+    railHistorySha256: typeof EXACT_3D_CARRIER_RAIL_HISTORY_SHA256;
+    railId: typeof EXACT_3D_CARRIER_RAIL_ID;
+    departed: true;
+  };
+  playback: {
+    initialState: 'paused';
+    operatorPlayCount: 1;
+    autoplayObserved: false;
+  };
+  runtime: LermHordeLiveRuntimeReceipt;
 }
 
 export async function createExactCarrierRenderer(
@@ -236,20 +265,21 @@ export async function createExactCarrierRenderer(
     registration,
   );
 
-  const fullHillSource = createFullHillOneRendererSource(
-    railHistory as unknown as LermHordeProducerHistoryCompositionReceipt,
-  );
-  const acceptedRoots = fullHillSource.replay.frames
-    .filter((frame) => frame.kind === 'actor-prefix')
-    .map((frame) => {
-      if (!frame.actor) {
-        throw new Error(`full-Hill actor frame ${frame.index} is missing its root`);
-      }
-      return frame.actor.rootWorld;
+  const producerReceipt =
+    railHistory as unknown as LermHordeProducerHistoryCompositionReceipt;
+  const reviewedRail = rehydrateReviewedRail(railHistory);
+  const createRuntime = (): LermHordeLiveRuntime =>
+    createLermHordeLiveRuntime({
+      producerReceipt,
+      railSampler: (sourceDistance) =>
+        railCore.sampleCreatureScaleLocomotionRail(
+          reviewedRail,
+          sourceDistance,
+        ),
+      hillRevision: LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
     });
-  const samples = createRootSamples(acceptedRoots, railHistory, railCore);
-  const firstTerrain = fullHillSource.buffers[0];
-  if (!firstTerrain) throw new Error('full-Hill replay has no terrain buffer');
+  let runtime = createRuntime();
+  const firstTerrain = runtime.state.terrainBuffer;
 
   const canvas = document.createElement('canvas');
   canvas.className = 'stage__renderer';
@@ -322,44 +352,44 @@ export async function createExactCarrierRenderer(
   rim.position.set(8, -2, 8);
   scene.add(rim);
 
-  let lastFrameIndex = -1;
-  const renderFrame = (frameIndex: number): void => {
-    const frame = fullHillSource.replay.frames[frameIndex];
-    const terrainBuffer = fullHillSource.buffers[frameIndex];
-    if (!frame || !terrainBuffer) {
-      throw new Error(`full-Hill frame ${frameIndex} is unavailable`);
-    }
+  let lastTickCount = -1;
+  const renderState = (state: LermHordeLiveRuntimeState): void => {
+    const terrainBuffer = state.terrainBuffer;
     updateHillTerrainGeometry(terrainGeometry, terrainBuffer);
-    if (frame.kind === 'actor-prefix') {
-      const sample = samples[frameIndex - 1];
-      if (!sample || !frame.actor) {
-        throw new Error(`full-Hill carrier sample ${frameIndex} is unavailable`);
-      }
+    if (state.body) {
+      const rootFrame = liveBodyRootFrame(state.body);
       const positions = evaluateSmoothFittedPhase(
         binding,
-        sample.progress,
-        sample.rootFrame,
+        state.body.progress,
+        rootFrame,
         0.18,
       );
       const attribute = geometry.getAttribute('position') as THREE.BufferAttribute;
       attribute.copyArray(positions);
       attribute.needsUpdate = true;
-      if (lastFrameIndex !== frameIndex) {
+      if (lastTickCount !== state.tickCount) {
         geometry.computeVertexNormals();
-        geometry.computeBoundingSphere();
       }
       bodyMesh.visible = true;
     } else {
       bodyMesh.visible = false;
     }
-    canvas.dataset.frameIndex = String(frameIndex);
-    canvas.dataset.frameKind = frame.kind;
+    canvas.dataset.elapsedMs = state.elapsedMs.toFixed(3);
+    canvas.dataset.frameIndex = String(state.tickCount);
+    canvas.dataset.frameKind = state.phase;
+    canvas.dataset.runtimeRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
+    canvas.dataset.admittedIntervalCount = String(
+      state.admittedIntervalCount,
+    );
+    canvas.dataset.sourceDistance =
+      state.body?.sourceDistance.toFixed(9) ?? '';
+    canvas.dataset.progress = state.body?.progress.toFixed(9) ?? '1';
     canvas.dataset.terrainSampleChecksum = terrainBuffer.sampleChecksum;
     canvas.dataset.terrainTopologyChecksum = terrainBuffer.topologyChecksum;
     canvas.dataset.trafficChecksum =
       terrainBuffer.witness.producerTrafficFieldChecksum;
     renderer.render(scene, camera);
-    lastFrameIndex = frameIndex;
+    lastTickCount = state.tickCount;
   };
 
   const resize = (): void => {
@@ -393,27 +423,24 @@ export async function createExactCarrierRenderer(
 
   const createReceipt = (
     operatorPlayCount: number,
-  ): FullHillOneRendererReceipt => {
+  ): ExactCarrierLiveRuntimeReceipt => {
     const canvasCount = stage.querySelectorAll('canvas').length;
     const visibleSvgCount = [...stage.querySelectorAll('svg')].filter(
       (svg) =>
         !svg.hasAttribute('hidden') && getComputedStyle(svg).display !== 'none',
     ).length;
-    const hillHistoryRetained =
-      fullHillSource.buffers[16]?.witness.producerTrafficFieldChecksum ===
-      fullHillSource.buffers[17]?.witness.producerTrafficFieldChecksum;
     if (
       canvasCount !== 1 ||
       visibleSvgCount !== 0 ||
       operatorPlayCount !== 1 ||
-      !hillHistoryRetained
+      runtime.state.phase !== 'departed'
     ) {
       throw new Error(
-        'full-Hill completion cannot close with split presentation, autoplay, or lost history',
+        'live runtime completion cannot close with split presentation, autoplay, or a visible body',
       );
     }
-    const receipt: FullHillOneRendererReceipt = {
-      schema: FULL_HILL_ONE_RENDERER_SCHEMA,
+    return {
+      schema: 'lerms.horde-live-runtime-renderer.v0',
       status: {
         ok: true,
         phase: 'complete',
@@ -432,29 +459,13 @@ export async function createExactCarrierRenderer(
         visibleSvgCount,
         terrainTextureSubstitution: false,
       },
-      terrain: {
-        schema: HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA,
-        gridResolution: { ...firstTerrain.gridResolution },
-        sampleCount: firstTerrain.sampleCount,
-        triangleCount: terrainTriangleCount,
-        indexOrder: 'z-major-two-triangles-per-cell',
-        frameCount: fullHillSource.buffers.length,
-        frames: fullHillSource.replay.frames.map((frame, index) => {
-          const buffer = fullHillSource.buffers[index];
-          if (!buffer) throw new Error(`full-Hill buffer ${index} is missing`);
-          return {
-            index,
-            kind: frame.kind,
-            timestampMs: frame.timestampMs,
-            prefixSampleCount: frame.prefixSampleCount,
-            ...createFullHillFrameSourceEnvelope(buffer),
-          };
-        }),
-      },
       carrier: {
         identity: '719024',
         bodySha256: EXACT_3D_CARRIER_BODY_SHA256,
-        visiblePrefixFrameCount: samples.length,
+        railRevision: EXACT_3D_CARRIER_RAIL_REVISION,
+        railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
+        railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
+        railId: EXACT_3D_CARRIER_RAIL_ID,
         departed: true,
       },
       playback: {
@@ -462,17 +473,8 @@ export async function createExactCarrierRenderer(
         operatorPlayCount,
         autoplayObserved: false,
       },
-      departure: {
-        bodyVisible: false,
-        hillHistoryRetained,
-        trafficChecksum:
-          fullHillSource.buffers[17]?.witness.producerTrafficFieldChecksum ?? '',
-      },
+      runtime: runtime.createReceipt(),
     };
-    return validateFullHillOneRendererReceipt(
-      receipt,
-      fullHillSource.buffers,
-    );
   };
 
   stage.dataset.carrierAssetSha256 = bodySha256;
@@ -483,10 +485,26 @@ export async function createExactCarrierRenderer(
   stage.dataset.terrainSampleCount = String(firstTerrain.sampleCount);
   stage.dataset.terrainTriangleCount = String(terrainTriangleCount);
 
+  renderState(runtime.state);
+  const durationMs = producerReceipt.historySummary.lastTimestampMs;
+  const completionElapsedMs = durationMs + 900;
   return {
-    frames: fullHillSource.replay.frames,
-    samples,
-    renderFrame,
+    get state() {
+      return runtime.state;
+    },
+    durationMs,
+    completionElapsedMs,
+    advanceTo(elapsedMs) {
+      const state = runtime.advanceTo(elapsedMs);
+      renderState(state);
+      return state;
+    },
+    reset() {
+      runtime = createRuntime();
+      lastTickCount = -1;
+      renderState(runtime.state);
+      return runtime.state;
+    },
     resize,
     createReceipt,
     bodyVertexCount: binding.vertexCount,
@@ -498,6 +516,27 @@ export async function createExactCarrierRenderer(
     railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
     railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
     effectiveRailId: EXACT_3D_CARRIER_RAIL_ID,
+  };
+}
+
+function liveBodyRootFrame(
+  body: LermHordeLiveRuntimeState['body'] & {},
+): CreatureRootFrame {
+  const [originX, originY, originZ] = body.rootWorld;
+  const [rightX, rightY, rightZ] = body.locomotionFrame.right;
+  const [upX, upY, upZ] = body.locomotionFrame.up;
+  const [forwardX, forwardY, forwardZ] =
+    body.locomotionFrame.forward;
+  return {
+    schema: 'kaminos.creature-root-frame.v0',
+    origin: { x: originX, y: originY, z: originZ },
+    lateral: { x: rightX, y: rightY, z: rightZ },
+    normal: { x: upX, y: upY, z: upZ },
+    tangent: {
+      x: -forwardX,
+      y: -forwardY,
+      z: -forwardZ,
+    },
   };
 }
 
@@ -612,7 +651,7 @@ function createRootSamples(
       sourceDistance: sampled.sourceDistance,
       progress: sampled.progress,
       rootWorld: acceptedRootWorld,
-      railRootPosition: sampled.position,
+      railRootPosition: [...sampled.position],
       hillSupportRootPosition: acceptedRootWorld,
       supportHeightDelta: acceptedRootWorld[1] - sampled.position[1],
       railId: sampled.railId,
