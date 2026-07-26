@@ -153,6 +153,7 @@ const REPLAY_TERRAIN_PARAMS: HillOfHillsTerrainParams = {
   gridResolutionZ: 60,
   topologyDynamicsMode: 'persistent_pressure',
   topologyPossibilityMode: 'phase_recomposed',
+  producerTrafficDepositionLaw: 'additive_v0',
   topologyPhaseDurationMs: 600,
   topologyPhaseIntensity: 0.92,
   topologyPhaseDriftIntensity: 1,

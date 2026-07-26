@@ -267,14 +267,14 @@ assert.equal(canonicalReceipt.admission.intervalCount, 13);
 assert.equal(canonicalReceipt.admission.uniqueEpisodeCount, 13);
 assert.equal(
   canonicalReceipt.admission.exposureSeconds,
-  1.93321673232201,
+  1.9332167316682374,
 );
-assert.equal(canonicalReceipt.admission.trafficChecksum, '057c750d');
-assert.equal(canonicalReceipt.terrain.sampleChecksum, '840883ac');
-assert.equal(canonicalReceipt.terrain.topologyChecksum, '9616b1f6');
+assert.equal(canonicalReceipt.admission.trafficChecksum, '8c8ba3e9');
+assert.equal(canonicalReceipt.terrain.sampleChecksum, '43ce0ebb');
+assert.equal(canonicalReceipt.terrain.topologyChecksum, '5335c118');
 assert.equal(
   canonicalReceipt.terrain.supportFrameChecksum,
-  'ab24b35a',
+  '34c0a178',
 );
 
 const burstRuntime = createLermHordeLiveRuntime({

@@ -408,11 +408,11 @@ async function runWitness() {
       receipt?.runtime?.admission?.intervalCount === 13 &&
       receipt?.runtime?.admission?.uniqueEpisodeCount === 13 &&
       receipt?.runtime?.admission?.exposureSeconds ===
-        1.93321673232201 &&
-      receipt?.runtime?.admission?.trafficChecksum === '057c750d' &&
-      receipt?.runtime?.terrain?.sampleChecksum === '840883ac' &&
-      receipt?.runtime?.terrain?.topologyChecksum === '9616b1f6' &&
-      receipt?.runtime?.terrain?.supportFrameChecksum === 'ab24b35a';
+        1.9332167316682374 &&
+      receipt?.runtime?.admission?.trafficChecksum === '8c8ba3e9' &&
+      receipt?.runtime?.terrain?.sampleChecksum === '43ce0ebb' &&
+      receipt?.runtime?.terrain?.topologyChecksum === '5335c118' &&
+      receipt?.runtime?.terrain?.supportFrameChecksum === '34c0a178';
     report.zeroReplayFramesVerified &&=
       receipt?.runtime?.clock?.precomputedFrameCount === 0 &&
       receipt?.runtime?.clock?.prefixRebuildCount === 0 &&
