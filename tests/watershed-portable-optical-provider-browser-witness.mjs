@@ -135,7 +135,7 @@ try {
 
   const receipt = {
     schema: 'lerms.hill-of-hills.portable-macro-optical-browser-receipt.v1',
-    status: 'complete',
+    status: 'candidate_unverified',
     runId: options.runId,
     launch: {
       ...launchReceipt,
@@ -166,7 +166,17 @@ try {
   };
   const reportPath = join(outputDirectory, `${options.runId}-receipt.json`);
   await writeFile(reportPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  assertReceipt(receipt);
+  try {
+    assertReceipt(receipt);
+    receipt.status = 'complete';
+    await writeFile(reportPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  } catch (error) {
+    receipt.status = 'failed';
+    receipt.failurePhase = 'assert-receipt';
+    receipt.error = error instanceof Error ? error.message : String(error);
+    await writeFile(reportPath, `${JSON.stringify(receipt, null, 2)}\n`);
+    throw error;
+  }
   console.log(JSON.stringify({
     ok: true,
     reportPath,
