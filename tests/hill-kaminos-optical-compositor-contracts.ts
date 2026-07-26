@@ -1,5 +1,6 @@
 import {
   HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE,
+  HILL_OPTICAL_ATTACHMENT_CADENCE,
   assertHillKaminosOpticalCompositorWitness,
   createHillKaminosOpticalFailureReport,
   createHillKaminosOpticalHostFrame,
@@ -21,6 +22,10 @@ const identity = {
   farMeters: 80,
 };
 const host = createHillKaminosOpticalHostFrame(identity);
+assert(
+  HILL_OPTICAL_ATTACHMENT_CADENCE === 'display_cadenced_same_frame',
+  'Hill optics must not retain a lower-cadence camera attachment',
+);
 assert(host.sceneColor.frameId === identity.frameId, 'scene color is joined to the exact host frame');
 assert(host.sceneColor.format === 'rgba16float' && host.sceneColor.colorSpace === 'linear_hdr', 'scene color is linear HDR');
 assert(host.sceneDepth.format === 'r32float', 'scene depth uses the renderer contract format');
@@ -41,6 +46,15 @@ const witness = {
   rendererRoute: 'kaminos/finger-fluid/portable-macro-screen-space-optics-v0',
   shaderRoute: 'wgsl-portable-macro-fresnel-refraction-absorption-v0',
   frameId: identity.frameId,
+  timing: {
+    cadence: HILL_OPTICAL_ATTACHMENT_CADENCE,
+    displayFrameGeneration: 42,
+    cameraGeneration: 42,
+    sceneColorGeneration: 42,
+    sceneDepthGeneration: 42,
+    opticalSubmissionGeneration: 42,
+    retainedFrame: false as const,
+  },
   attachments: {
     sceneColor: host.sceneColor,
     sceneDepth: host.sceneDepth,
@@ -68,6 +82,7 @@ assertHillKaminosOpticalCompositorWitness(witness);
 for (const invalid of [
   { ...witness, route: { ...witness.route, effective: 'cyan-debug' } },
   { ...witness, attachments: { ...witness.attachments, sceneDepth: { ...host.sceneDepth, frameId: 'stale-frame' } } },
+  { ...witness, timing: { ...witness.timing, opticalSubmissionGeneration: 41, retainedFrame: true } },
   { ...witness, output: { ...witness.output, observedPixelCount: 0, blank: true } },
 ]) {
   let rejected = false;
@@ -76,7 +91,7 @@ for (const invalid of [
   } catch {
     rejected = true;
   }
-  assert(rejected, 'fallback, stale attachment, and blank output probes must fail');
+  assert(rejected, 'fallback, stale or retained attachment, and blank output probes must fail');
 }
 
 const failure = createHillKaminosOpticalFailureReport({

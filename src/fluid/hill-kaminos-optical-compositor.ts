@@ -4,6 +4,7 @@ import {
 } from 'kaminos/finger-fluid-portable-macro-optical-renderer.js';
 import {
   HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE,
+  HILL_OPTICAL_ATTACHMENT_CADENCE,
   KAMINOS_C7_REVISION,
   createHillKaminosOpticalHostFrame,
 } from './hill-kaminos-optical-compositor-contract.js';
@@ -30,6 +31,15 @@ export interface HillKaminosOpticalRenderResult {
   };
   kaminosRevision: typeof KAMINOS_C7_REVISION;
   frameId: string;
+  timing: {
+    cadence: typeof HILL_OPTICAL_ATTACHMENT_CADENCE;
+    displayFrameGeneration: number;
+    cameraGeneration: number;
+    sceneColorGeneration: number;
+    sceneDepthGeneration: number;
+    opticalSubmissionGeneration: number;
+    retainedFrame: false;
+  };
   rendererRoute: string;
   shaderRoute: string;
   source: {
@@ -344,6 +354,15 @@ export async function createHillKaminosOpticalCompositor(
       },
       kaminosRevision: KAMINOS_C7_REVISION,
       frameId,
+      timing: {
+        cadence: HILL_OPTICAL_ATTACHMENT_CADENCE,
+        displayFrameGeneration: options.frameSequence,
+        cameraGeneration: options.frameSequence,
+        sceneColorGeneration: options.frameSequence,
+        sceneDepthGeneration: options.frameSequence,
+        opticalSubmissionGeneration: options.frameSequence,
+        retainedFrame: false,
+      },
       rendererRoute: evidence.effectiveRoute,
       shaderRoute: evidence.shaderRoute,
       source: {

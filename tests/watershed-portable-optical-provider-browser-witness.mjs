@@ -113,6 +113,16 @@ try {
   const postScreenshot = await captureScreenshot(cdp);
   const postPath = join(outputDirectory, `${options.runId}-post-remap.png`);
   await writeFile(postPath, postScreenshot);
+  let cameraAttachmentProbe = null;
+  let cameraMotionPath = null;
+  let cameraMotionBytes = null;
+  if (options.url.includes('watershedOptics=1')) {
+    cameraAttachmentProbe = await exerciseOpticalCameraAttachment(cdp);
+    const cameraMotionScreenshot = await captureScreenshot(cdp);
+    cameraMotionPath = join(outputDirectory, `${options.runId}-camera-motion.png`);
+    cameraMotionBytes = cameraMotionScreenshot.length;
+    await writeFile(cameraMotionPath, cameraMotionScreenshot);
+  }
   let opticalOnlyPath = null;
   let opticalOnlyBytes = null;
   let opticalObservedPixelCount = null;
@@ -153,11 +163,14 @@ try {
     screenshots: {
       pre: prePath,
       post: postPath,
+      cameraMotion: cameraMotionPath,
       opticalOnly: opticalOnlyPath,
       preBytes: preScreenshot.length,
       postBytes: postScreenshot.length,
+      cameraMotionBytes,
       opticalOnlyBytes
     },
+    cameraAttachmentProbe,
     opticalObservation: opticalOnlyPath ? {
       authority: 'browser_screenshot_pixel_readback',
       observedPixelCount: opticalObservedPixelCount,
@@ -182,6 +195,7 @@ try {
     reportPath,
     prePath,
     postPath,
+    cameraMotionPath,
     opticalOnlyPath,
     preStep: pre.stepCount,
     postStep: post.stepCount,
@@ -377,6 +391,45 @@ async function countNonBlackPixels(cdp, png) {
   return observed;
 }
 
+async function exerciseOpticalCameraAttachment(cdp) {
+  const result = await cdp.command('Runtime.evaluate', {
+    expression: `(async () => {
+      const yawRow = [...document.querySelectorAll('.view-controls label')]
+        .find((row) => row.querySelector('span')?.textContent === 'Camera yaw');
+      const input = yawRow?.querySelector('input[type="range"]');
+      if (!input) throw new Error('camera attachment probe could not find the yaw control');
+      const samples = [];
+      for (const yaw of [-0.32, 0.28, -0.18, 0.36]) {
+        input.value = String(yaw);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const state = window.__lermsHillKaminosDebugState;
+        samples.push({
+          requestedYaw: yaw,
+          displayFrameGeneration: state.displayFrameGeneration,
+          opticalAttachmentAgeFrames: state.opticalAttachmentAgeFrames,
+          timing: state.opticalCompositor?.timing ?? null
+        });
+      }
+      return {
+        authority: 'live_camera_input_and_runtime_generation_witness',
+        sampleCount: samples.length,
+        samples,
+        maxOpticalAttachmentAgeFrames: Math.max(
+          ...samples.map((sample) => sample.opticalAttachmentAgeFrames ?? Number.POSITIVE_INFINITY)
+        )
+      };
+    })()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  const probe = result.result?.value;
+  if (!probe || !Array.isArray(probe.samples)) {
+    throw new Error('camera attachment probe returned no generation evidence');
+  }
+  return probe;
+}
+
 function assertReceipt(receipt) {
   const before = receipt.pre.portableOpticalProvider;
   const after = receipt.post.portableOpticalProvider;
@@ -394,7 +447,33 @@ function assertReceipt(receipt) {
       receipt.post.opticalCompositor?.route?.effective !==
         'lerms/hill-of-hills/c7-portable-macro-optical-compositor-v0' ||
       receipt.post.opticalCompositor.route.fallback !== null ||
+      receipt.post.opticalCompositor.timing?.cadence !== 'display_cadenced_same_frame' ||
+      receipt.post.opticalCompositor.timing.displayFrameGeneration !==
+        receipt.post.opticalCompositor.timing.cameraGeneration ||
+      receipt.post.opticalCompositor.timing.displayFrameGeneration !==
+        receipt.post.opticalCompositor.timing.sceneColorGeneration ||
+      receipt.post.opticalCompositor.timing.displayFrameGeneration !==
+        receipt.post.opticalCompositor.timing.sceneDepthGeneration ||
+      receipt.post.opticalCompositor.timing.displayFrameGeneration !==
+        receipt.post.opticalCompositor.timing.opticalSubmissionGeneration ||
+      receipt.post.opticalCompositor.timing.retainedFrame !== false ||
+      receipt.cameraAttachmentProbe?.authority !==
+        'live_camera_input_and_runtime_generation_witness' ||
+      receipt.cameraAttachmentProbe.sampleCount < 4 ||
+      receipt.cameraAttachmentProbe.maxOpticalAttachmentAgeFrames !== 0 ||
+      !receipt.cameraAttachmentProbe.samples.every((sample, index, samples) => (
+        sample.opticalAttachmentAgeFrames === 0 &&
+        sample.timing?.cadence === 'display_cadenced_same_frame' &&
+        sample.timing.retainedFrame === false &&
+        sample.timing.displayFrameGeneration === sample.displayFrameGeneration &&
+        sample.timing.cameraGeneration === sample.displayFrameGeneration &&
+        sample.timing.sceneColorGeneration === sample.displayFrameGeneration &&
+        sample.timing.sceneDepthGeneration === sample.displayFrameGeneration &&
+        sample.timing.opticalSubmissionGeneration === sample.displayFrameGeneration &&
+        (index === 0 || sample.displayFrameGeneration > samples[index - 1].displayFrameGeneration)
+      )) ||
       receipt.post.opticalCompositor.output.drawableWetTriangleCount <= 0 ||
+      receipt.screenshots.cameraMotionBytes < 100_000 ||
       receipt.screenshots.opticalOnlyBytes < 10_000 ||
       receipt.opticalObservation?.authority !== 'browser_screenshot_pixel_readback' ||
       receipt.opticalObservation.observedPixelCount <= 0 ||

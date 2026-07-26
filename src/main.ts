@@ -295,8 +295,7 @@ const hillOpticalViewProjection = new Matrix4();
 const hillOpticalCanvas = watershedOpticsEnabled ? document.createElement('canvas') : null;
 let hillOpticalCompositor: Awaited<ReturnType<typeof createHillKaminosOpticalCompositor>> | undefined;
 let hillOpticalStatus = watershedOpticsEnabled ? 'loading' : 'disabled';
-let hillOpticalFrameSequence = 0;
-let hillOpticalLastRenderAt = 0;
+let hillDisplayFrameGeneration = 0;
 let hillOpticalResult: HillKaminosOpticalRenderResult | null = null;
 
 if (hillOpticalCanvas) {
@@ -478,6 +477,7 @@ function resize(): void {
 }
 
 function render(timestampMs: number): void {
+  hillDisplayFrameGeneration += 1;
   const width = window.innerWidth;
   const height = window.innerHeight;
   const motionTimestampMs = timestampMs * viewState.motionSpeed;
@@ -511,7 +511,7 @@ function render(timestampMs: number): void {
   if (hillKaminosRuntime && !watershedOpticsEnabled) {
     drawKaminosFluidFeedback(terrainBuffer, hillKaminosRuntime, width, height);
   }
-  renderHillOptics(timestampMs);
+  renderHillOptics(hillDisplayFrameGeneration);
   if (previewSettings.mode !== 'neutral_geometry' && previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
@@ -2162,6 +2162,10 @@ function publishHillKaminosDebugState(): void {
     ? {
         ...hillKaminosRuntime.witness,
         consumerStatus: hillKaminosRuntimeStatus,
+        displayFrameGeneration: hillDisplayFrameGeneration,
+        opticalAttachmentAgeFrames: hillOpticalResult
+          ? hillDisplayFrameGeneration - hillOpticalResult.timing.displayFrameGeneration
+          : null,
         opticalCompositorStatus: hillOpticalStatus,
         opticalCompositor: hillOpticalResult
       }
@@ -2214,14 +2218,11 @@ function terrainTriangleIndices(buffer: HillOfHillsTerrainBuffer): Uint32Array {
   return cachedTerrainIndices;
 }
 
-function renderHillOptics(timestampMs: number): void {
+function renderHillOptics(displayFrameGeneration: number): void {
   if (!watershedOpticsEnabled || !hillOpticalCompositor || !hillKaminosRuntime) return;
-  if (timestampMs - hillOpticalLastRenderAt < 72) return;
-  hillOpticalLastRenderAt = timestampMs;
-  hillOpticalFrameSequence += 1;
   try {
     hillOpticalResult = hillOpticalCompositor.render({
-      frameSequence: hillOpticalFrameSequence,
+      frameSequence: displayFrameGeneration,
       camera: {
         view: hillOpticalCamera.matrixWorldInverse.elements,
         viewProjection: hillOpticalViewProjection.elements,

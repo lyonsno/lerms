@@ -4,6 +4,8 @@ export const KAMINOS_PORTABLE_MACRO_OPTICAL_RENDERER_ROUTE =
   'kaminos/finger-fluid/portable-macro-screen-space-optics-v0' as const;
 export const KAMINOS_PORTABLE_MACRO_OPTICAL_SHADER_ROUTE =
   'wgsl-portable-macro-fresnel-refraction-absorption-v0' as const;
+export const HILL_OPTICAL_ATTACHMENT_CADENCE =
+  'display_cadenced_same_frame' as const;
 export const KAMINOS_C7_REVISION =
   'c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35' as const;
 
@@ -109,6 +111,15 @@ export interface HillKaminosOpticalCompositorWitness {
   rendererRoute: typeof KAMINOS_PORTABLE_MACRO_OPTICAL_RENDERER_ROUTE;
   shaderRoute: typeof KAMINOS_PORTABLE_MACRO_OPTICAL_SHADER_ROUTE;
   frameId: string;
+  timing: {
+    cadence: typeof HILL_OPTICAL_ATTACHMENT_CADENCE;
+    displayFrameGeneration: number;
+    cameraGeneration: number;
+    sceneColorGeneration: number;
+    sceneDepthGeneration: number;
+    opticalSubmissionGeneration: number;
+    retainedFrame: false;
+  };
   attachments: {
     sceneColor: HillOpticalAttachment;
     sceneDepth: HillOpticalAttachment;
@@ -153,6 +164,18 @@ export function assertHillKaminosOpticalCompositorWitness(
     attachment => attachment.frameId !== witness.frameId || attachment.authority !== 'host_live_frame',
   )) {
     throw new Error('Hill optical compositor attachments are stale or mixed-frame');
+  }
+  const timing = witness.timing;
+  if (!timing
+    || timing.cadence !== HILL_OPTICAL_ATTACHMENT_CADENCE
+    || !Number.isSafeInteger(timing.displayFrameGeneration)
+    || timing.displayFrameGeneration <= 0
+    || timing.cameraGeneration !== timing.displayFrameGeneration
+    || timing.sceneColorGeneration !== timing.displayFrameGeneration
+    || timing.sceneDepthGeneration !== timing.displayFrameGeneration
+    || timing.opticalSubmissionGeneration !== timing.displayFrameGeneration
+    || timing.retainedFrame !== false) {
+    throw new Error('Hill optical compositor retained or mixed a stale display-frame attachment');
   }
   const output = witness.output;
   if (!output?.encoded || !output.submitted || output.blank || output.partial
