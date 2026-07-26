@@ -20,7 +20,7 @@ export interface HillPrimaryViewerActorAuthority {
   };
   lifecycle: {
     visible: boolean;
-    phase: string;
+    phase: 'traversing' | 'departed';
   };
   terrain: HillPrimaryViewerTerrainIdentity;
 }
@@ -83,6 +83,22 @@ export interface HillPrimaryViewerActorLayer {
   draw: (frame: HillPrimaryViewerActorDrawFrame) => void;
 }
 
+export interface HillPrimaryViewerActorLayerTarget {
+  surface: {
+    context: CanvasRenderingContext2D;
+  };
+  merge: () => void;
+}
+
+export interface HillPrimaryViewerActorFrameTarget {
+  createLayerTarget: (actor: {
+    layerId: string;
+    requestedRoute: string;
+    effectiveRoute: string;
+  }) => HillPrimaryViewerActorLayerTarget;
+  composite: () => void;
+}
+
 export interface HillPrimaryViewerActorHostDrawInput {
   timestampMs: number;
   viewport: {
@@ -92,9 +108,15 @@ export interface HillPrimaryViewerActorHostDrawInput {
   };
   terrain: HillPrimaryViewerTerrainIdentity;
   view: HillPrimaryViewerViewSnapshot;
-  surface: {
-    context: CanvasRenderingContext2D;
-  };
+  createFrameTarget: (frame: {
+    timestampMs: number;
+    viewport: {
+      width: number;
+      height: number;
+      pixelRatio: number;
+    };
+    terrain: HillPrimaryViewerTerrainIdentity;
+  }) => HillPrimaryViewerActorFrameTarget;
   project: (
     point: HillPrimaryViewerWorldPoint,
   ) => HillPrimaryViewerProjectionPoint;
@@ -150,40 +172,58 @@ export function createHillPrimaryViewerActorHost(): HillPrimaryViewerActorHost {
     },
     draw(input) {
       validateHostInput(input);
-      let visibleLayerCount = 0;
-      let drawnLayerCount = 0;
-      const effectiveActorRoutes: string[] = [];
-
-      for (const layer of layers.values()) {
-        const authority = layer.authority();
+      const snapshots = Array.from(layers.values(), (layer) => {
+        const authority = snapshotActorAuthority(layer.authority());
         validateActorAuthority(authority, input.terrain, layer.id);
-        effectiveActorRoutes.push(authority.route.effective);
-        if (!authority.lifecycle.visible) continue;
-        visibleLayerCount += 1;
+        return { layer, authority };
+      });
+      const visibleSnapshots = snapshots.filter(
+        ({ authority }) => authority.lifecycle.visible,
+      );
+      const viewport = {
+        width: input.viewport.width,
+        height: input.viewport.height,
+        pixelRatio: input.viewport.pixelRatio ?? 1,
+      };
 
-        layer.draw({
-          schema: HILL_PRIMARY_VIEWER_ACTOR_HOST_SCHEMA,
-          route: officialHostRoute(),
-          drawOrder: HILL_PRIMARY_VIEWER_ACTOR_DRAW_ORDER,
-          time: {
-            timestampMs: input.timestampMs,
-          },
-          viewport: {
-            width: input.viewport.width,
-            height: input.viewport.height,
-            pixelRatio: input.viewport.pixelRatio ?? 1,
-          },
+      if (visibleSnapshots.length > 0) {
+        const frameTarget = input.createFrameTarget({
+          timestampMs: input.timestampMs,
+          viewport,
           terrain: { ...input.terrain },
-          view: { ...input.view },
-          actor: {
-            layerId: layer.id,
-            requestedRoute: authority.route.requested,
-            effectiveRoute: authority.route.effective,
-          },
-          surface: input.surface,
-          project: input.project,
         });
-        drawnLayerCount += 1;
+        validateFrameTarget(frameTarget);
+
+        const renderedTargets = visibleSnapshots.map(
+          ({ layer, authority }) => {
+            const actor = {
+              layerId: layer.id,
+              requestedRoute: authority.route.requested,
+              effectiveRoute: authority.route.effective,
+            };
+            const layerTarget = frameTarget.createLayerTarget(actor);
+            validateLayerTarget(layerTarget, layer.id);
+
+            layer.draw({
+              schema: HILL_PRIMARY_VIEWER_ACTOR_HOST_SCHEMA,
+              route: officialHostRoute(),
+              drawOrder: HILL_PRIMARY_VIEWER_ACTOR_DRAW_ORDER,
+              time: {
+                timestampMs: input.timestampMs,
+              },
+              viewport,
+              terrain: { ...input.terrain },
+              view: { ...input.view },
+              actor,
+              surface: layerTarget.surface,
+              project: input.project,
+            });
+            return layerTarget;
+          },
+        );
+
+        for (const target of renderedTargets) target.merge();
+        frameTarget.composite();
       }
 
       return {
@@ -193,9 +233,11 @@ export function createHillPrimaryViewerActorHost(): HillPrimaryViewerActorHost {
         terrain: { ...input.terrain },
         timestampMs: input.timestampMs,
         registeredLayerCount: layers.size,
-        visibleLayerCount,
-        drawnLayerCount,
-        effectiveActorRoutes,
+        visibleLayerCount: visibleSnapshots.length,
+        drawnLayerCount: visibleSnapshots.length,
+        effectiveActorRoutes: snapshots.map(
+          ({ authority }) => authority.route.effective,
+        ),
       };
     },
   };
@@ -224,7 +266,10 @@ function validateHostInput(
     Number.isFinite(input.viewport?.width) &&
       input.viewport.width > 0 &&
       Number.isFinite(input.viewport?.height) &&
-      input.viewport.height > 0,
+      input.viewport.height > 0 &&
+      (input.viewport.pixelRatio === undefined ||
+        (Number.isFinite(input.viewport.pixelRatio) &&
+          input.viewport.pixelRatio > 0)),
     'primary-viewer actor host requires a finite viewport',
   );
   requireTerrainIdentity(input.terrain, 'primary-viewer current Hill terrain');
@@ -239,8 +284,8 @@ function validateHostInput(
     'primary-viewer actor host requires the current Hill projection',
   );
   requireHost(
-    input.surface?.context !== undefined,
-    'primary-viewer actor host requires the current Hill drawing surface',
+    typeof input.createFrameTarget === 'function',
+    'primary-viewer actor host requires a Hill-owned isolated frame target',
   );
 }
 
@@ -266,6 +311,20 @@ function validateActorAuthority(
     authority.route.requested === authority.route.effective,
     `primary-viewer actor layer ${layerId} requested/effective route mismatch`,
   );
+  requireHost(
+    typeof authority.lifecycle?.visible === 'boolean',
+    `primary-viewer actor layer ${layerId} lifecycle visibility is incomplete`,
+  );
+  requireHost(
+    authority.lifecycle.phase === 'traversing' ||
+      authority.lifecycle.phase === 'departed',
+    `primary-viewer actor layer ${layerId} lifecycle phase is invalid`,
+  );
+  requireHost(
+    authority.lifecycle.visible ===
+      (authority.lifecycle.phase === 'traversing'),
+    `primary-viewer actor layer ${layerId} lifecycle phase/visibility mismatch`,
+  );
   requireTerrainIdentity(
     authority.terrain,
     `primary-viewer actor layer ${layerId} terrain`,
@@ -275,6 +334,37 @@ function validateActorAuthority(
       authority.terrain.sampleChecksum === terrain.sampleChecksum &&
       authority.terrain.topologyChecksum === terrain.topologyChecksum,
     `primary-viewer actor layer ${layerId} does not match current Hill terrain`,
+  );
+}
+
+function snapshotActorAuthority(
+  authority: HillPrimaryViewerActorAuthority,
+): HillPrimaryViewerActorAuthority {
+  return {
+    route: { ...authority?.route },
+    lifecycle: { ...authority?.lifecycle },
+    terrain: { ...authority?.terrain },
+  } as HillPrimaryViewerActorAuthority;
+}
+
+function validateFrameTarget(
+  target: HillPrimaryViewerActorFrameTarget,
+): void {
+  requireHost(
+    typeof target?.createLayerTarget === 'function' &&
+      typeof target.composite === 'function',
+    'primary-viewer actor host received an incomplete isolated frame target',
+  );
+}
+
+function validateLayerTarget(
+  target: HillPrimaryViewerActorLayerTarget,
+  layerId: string,
+): void {
+  requireHost(
+    target?.surface?.context !== undefined &&
+      typeof target.merge === 'function',
+    `primary-viewer actor layer ${layerId} received an incomplete isolated layer target`,
   );
 }
 

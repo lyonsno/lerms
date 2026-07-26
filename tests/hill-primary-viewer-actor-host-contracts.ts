@@ -27,6 +27,24 @@ const view = {
 const projected: HillPrimaryViewerProjectionPoint[] = [];
 const draws: string[] = [];
 const drawingContext = {} as CanvasRenderingContext2D;
+const isolatedContexts: CanvasRenderingContext2D[] = [];
+let mergedLayerCount = 0;
+let compositedFrameCount = 0;
+const createFrameTarget = () => ({
+  createLayerTarget: () => {
+    const context = {} as CanvasRenderingContext2D;
+    isolatedContexts.push(context);
+    return {
+      surface: { context },
+      merge: () => {
+        mergedLayerCount += 1;
+      },
+    };
+  },
+  composite: () => {
+    compositedFrameCount += 1;
+  },
+});
 let authority: HillPrimaryViewerActorAuthority = {
   route: {
     requested: 'lerms/lerm-horde/primary-viewer-actor-frame-v0',
@@ -59,6 +77,11 @@ const layer: HillPrimaryViewerActorLayer = {
     assert.equal('camera' in frame, false);
     assert.equal('controls' in frame, false);
     assert.equal('animationLoop' in frame, false);
+    assert.notEqual(
+      frame.surface.context,
+      drawingContext,
+      'producer actor must receive an isolated context, not the canonical Hill context',
+    );
     const point = frame.project({ x: 1.5, y: 0.75, z: -2 });
     projected.push(point);
     draws.push(frame.actor.effectiveRoute);
@@ -79,7 +102,7 @@ const receipt = host.draw({
   viewport: { width: 1280, height: 720 },
   terrain,
   view,
-  surface: { context: drawingContext },
+  createFrameTarget,
   project: (point) => ({
     x: point.x * 10 + view.yaw,
     y: point.z * -8 - point.y + view.tilt,
@@ -109,6 +132,8 @@ assert.deepEqual(projected, [
     depth: -2,
   },
 ]);
+assert.equal(mergedLayerCount, 1);
+assert.equal(compositedFrameCount, 1);
 
 authority = {
   ...authority,
@@ -122,7 +147,7 @@ const departedReceipt = host.draw({
   viewport: { width: 1280, height: 720 },
   terrain,
   view,
-  surface: { context: drawingContext },
+  createFrameTarget,
   project: () => ({ x: 0, y: 0, depth: 0 }),
 });
 assert.equal(departedReceipt.visibleLayerCount, 0);
@@ -130,6 +155,11 @@ assert.equal(departedReceipt.drawnLayerCount, 0);
 assert.deepEqual(draws, [
   'lerms/lerm-horde/primary-viewer-actor-frame-v0',
 ]);
+assert.equal(
+  isolatedContexts.length,
+  1,
+  'a departed actor must not allocate an authoritative-looking drawing target',
+);
 
 authority = {
   ...authority,
@@ -149,7 +179,7 @@ assert.throws(
       viewport: { width: 1280, height: 720 },
       terrain,
       view,
-      surface: { context: drawingContext },
+      createFrameTarget,
       project: () => ({ x: 0, y: 0, depth: 0 }),
     }),
   /current Hill terrain/i,
@@ -172,18 +202,245 @@ assert.throws(
       viewport: { width: 1280, height: 720 },
       terrain,
       view,
-      surface: { context: drawingContext },
+      createFrameTarget,
       project: () => ({ x: 0, y: 0, depth: 0 }),
     }),
   /fallback/i,
   'fallback actor routes must not impersonate the official host',
 );
 
+const preRepairFalseClosures: string[] = [];
+const validAuthority = (): HillPrimaryViewerActorAuthority => ({
+  route: {
+    requested: 'lerms/lerm-horde/primary-viewer-actor-frame-v0',
+    effective: 'lerms/lerm-horde/primary-viewer-actor-frame-v0',
+    fallbackStatus: 'none',
+    staleStatus: 'fresh',
+  },
+  lifecycle: {
+    visible: true,
+    phase: 'traversing',
+  },
+  terrain,
+});
+const invalidSecondLayerHost = createHillPrimaryViewerActorHost();
+let firstLayerDraws = 0;
+invalidSecondLayerHost.register({
+  id: 'valid-first',
+  authority: validAuthority,
+  draw: () => {
+    firstLayerDraws += 1;
+  },
+});
+invalidSecondLayerHost.register({
+  id: 'invalid-second',
+  authority: () => ({
+    ...validAuthority(),
+    route: {
+      ...validAuthority().route,
+      fallbackStatus: 'fallback',
+    },
+  }),
+  draw: () => {
+    throw new Error('invalid second layer must never draw');
+  },
+});
+assert.throws(
+  () =>
+    invalidSecondLayerHost.draw({
+      timestampMs: 1_000,
+      viewport: { width: 1280, height: 720 },
+      terrain,
+      view,
+      createFrameTarget,
+      project: () => ({ x: 0, y: 0, depth: 0 }),
+    }),
+  /fallback/i,
+);
+if (firstLayerDraws !== 0) {
+  preRepairFalseClosures.push(
+    'a valid first layer drew before invalid second-layer authority failed',
+  );
+}
+if (isolatedContexts.length !== 1) {
+  preRepairFalseClosures.push(
+    'invalid whole-frame authority allocated an actor drawing target',
+  );
+}
+
+const malformedLifecycleHost = createHillPrimaryViewerActorHost();
+malformedLifecycleHost.register({
+  id: 'malformed-lifecycle',
+  authority: () =>
+    ({
+      ...validAuthority(),
+      lifecycle: {
+        visible: undefined,
+        phase: 'traversing',
+      },
+    }) as unknown as HillPrimaryViewerActorAuthority,
+  draw: () => {
+    throw new Error('malformed lifecycle must never draw');
+  },
+});
+let malformedLifecycleFailed = false;
+try {
+  malformedLifecycleHost.draw({
+    timestampMs: 1_040,
+    viewport: { width: 1280, height: 720 },
+    terrain,
+    view,
+    createFrameTarget,
+    project: () => ({ x: 0, y: 0, depth: 0 }),
+  });
+} catch {
+  malformedLifecycleFailed = true;
+}
+if (!malformedLifecycleFailed) {
+  preRepairFalseClosures.push(
+    'malformed lifecycle authority impersonated a departed actor',
+  );
+}
+
+const rawContextHost = createHillPrimaryViewerActorHost();
+const actorContexts: CanvasRenderingContext2D[] = [];
+rawContextHost.register({
+  id: 'raw-context-probe',
+  authority: validAuthority,
+  draw: (frame) => {
+    actorContexts.push(frame.surface.context);
+  },
+});
+for (const timestampMs of [1_080, 1_120]) {
+  rawContextHost.draw({
+    timestampMs,
+    viewport: { width: 1280, height: 720 },
+    terrain,
+    view,
+    createFrameTarget,
+    project: () => ({ x: 0, y: 0, depth: 0 }),
+  });
+}
+if (actorContexts.some((context) => context === drawingContext)) {
+  preRepairFalseClosures.push(
+    'producer actor received the canonical long-lived Hill canvas context',
+  );
+}
+if (
+  actorContexts.length !== 2 ||
+  actorContexts[0] === actorContexts[1]
+) {
+  preRepairFalseClosures.push(
+    'producer actor retained the same isolated context across Hill frames',
+  );
+}
+
+const drawFailureHost = createHillPrimaryViewerActorHost();
+drawFailureHost.register({
+  id: 'draw-success-first',
+  authority: validAuthority,
+  draw: () => {},
+});
+drawFailureHost.register({
+  id: 'draw-failure-second',
+  authority: validAuthority,
+  draw: () => {
+    throw new Error('actor draw failure');
+  },
+});
+let failedFrameMerges = 0;
+let failedFrameComposites = 0;
+assert.throws(
+  () =>
+    drawFailureHost.draw({
+      timestampMs: 1_160,
+      viewport: { width: 1280, height: 720 },
+      terrain,
+      view,
+      createFrameTarget: () => ({
+        createLayerTarget: () => ({
+          surface: {
+            context: {} as CanvasRenderingContext2D,
+          },
+          merge: () => {
+            failedFrameMerges += 1;
+          },
+        }),
+        composite: () => {
+          failedFrameComposites += 1;
+        },
+      }),
+      project: () => ({ x: 0, y: 0, depth: 0 }),
+    }),
+  /actor draw failure/i,
+);
+if (failedFrameMerges !== 0 || failedFrameComposites !== 0) {
+  preRepairFalseClosures.push(
+    'a failed actor draw partially merged or composited the actor frame',
+  );
+}
+
+const mutableFirstAuthority = validAuthority();
+const authorityMutationHost = createHillPrimaryViewerActorHost();
+let mutationProbeDraws = 0;
+authorityMutationHost.register({
+  id: 'authority-snapshot-first',
+  authority: () => mutableFirstAuthority,
+  draw: () => {
+    mutationProbeDraws += 1;
+  },
+});
+authorityMutationHost.register({
+  id: 'authority-mutator-second',
+  authority: () => {
+    mutableFirstAuthority.lifecycle = {
+      visible: false,
+      phase: 'departed',
+    };
+    return validAuthority();
+  },
+  draw: () => {
+    mutationProbeDraws += 1;
+  },
+});
+const authorityMutationReceipt = authorityMutationHost.draw({
+  timestampMs: 1_200,
+  viewport: { width: 1280, height: 720 },
+  terrain,
+  view,
+  createFrameTarget,
+  project: () => ({ x: 0, y: 0, depth: 0 }),
+});
+if (
+  authorityMutationReceipt.visibleLayerCount !== 2 ||
+  mutationProbeDraws !== 2
+) {
+  preRepairFalseClosures.push(
+    'a later authority callback mutated an already validated layer snapshot',
+  );
+}
+
+assert.deepEqual(
+  preRepairFalseClosures,
+  [],
+  'primary-viewer actor host must reject partial authority and isolate producer drawing',
+);
+
 const primaryViewerSource = readFileSync(resolve('src/main.ts'), 'utf8');
 assert.match(
   primaryViewerSource,
-  /hillPrimaryViewerActorHost\.draw\(\{[\s\S]*terrainBuffer\.source\.frameId[\s\S]*terrainBuffer\.sampleChecksum[\s\S]*terrainBuffer\.topologyChecksum[\s\S]*surface:\s*\{\s*context:\s*ctx[\s\S]*project:/,
-  'canonical primary viewer does not supply current Hill identity, drawing surface, and projection to the actor host',
+  /hillPrimaryViewerActorHost\.draw\(\{[\s\S]*terrainBuffer\.source\.frameId[\s\S]*terrainBuffer\.sampleChecksum[\s\S]*terrainBuffer\.topologyChecksum[\s\S]*createFrameTarget:\s*createActorFrameTarget[\s\S]*project:/,
+  'canonical primary viewer does not supply current Hill identity, isolated actor target factory, and projection to the actor host',
+);
+assert.doesNotMatch(
+  primaryViewerSource,
+  /surface:\s*\{\s*context:\s*ctx\s*\}/,
+  'canonical primary viewer must not pass its long-lived context to producer actor code',
+);
+assert.match(
+  primaryViewerSource,
+  /function createActorFrameTarget[\s\S]*const frameCanvas = document\.createElement\('canvas'\)[\s\S]*const layerCanvas = document\.createElement\('canvas'\)[\s\S]*frameContext\.drawImage\([\s\S]*ctx\.drawImage\(/,
+  'canonical primary viewer does not isolate each producer layer and composite one Hill-owned actor frame',
 );
 assert.match(
   primaryViewerSource,

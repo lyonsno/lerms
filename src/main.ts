@@ -107,6 +107,7 @@ import {
 import {
   HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
   hillPrimaryViewerActorHost,
+  type HillPrimaryViewerActorFrameTarget,
   type HillPrimaryViewerActorHostReceipt
 } from './terrain/hill-primary-viewer-actor-host.js';
 
@@ -407,6 +408,73 @@ function resize(): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
+function createActorFrameTarget(frame: {
+  viewport: {
+    width: number;
+    height: number;
+    pixelRatio: number;
+  };
+}): HillPrimaryViewerActorFrameTarget {
+  const { width, height, pixelRatio } = frame.viewport;
+  const backingWidth = Math.max(1, Math.floor(width * pixelRatio));
+  const backingHeight = Math.max(1, Math.floor(height * pixelRatio));
+  const frameCanvas = document.createElement('canvas');
+  frameCanvas.width = backingWidth;
+  frameCanvas.height = backingHeight;
+  const frameContext = frameCanvas.getContext('2d');
+
+  if (!frameContext) {
+    throw new Error('primary-viewer actor frame target is unavailable');
+  }
+  frameContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+  return {
+    createLayerTarget() {
+      const layerCanvas = document.createElement('canvas');
+      layerCanvas.width = backingWidth;
+      layerCanvas.height = backingHeight;
+      const layerContext = layerCanvas.getContext('2d');
+
+      if (!layerContext) {
+        throw new Error('primary-viewer actor layer target is unavailable');
+      }
+      layerContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+      return {
+        surface: {
+          context: layerContext
+        },
+        merge() {
+          frameContext.drawImage(
+            layerCanvas,
+            0,
+            0,
+            backingWidth,
+            backingHeight,
+            0,
+            0,
+            width,
+            height
+          );
+        }
+      };
+    },
+    composite() {
+      ctx.drawImage(
+        frameCanvas,
+        0,
+        0,
+        backingWidth,
+        backingHeight,
+        0,
+        0,
+        width,
+        height
+      );
+    }
+  };
+}
+
 function render(timestampMs: number): void {
   const width = window.innerWidth;
   const height = window.innerHeight;
@@ -452,9 +520,7 @@ function render(timestampMs: number): void {
       panX: viewState.panX,
       panY: viewState.panY
     },
-    surface: {
-      context: ctx
-    },
+    createFrameTarget: createActorFrameTarget,
     project: (point) =>
       project(
         point.x,
