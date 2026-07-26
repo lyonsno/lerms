@@ -56,6 +56,7 @@ const report = {
   carrierCanvasMotionPixels: 0,
   railFrameVerified: false,
   hillSupportTrackingVerified: false,
+  fullSourceEnvelopeVerified: false,
   terrainChangedAcrossPrefixes: false,
   departureBodyAbsent: false,
   departureHistoryRetained: false,
@@ -325,6 +326,35 @@ async function runWitness() {
           /^[0-9a-f]{8,64}$/.test(frame.topologyChecksum) &&
           /^[0-9a-f]{8,64}$/.test(frame.trafficChecksum),
       );
+    report.fullSourceEnvelopeVerified =
+      completed.receipt?.terrain?.frames?.length === 18 &&
+      completed.receipt.terrain.frames.every(
+        (frame) =>
+          frame.source?.authority === 'live_simulation' &&
+          frame.source?.route ===
+            'hill-of-hills/horde-live-traversal-admission' &&
+          frame.source?.frameId === frame.frameId &&
+          Number.isFinite(frame.source?.timestampMs) &&
+          frame.source?.backend === 'deterministic-cpu-heightfield' &&
+          frame.source?.configId === 'horde-live-traversal-admission-v0' &&
+          frame.source?.fallbackStatus === 'none' &&
+          /^[0-9a-f]{8,64}$/.test(frame.surfaceDetailChecksum) &&
+          /^[0-9a-f]{8,64}$/.test(frame.materialEdgeChecksum) &&
+          frame.producerTraffic?.fieldChecksum === frame.trafficChecksum &&
+          Number.isInteger(frame.producerTraffic?.admittedEpisodeCount) &&
+          frame.producerTraffic.admittedEpisodeCount >= 0 &&
+          Number.isFinite(frame.producerTraffic?.exposureSeconds) &&
+          frame.producerTraffic.exposureSeconds >= 0 &&
+          (frame.topologyPossibilityChecksum === 'inherited' ||
+            /^[0-9a-f]{8,64}$/.test(frame.topologyPossibilityChecksum)) &&
+          typeof frame.supportFrame?.supportClass === 'string' &&
+          frame.supportFrame.supportClass.length > 0 &&
+          typeof frame.supportFrame?.mappingMode === 'string' &&
+          frame.supportFrame.mappingMode.length > 0 &&
+          Number.isInteger(frame.supportFrame?.supportEpoch) &&
+          Number.isInteger(frame.supportFrame?.topologyEpoch) &&
+          /^[0-9a-f]{8,64}$/.test(frame.supportFrame?.checksum),
+      );
     report.departureHistoryRetained =
       completed.receipt?.departure?.bodyVisible === false &&
       completed.receipt?.departure?.hillHistoryRetained === true &&
@@ -336,6 +366,10 @@ async function runWitness() {
     assert.ok(
       report.hillSupportTrackingVerified,
       'terrain frame identity or checksums were lost',
+    );
+    assert.ok(
+      report.fullSourceEnvelopeVerified,
+      'terrain source or witness envelope was reduced or substituted',
     );
     assert.ok(
       report.departureHistoryRetained,

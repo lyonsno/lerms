@@ -19,6 +19,10 @@ import {
 import {
   FULL_HILL_RENDERER_ID,
   FULL_HILL_REPLAY_FRAME_COUNT,
+  FULL_HILL_SOURCE_AUTHORITY,
+  FULL_HILL_SOURCE_BACKEND,
+  FULL_HILL_SOURCE_CONFIG,
+  FULL_HILL_SOURCE_ROUTE,
   createFullHillOneRendererSource,
   createHillTerrainGeometry,
   createHillTerrainGridIndices,
@@ -87,6 +91,10 @@ for (const buffer of source.buffers) {
   assert.equal(buffer.schema, HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA);
   assert.deepEqual(buffer.gridResolution, firstBuffer.gridResolution);
   assert.equal(buffer.sampleCount, firstBuffer.sampleCount);
+  assert.equal(buffer.source.authority, FULL_HILL_SOURCE_AUTHORITY);
+  assert.equal(buffer.source.route, FULL_HILL_SOURCE_ROUTE);
+  assert.equal(buffer.source.backend, FULL_HILL_SOURCE_BACKEND);
+  assert.equal(buffer.source.configId, FULL_HILL_SOURCE_CONFIG);
   assert.equal(buffer.witness.fallbackStatus, 'none');
 }
 
@@ -129,18 +137,46 @@ const receipt: FullHillOneRendererReceipt = {
     triangleCount: indices.length / 3,
     indexOrder: 'z-major-two-triangles-per-cell',
     frameCount: source.buffers.length,
-    frames: source.replay.frames.map((frame, index) => ({
-      index,
-      kind: frame.kind,
-      timestampMs: frame.timestampMs,
-      prefixSampleCount: frame.prefixSampleCount,
-      frameId: frame.terrain.source.frameId,
-      sampleChecksum: frame.terrain.witness.sampleChecksum,
-      topologyChecksum: frame.terrain.witness.topologyChecksum,
-      proxyMaterialChecksum: frame.terrain.witness.proxyMaterialChecksum,
-      trafficChecksum:
-        frame.terrain.witness.producerTrafficFieldChecksum,
-    })),
+    frames: source.replay.frames.map((frame, index) => {
+      const buffer = source.buffers[index];
+      return {
+        index,
+        kind: frame.kind,
+        timestampMs: frame.timestampMs,
+        prefixSampleCount: frame.prefixSampleCount,
+        frameId: buffer.source.frameId,
+        source: {
+          authority: FULL_HILL_SOURCE_AUTHORITY,
+          route: FULL_HILL_SOURCE_ROUTE,
+          frameId: buffer.source.frameId,
+          timestampMs: buffer.source.timestampMs,
+          backend: FULL_HILL_SOURCE_BACKEND,
+          configId: FULL_HILL_SOURCE_CONFIG,
+          fallbackStatus: 'none',
+        },
+        sampleChecksum: buffer.sampleChecksum,
+        topologyChecksum: buffer.topologyChecksum,
+        proxyMaterialChecksum: buffer.proxyMaterialChecksum,
+        surfaceDetailChecksum: buffer.surfaceDetailChecksum,
+        materialEdgeChecksum: buffer.materialEdgeChecksum,
+        trafficChecksum: buffer.witness.producerTrafficFieldChecksum,
+        producerTraffic: {
+          fieldChecksum: buffer.witness.producerTrafficFieldChecksum,
+          admittedEpisodeCount:
+            buffer.witness.producerTrafficAdmittedEpisodeCount,
+          exposureSeconds: buffer.witness.producerTrafficExposureSeconds,
+        },
+        topologyPossibilityChecksum:
+          buffer.witness.topologyPossibilityChecksum,
+        supportFrame: {
+          supportClass: buffer.witness.supportFrame.supportClass,
+          mappingMode: buffer.witness.supportFrame.mappingMode,
+          supportEpoch: buffer.witness.supportFrame.supportEpoch,
+          topologyEpoch: buffer.witness.supportFrame.topologyEpoch,
+          checksum: buffer.witness.supportFrame.supportFrameChecksum,
+        },
+      };
+    }),
   },
   carrier: {
     identity: '719024',
@@ -175,6 +211,36 @@ const rejectionCases: Array<[string, (candidate: any) => void]> = [
   ],
   ['partial grid', (candidate) => (candidate.terrain.sampleCount -= 1)],
   ['partial frames', (candidate) => candidate.terrain.frames.pop()],
+  [
+    'substituted source route',
+    (candidate) =>
+      (candidate.terrain.frames[10].source.route = 'lerms/fallback/hill'),
+  ],
+  [
+    'substituted source backend',
+    (candidate) =>
+      (candidate.terrain.frames[10].source.backend = 'svg-texture'),
+  ],
+  [
+    'substituted source config',
+    (candidate) =>
+      (candidate.terrain.frames[10].source.configId = 'adjacent-config'),
+  ],
+  [
+    'fallback source',
+    (candidate) =>
+      (candidate.terrain.frames[10].source.fallbackStatus = 'fallback'),
+  ],
+  [
+    'missing surface detail checksum',
+    (candidate) =>
+      delete candidate.terrain.frames[10].surfaceDetailChecksum,
+  ],
+  [
+    'missing material edge checksum',
+    (candidate) =>
+      delete candidate.terrain.frames[10].materialEdgeChecksum,
+  ],
   [
     'stale checksum',
     (candidate) => (candidate.terrain.frames[10].sampleChecksum = 'stale'),

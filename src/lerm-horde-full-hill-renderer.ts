@@ -30,6 +30,13 @@ export const FULL_HILL_RENDERER_ID =
 export const FULL_HILL_ONE_RENDERER_SCHEMA =
   'lerms.horde-full-hill-one-renderer.v0' as const;
 export const FULL_HILL_REPLAY_FRAME_COUNT = 18 as const;
+export const FULL_HILL_SOURCE_AUTHORITY = 'live_simulation' as const;
+export const FULL_HILL_SOURCE_ROUTE =
+  'hill-of-hills/horde-live-traversal-admission' as const;
+export const FULL_HILL_SOURCE_BACKEND =
+  'deterministic-cpu-heightfield' as const;
+export const FULL_HILL_SOURCE_CONFIG =
+  'horde-live-traversal-admission-v0' as const;
 
 const REVIEWED_BODY_SHA256 =
   'df52b476836a386bc87270536d4bc39e53dc2b73ad2b13b721e3e73de6915c6b';
@@ -84,10 +91,34 @@ export interface FullHillOneRendererReceipt {
       timestampMs: number;
       prefixSampleCount: number;
       frameId: string;
+      source: {
+        authority: typeof FULL_HILL_SOURCE_AUTHORITY;
+        route: typeof FULL_HILL_SOURCE_ROUTE;
+        frameId: string;
+        timestampMs: number;
+        backend: typeof FULL_HILL_SOURCE_BACKEND;
+        configId: typeof FULL_HILL_SOURCE_CONFIG;
+        fallbackStatus: 'none';
+      };
       sampleChecksum: string;
       topologyChecksum: string;
       proxyMaterialChecksum: string;
+      surfaceDetailChecksum: string;
+      materialEdgeChecksum: string;
       trafficChecksum: string;
+      producerTraffic: {
+        fieldChecksum: string;
+        admittedEpisodeCount: number;
+        exposureSeconds: number;
+      };
+      topologyPossibilityChecksum: string;
+      supportFrame: {
+        supportClass: string;
+        mappingMode: string;
+        supportEpoch: number;
+        topologyEpoch: number;
+        checksum: string;
+      };
     }>;
   };
   carrier: {
@@ -259,10 +290,32 @@ export function validateFullHillOneRendererReceipt(
         frame.prefixSampleCount >= 0 &&
         frame.prefixSampleCount <= 15 &&
         frame.frameId.length > 0 &&
+        frame.source.authority === FULL_HILL_SOURCE_AUTHORITY &&
+        frame.source.route === FULL_HILL_SOURCE_ROUTE &&
+        frame.source.frameId === frame.frameId &&
+        Number.isFinite(frame.source.timestampMs) &&
+        frame.source.backend === FULL_HILL_SOURCE_BACKEND &&
+        frame.source.configId === FULL_HILL_SOURCE_CONFIG &&
+        frame.source.fallbackStatus === 'none' &&
         checksumLike(frame.sampleChecksum) &&
         checksumLike(frame.topologyChecksum) &&
         checksumLike(frame.proxyMaterialChecksum) &&
-        checksumLike(frame.trafficChecksum),
+        checksumLike(frame.surfaceDetailChecksum) &&
+        checksumLike(frame.materialEdgeChecksum) &&
+        checksumLike(frame.trafficChecksum) &&
+        frame.producerTraffic.fieldChecksum === frame.trafficChecksum &&
+        Number.isInteger(frame.producerTraffic.admittedEpisodeCount) &&
+        frame.producerTraffic.admittedEpisodeCount >= 0 &&
+        Number.isFinite(frame.producerTraffic.exposureSeconds) &&
+        frame.producerTraffic.exposureSeconds >= 0 &&
+        checksumOrInherited(frame.topologyPossibilityChecksum) &&
+        frame.supportFrame.supportClass.length > 0 &&
+        frame.supportFrame.mappingMode.length > 0 &&
+        Number.isInteger(frame.supportFrame.supportEpoch) &&
+        frame.supportFrame.supportEpoch >= 0 &&
+        Number.isInteger(frame.supportFrame.topologyEpoch) &&
+        frame.supportFrame.topologyEpoch >= 0 &&
+        checksumLike(frame.supportFrame.checksum),
       `full-Hill frame ${index} lost source or checksum identity`,
     );
   });
@@ -396,6 +449,10 @@ function requiredAttribute(
 
 function checksumLike(value: string): boolean {
   return /^[0-9a-f]{8,64}$/.test(value);
+}
+
+function checksumOrInherited(value: string): boolean {
+  return value === 'inherited' || checksumLike(value);
 }
 
 function normalizeTerrainColors(colors: Float32Array): Float32Array {
