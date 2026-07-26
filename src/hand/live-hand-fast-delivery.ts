@@ -1,5 +1,6 @@
 export interface LiveHandFastDeliveryItem {
   captureId: string;
+  anchorPairRequired?: boolean;
 }
 
 export interface LiveHandFastDeliverySupersession<TItem extends LiveHandFastDeliveryItem> {
@@ -11,6 +12,9 @@ export interface LiveHandFastDeliverySupersession<TItem extends LiveHandFastDeli
 export interface LiveHandFastDeliverySnapshot {
   activeCaptureId: string | null;
   pendingCaptureId: string | null;
+  trailingCaptureId: string | null;
+  pendingCount: number;
+  protectedPendingCount: number;
   enqueuedCount: number;
   completedCount: number;
   failedCount: number;
@@ -44,7 +48,8 @@ export function coalesceFastDeliveryLineage(
 
 export class LiveHandFastDeliveryMailbox<TItem extends LiveHandFastDeliveryItem> {
   private active: TItem | null = null;
-  private pending: TItem | null = null;
+  private protectedPending: TItem[] = [];
+  private latestPending: TItem | null = null;
   private enqueuedCount = 0;
   private completedCount = 0;
   private failedCount = 0;
@@ -66,34 +71,43 @@ export class LiveHandFastDeliveryMailbox<TItem extends LiveHandFastDeliveryItem>
       this.start(item);
       return;
     }
-    if (this.pending !== null) {
-      const supersession = {
-        reason: 'newer_fast_observation_before_post' as const,
-        superseded: this.pending,
-        replacement: item,
-      };
-      this.supersededBeforePostCount += 1;
-      this.onSuperseded(supersession);
+    if (item.anchorPairRequired === true) {
+      if (this.latestPending !== null) {
+        this.recordSupersession(this.latestPending, item);
+        this.latestPending = null;
+      }
+      this.protectedPending.push(item);
+      return;
     }
-    this.pending = item;
+    if (this.latestPending !== null) {
+      this.recordSupersession(this.latestPending, item);
+    }
+    this.latestPending = item;
   }
 
   discardPending(): TItem | null {
-    const discarded = this.pending;
-    if (discarded !== null) {
-      this.pending = null;
-      this.discardedPendingCount += 1;
-    }
+    const discarded = this.protectedPending[0] ?? this.latestPending;
+    this.discardedPendingCount += this.protectedPending.length + (this.latestPending ? 1 : 0);
+    this.protectedPending.length = 0;
+    this.latestPending = null;
     return discarded;
   }
 
   whenIdle(): Promise<void> {
-    if (this.active === null && this.pending === null) return Promise.resolve();
+    if (
+      this.active === null
+      && this.protectedPending.length === 0
+      && this.latestPending === null
+    ) return Promise.resolve();
     return new Promise(resolve => this.idleWaiters.push(resolve));
   }
 
   resetCounters(): void {
-    if (this.active !== null || this.pending !== null) {
+    if (
+      this.active !== null
+      || this.protectedPending.length > 0
+      || this.latestPending !== null
+    ) {
       throw new Error('fast delivery mailbox counters cannot reset while delivery is active');
     }
     this.enqueuedCount = 0;
@@ -104,15 +118,38 @@ export class LiveHandFastDeliveryMailbox<TItem extends LiveHandFastDeliveryItem>
   }
 
   snapshot(): LiveHandFastDeliverySnapshot {
+    const pending = this.protectedPending[0] ?? this.latestPending;
+    const trailing = this.protectedPending[1]
+      ?? (this.protectedPending.length > 0 ? this.latestPending : null);
     return {
       activeCaptureId: this.active?.captureId ?? null,
-      pendingCaptureId: this.pending?.captureId ?? null,
+      pendingCaptureId: pending?.captureId ?? null,
+      trailingCaptureId: trailing?.captureId ?? null,
+      pendingCount: this.protectedPending.length + (this.latestPending ? 1 : 0),
+      protectedPendingCount: this.protectedPending.length,
       enqueuedCount: this.enqueuedCount,
       completedCount: this.completedCount,
       failedCount: this.failedCount,
       supersededBeforePostCount: this.supersededBeforePostCount,
       discardedPendingCount: this.discardedPendingCount,
     };
+  }
+
+  private recordSupersession(superseded: TItem, replacement: TItem): void {
+    this.supersededBeforePostCount += 1;
+    this.onSuperseded({
+      reason: 'newer_fast_observation_before_post',
+      superseded,
+      replacement,
+    });
+  }
+
+  private takeNext(): TItem | null {
+    const protectedItem = this.protectedPending.shift();
+    if (protectedItem) return protectedItem;
+    const latest = this.latestPending;
+    this.latestPending = null;
+    return latest;
   }
 
   private start(item: TItem): void {
@@ -126,8 +163,7 @@ export class LiveHandFastDeliveryMailbox<TItem extends LiveHandFastDeliveryItem>
         this.onFailure(item, error);
       })
       .finally(() => {
-        const next = this.pending;
-        this.pending = null;
+        const next = this.takeNext();
         this.active = null;
         if (next !== null) {
           this.start(next);

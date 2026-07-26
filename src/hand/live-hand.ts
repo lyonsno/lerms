@@ -13,11 +13,12 @@ import {
   decideHeldHandSurface,
   normalizeLiveManoFrame,
   normalizeManoSurface,
+  normalizeTransientHybridFallback,
   summarizeLiveHandLatency,
-  transientHybridFallbackReason,
   type LiveHandLatencySample,
   type NormalizedManoFrame,
   type NormalizedManoSurface,
+  type PendingAnchorTruth,
   type RuntimeHealthTruth,
   type RuntimeSidecarStatusTruth,
 } from './live-hand-contract.js';
@@ -217,6 +218,13 @@ let fluidInitialization: Promise<FingerFluidSolver> | null = null;
 let fluidError: string | null = null;
 let latestFluidPacket: LiveFingerFluidPacket | null = null;
 let latestFluidFrame: NormalizedManoFrame | null = null;
+let latestPresentedRouteFrame: NormalizedManoFrame | null = null;
+let latestPendingAnchorTruth: PendingAnchorTruth = {
+  captureId: null,
+  ageMs: null,
+  state: 'none',
+  error: null,
+};
 let densityBenchAuthority: 'none' | 'fixture_density_bench_not_live_hand' = 'none';
 let fluidAssayRunning = false;
 let fluidAssayReceipt: Record<string, unknown> | null = null;
@@ -280,6 +288,7 @@ const fastPathPostMs: number[] = [];
 const pendingFastCaptureMetrics = new Map<string, {
   capturedAtMs: number;
   captureAcquireMs: number;
+  anchorPairRequired: boolean;
 }>();
 interface FastLandmarkDeliveryItem extends LiveHandFastDeliveryItem {
   runGeneration: number;
@@ -288,6 +297,7 @@ interface FastLandmarkDeliveryItem extends LiveHandFastDeliveryItem {
   captureMetrics: {
     capturedAtMs: number;
     captureAcquireMs: number;
+    anchorPairRequired: boolean;
   };
   supersededBeforePost: LiveHandFastDeliveryLineage[];
 }
@@ -450,9 +460,12 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
     routeTruth.textContent = 'route unverified';
     return;
   }
-  const route = frame?.effectiveRoute || 'awaiting live effective route';
+  const presentedFrame = frame ?? latestPresentedRouteFrame;
+  const route = presentedFrame?.effectiveRoute || 'awaiting live effective route';
   const requested = sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE;
-  const topology = frame ? `${frame.vertexCount}v / ${frame.faceCount}f` : 'awaiting MANO topology';
+  const topology = presentedFrame
+    ? `${presentedFrame.vertexCount}v / ${presentedFrame.faceCount}f`
+    : 'awaiting MANO topology';
   const fluidState = fluidSolver?.available ? fluidSolver.getDebugState() : null;
   const effectiveParticleCount = typeof fluidState?.baseParticleCount === 'number'
     ? fluidState.baseParticleCount
@@ -470,13 +483,16 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
     : fluidError ? ' | fluid error' : ' | fluid pending';
   const delivery = fastDeliveryMailbox.snapshot();
   const fast = sourceMode === 'hybrid_mano'
-    ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} stopped ${landmarkerFramesStopped} busy ${landmarkerFramesSuppressed} delivered ${delivery.completedCount} superseded ${delivery.supersededBeforePostCount} pending ${delivery.pendingCaptureId ? 1 : 0}`
+    ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} stopped ${landmarkerFramesStopped} busy ${landmarkerFramesSuppressed} delivered ${delivery.completedCount} superseded ${delivery.supersededBeforePostCount} pending ${delivery.pendingCount} protected ${delivery.protectedPendingCount}`
     : '';
   const sidecar = sidecarStatusTruth ? ` | WiLoR ${sidecarStatusTruth.modelReadiness}` : ' | WiLoR unverified';
   const held = heldSurfaceReason
     ? ` | held stale surface ${Math.max(0, performance.now() - lastLiveAt).toFixed(0)}ms / ${maxFrameAgeMs}ms | reason ${heldSurfaceReason} | fluid authority disabled`
     : '';
-  routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${sidecar}${fast}${fluid}${held}`;
+  const pendingAnchor = latestPendingAnchorTruth.state !== 'none'
+    ? ` | anchor pending ${latestPendingAnchorTruth.captureId} ${latestPendingAnchorTruth.state} ${latestPendingAnchorTruth.ageMs?.toFixed(0) ?? 'unknown'}ms`
+    : '';
+  routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${sidecar}${fast}${pendingAnchor}${fluid}${held}`;
 }
 
 async function runtimeFetch(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
@@ -600,6 +616,13 @@ async function applyDensityBenchFixture(fingerCase: 'one-finger' | 'five-finger'
 }
 
 function updateHandSurface(frame: NormalizedManoFrame): void {
+  latestPresentedRouteFrame = frame;
+  latestPendingAnchorTruth = {
+    captureId: frame.pendingAnchorCaptureId,
+    ageMs: frame.pendingAnchorAgeMs,
+    state: frame.pendingAnchorState,
+    error: frame.pendingAnchorError,
+  };
   updateSurface(frame);
   handPresentationPending = true;
   if (!fluidAssayMode) publishFluidPacketForFrame(frame);
@@ -610,6 +633,13 @@ function deactivateFluidInlets(reason: string, preserveSurface = false): void {
   if (!preserveSurface) {
     handMesh.visible = false;
     heldSurfaceReason = null;
+    latestPresentedRouteFrame = null;
+    latestPendingAnchorTruth = {
+      captureId: null,
+      ageMs: null,
+      state: 'none',
+      error: null,
+    };
   }
   handPresentationPending = false;
   latestFluidPacket = null;
@@ -870,6 +900,7 @@ function recordFastDeliverySupersession(
   );
   supersession.replacement.payload.delivery = {
     schema: 'hand-state.browser-fast-delivery.v0',
+    anchorPairRequired: supersession.replacement.anchorPairRequired === true,
     supersededBeforePost: supersession.replacement.supersededBeforePost,
   };
   latestSupersession = supersession.replacement.supersededBeforePost.at(-1) ?? null;
@@ -930,6 +961,11 @@ function handleLandmarkerResult(worker: Worker, value: unknown): void {
     const captureMetrics = pendingFastCaptureMetrics.get(result.captureId);
     if (!captureMetrics) throw new Error(`missing fast capture metrics for ${result.captureId}`);
     const payload = createFastLandmarkPayload(result);
+    payload.delivery = {
+      schema: 'hand-state.browser-fast-delivery.v0',
+      anchorPairRequired: captureMetrics.anchorPairRequired,
+      supersededBeforePost: [],
+    };
     pendingFastCaptureMetrics.delete(expectedCaptureId);
     releaseLandmarkerInferenceSlot(expectedCaptureId);
     landmarkerWorkerMs.push(result.workerLandmarkerMs);
@@ -939,6 +975,7 @@ function handleLandmarkerResult(worker: Worker, value: unknown): void {
       result,
       payload,
       captureMetrics,
+      anchorPairRequired: captureMetrics.anchorPairRequired,
       supersededBeforePost: [],
     });
   } catch (error) {
@@ -1043,6 +1080,7 @@ function postLandmarkerFrame(
   width: number,
   height: number,
   captureAcquireMsValue: number,
+  anchorPairRequired: boolean,
 ): void {
   const worker = landmarkerWorker;
   if (!worker || !landmarkerWorkerReady || landmarkerInFlightCaptureId !== null) {
@@ -1053,6 +1091,7 @@ function postLandmarkerFrame(
   pendingFastCaptureMetrics.set(captureId, {
     capturedAtMs: captureTimestampMs,
     captureAcquireMs: captureAcquireMsValue,
+    anchorPairRequired,
   });
   landmarkerFramesSubmitted += 1;
   try {
@@ -1272,7 +1311,7 @@ function handleCameraFrame(runGeneration: number): void {
         lastAnchorCaptureAtMs = captureTimestampMs;
         void postAnchorFrame(runGeneration, captureId, captureTimestampMs, anchorFrame, width, height, acquisitionMs);
       }
-      postLandmarkerFrame(captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs);
+      postLandmarkerFrame(captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs, plan.submitAnchor);
     } else if (plan.submitAnchor) {
       lastAnchorCaptureAtMs = captureTimestampMs;
       void postAnchorFrame(runGeneration, captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs);
@@ -1388,7 +1427,7 @@ function applyState(state: Record<string, unknown>): void {
     if (frame.effectiveRoute !== requestedRoute) {
       deactivateFluidInlets('unexpected_live_hand_route');
       setStatus(`waiting for ${requestedRoute} | observed ${frame.effectiveRoute}`);
-      setRouteTruth(frame);
+      setRouteTruth();
       return;
     }
     updateHandSurface(frame);
@@ -1400,16 +1439,17 @@ function applyState(state: Record<string, unknown>): void {
     setStatus(`live MANO | model ${frame.modelLatencyMs.toFixed(0)}ms${receipt}`, 'live');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const transientReason = sourceMode === 'hybrid_mano'
-      ? transientHybridFallbackReason(state)
+    const transientFallback = sourceMode === 'hybrid_mano'
+      ? normalizeTransientHybridFallback(state)
       : null;
-    const held = transientReason
-      ? holdLastTrustworthySurface(transientReason)
+    if (transientFallback) latestPendingAnchorTruth = transientFallback.pendingAnchor;
+    const held = transientFallback
+      ? holdLastTrustworthySurface(transientFallback.reason)
       : false;
     if (!held) deactivateFluidInlets('invalid_or_stale_hand_state');
     setStatus(
       held
-        ? `hybrid fallback | held stale surface | ${transientReason}`
+        ? `hybrid fallback | held stale surface | ${transientFallback?.reason}`
         : `waiting for live MANO | ${message}`,
       held ? 'idle' : 'error',
     );

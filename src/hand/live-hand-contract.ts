@@ -68,6 +68,10 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   anchorSource: string | null;
   anchorCaptureId: string | null;
   anchorAgeMs: number | null;
+  pendingAnchorCaptureId: string | null;
+  pendingAnchorAgeMs: number | null;
+  pendingAnchorState: 'none' | 'awaiting_fast_pair' | 'calibration_failed';
+  pendingAnchorError: string | null;
   fastPathSource: string | null;
   fastPathAgeMs: number | null;
   fastPathLatencyMs: number | null;
@@ -155,28 +159,78 @@ export interface HeldHandSurfaceDecision {
   ageMs: number;
 }
 
-export function transientHybridFallbackReason(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const state = value as RecordLike;
-  if (state.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER || state.status !== 'fallback') return null;
-  if (!state.frame || typeof state.frame !== 'object' || Array.isArray(state.frame)) return null;
-  const frame = state.frame as RecordLike;
-  if (!frame.source || typeof frame.source !== 'object' || Array.isArray(frame.source)) return null;
-  const source = frame.source as RecordLike;
+export interface PendingAnchorTruth {
+  captureId: string | null;
+  ageMs: number | null;
+  state: NormalizedManoFrame['pendingAnchorState'];
+  error: string | null;
+}
+
+export interface TransientHybridFallbackTruth {
+  reason: string;
+  pendingAnchor: PendingAnchorTruth;
+}
+
+function normalizePendingAnchorTruth(diagnostics: RecordLike): PendingAnchorTruth {
+  const rawState = text(diagnostics.pendingAnchorState, 'pendingAnchorState');
   if (
-    source.effectiveRoute !== LIVE_HAND_HYBRID_FALLBACK_ROUTE
-    || source.backend !== 'hybrid'
-    || source.rawSchema !== LIVE_HAND_FAST_LANDMARK_SCHEMA
+    rawState !== 'none'
+    && rawState !== 'awaiting_fast_pair'
+    && rawState !== 'calibration_failed'
   ) {
+    throw new Error(`unsupported pendingAnchorState: ${rawState}`);
+  }
+  const captureId = optionalText(diagnostics.pendingAnchorCaptureId);
+  const ageMs = diagnostics.pendingAnchorAgeMs === null
+    ? null
+    : finiteNonNegative(diagnostics.pendingAnchorAgeMs, 'pendingAnchorAgeMs');
+  const error = optionalText(diagnostics.pendingAnchorError);
+  if (rawState === 'none' && (captureId !== null || ageMs !== null || error !== null)) {
+    throw new Error('inactive pending anchor must not carry staged-anchor diagnostics');
+  }
+  if (
+    rawState === 'awaiting_fast_pair'
+    && (captureId === null || ageMs === null || error !== null)
+  ) {
+    throw new Error('pending anchor awaiting its fast pair must expose identity and age without a calibration error');
+  }
+  if (
+    rawState === 'calibration_failed'
+    && (captureId === null || ageMs === null || error === null)
+  ) {
+    throw new Error('failed pending-anchor calibration must expose identity, age, and error');
+  }
+  return { captureId, ageMs, state: rawState, error };
+}
+
+export function normalizeTransientHybridFallback(value: unknown): TransientHybridFallbackTruth | null {
+  try {
+    const state = record(value, 'runtime fallback state');
+    if (state.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER || state.status !== 'fallback') return null;
+    const frame = record(state.frame, 'runtime fallback frame');
+    const source = record(frame.source, 'runtime fallback source');
+    if (
+      source.effectiveRoute !== LIVE_HAND_HYBRID_FALLBACK_ROUTE
+      || source.backend !== 'hybrid'
+      || source.rawSchema !== LIVE_HAND_FAST_LANDMARK_SCHEMA
+    ) {
+      return null;
+    }
+    const diagnostics = record(frame.diagnostics, 'runtime fallback diagnostics');
+    if (diagnostics.fusionMode !== LIVE_HAND_HYBRID_FUSION_MODE) return null;
+    const reason = optionalText(diagnostics.fallbackState);
+    if (!reason || !TRANSIENT_HYBRID_FALLBACK_REASONS.has(reason)) return null;
+    return {
+      reason,
+      pendingAnchor: normalizePendingAnchorTruth(diagnostics),
+    };
+  } catch {
     return null;
   }
-  if (!frame.diagnostics || typeof frame.diagnostics !== 'object' || Array.isArray(frame.diagnostics)) {
-    return null;
-  }
-  const diagnostics = frame.diagnostics as RecordLike;
-  if (diagnostics.fusionMode !== LIVE_HAND_HYBRID_FUSION_MODE) return null;
-  const reason = optionalText(diagnostics.fallbackState);
-  return reason && TRANSIENT_HYBRID_FALLBACK_REASONS.has(reason) ? reason : null;
+}
+
+export function transientHybridFallbackReason(value: unknown): string | null {
+  return normalizeTransientHybridFallback(value)?.reason ?? null;
 }
 
 export function decideHeldHandSurface(input: {
@@ -351,6 +405,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   const anchorCaptureId = optionalText(diagnostics.anchorCaptureId);
   const fastPathSource = optionalText(diagnostics.fastPathSource);
   let anchorAgeMs: number | null = null;
+  let pendingAnchorCaptureId: string | null = null;
+  let pendingAnchorAgeMs: number | null = null;
+  let pendingAnchorState: NormalizedManoFrame['pendingAnchorState'] = 'none';
+  let pendingAnchorError: string | null = null;
   let fastPathAgeMs: number | null = null;
   let fastPathLatencyMs: number | null = null;
   let fitResidualMean: number | null = null;
@@ -384,6 +442,11 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     if (fastPathSource !== LIVE_HAND_FAST_PATH_SOURCE) throw new Error('hybrid frame must name the browser MediaPipe fast-path source');
     if (diagnostics.fallbackState !== null) throw new Error('hybrid frame must not carry an active fallback state');
     anchorAgeMs = finiteNonNegative(diagnostics.anchorAgeMs, 'anchorAgeMs');
+    const pendingAnchor = normalizePendingAnchorTruth(diagnostics);
+    pendingAnchorState = pendingAnchor.state;
+    pendingAnchorCaptureId = pendingAnchor.captureId;
+    pendingAnchorAgeMs = pendingAnchor.ageMs;
+    pendingAnchorError = pendingAnchor.error;
     fastPathAgeMs = finiteNonNegative(diagnostics.fastPathAgeMs, 'fastPathAgeMs');
     fastPathLatencyMs = finiteNonNegative(timing.fastPathLatencyMs, 'fastPathLatencyMs');
     fitResidualMean = finiteNonNegative(diagnostics.fitResidualMean, 'fitResidualMean');
@@ -483,6 +546,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     anchorSource,
     anchorCaptureId,
     anchorAgeMs,
+    pendingAnchorCaptureId,
+    pendingAnchorAgeMs,
+    pendingAnchorState,
+    pendingAnchorError,
     fastPathSource,
     fastPathAgeMs,
     fastPathLatencyMs,

@@ -7,6 +7,7 @@ import {
   decideHeldHandSurface,
   normalizeLiveManoFrame,
   normalizeManoSurface,
+  normalizeTransientHybridFallback,
   summarizeLiveHandLatency,
   transientHybridFallbackReason,
 } from '../src/hand/live-hand-contract.js';
@@ -367,6 +368,64 @@ assert(
   mailbox.snapshot().completedCount === 2 && mailbox.snapshot().supersededBeforePostCount === 1,
   'mailbox completion and supersession accounting close exactly',
 );
+
+const protectedStarts: string[] = [];
+const protectedSupersessions: string[] = [];
+const protectedReleases = new Map<string, () => void>();
+const protectedMailbox = new LiveHandFastDeliveryMailbox<{
+  captureId: string;
+  anchorPairRequired?: boolean;
+}>(
+  item => new Promise<void>(resolve => {
+    protectedStarts.push(item.captureId);
+    protectedReleases.set(item.captureId, resolve);
+  }),
+  supersession => {
+    protectedSupersessions.push(
+      `${supersession.superseded.captureId}->${supersession.replacement.captureId}`,
+    );
+  },
+  errorItem => {
+    throw new Error(`unexpected protected mailbox failure for ${errorItem.captureId}`);
+  },
+);
+protectedMailbox.enqueue({ captureId: 'active-fast' });
+protectedMailbox.enqueue({ captureId: 'anchor-pair', anchorPairRequired: true });
+protectedMailbox.enqueue({ captureId: 'ordinary-c' });
+protectedMailbox.enqueue({ captureId: 'ordinary-d' });
+const protectedQueuedSnapshot = protectedMailbox.snapshot() as ReturnType<
+  typeof protectedMailbox.snapshot
+> & { trailingCaptureId: string | null };
+assert(
+  protectedQueuedSnapshot.activeCaptureId === 'active-fast'
+    && protectedQueuedSnapshot.pendingCaptureId === 'anchor-pair'
+    && protectedQueuedSnapshot.trailingCaptureId === 'ordinary-d',
+  'an anchor-pair observation remains next while ordinary observations coalesce behind it',
+);
+assert(
+  protectedSupersessions.join(',') === 'ordinary-c->ordinary-d',
+  'coalescing behind a protected anchor pair attributes only observations that are actually discarded',
+);
+protectedReleases.get('active-fast')?.();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert(
+  protectedStarts.join(',') === 'active-fast,anchor-pair',
+  'the protected anchor pair enters runtime delivery before the latest ordinary observation',
+);
+protectedReleases.get('anchor-pair')?.();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert(
+  protectedStarts.join(',') === 'active-fast,anchor-pair,ordinary-d',
+  'the latest ordinary observation follows the protected anchor pair without growing an unbounded queue',
+);
+protectedReleases.get('ordinary-d')?.();
+await protectedMailbox.whenIdle();
+assert(
+  protectedMailbox.snapshot().completedCount === 3
+    && protectedMailbox.snapshot().supersededBeforePostCount === 1,
+  'protected pair delivery and ordinary coalescing close with exact accounting',
+);
+
 const firstLineage = coalesceFastDeliveryLineage([], 'fast-b', 'fast-c');
 const transitiveLineage = coalesceFastDeliveryLineage(firstLineage, 'fast-c', 'fast-d');
 assert(
@@ -651,6 +710,10 @@ const hybridState = {
       fastPathSource: 'browser_mediapipe_hand_landmarker_live',
       fallbackState: null,
       anchorAgeMs: 84,
+      pendingAnchorCaptureId: null,
+      pendingAnchorAgeMs: null,
+      pendingAnchorState: 'none',
+      pendingAnchorError: null,
       fastPathAgeMs: 12,
       fitResidualMean: 0.024,
       fitResidualMax: 0.041,
@@ -707,6 +770,43 @@ assert(hybrid.idealFitResidualMean === 0.018, 'preserves the trust-bounded ideal
 assert(hybrid.idealFitImprovementRatio === 0.4375, 'preserves ideal improvement over the anchor');
 assert(hybrid.anchorSource === LIVE_HAND_ROUTE, 'preserves the WiLoR MANO anchor source');
 assert(hybrid.fastPathSource === 'browser_mediapipe_hand_landmarker_live', 'preserves the browser fast-path source');
+assert(hybrid.pendingAnchorState === 'none', 'preserves the absence of a staged successor anchor');
+
+const stagedAnchorHybrid = normalizeLiveManoFrame({
+  ...hybridState,
+  frame: {
+    ...hybridState.frame,
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      pendingAnchorCaptureId: 'run-8-1084-4',
+      pendingAnchorAgeMs: 18,
+      pendingAnchorState: 'awaiting_fast_pair',
+      pendingAnchorError: null,
+    },
+  },
+});
+assert(
+  stagedAnchorHybrid.anchorCaptureId === 'run-8-1000-1'
+    && stagedAnchorHybrid.pendingAnchorCaptureId === 'run-8-1084-4'
+    && stagedAnchorHybrid.pendingAnchorAgeMs === 18
+    && stagedAnchorHybrid.pendingAnchorState === 'awaiting_fast_pair',
+  'distinguishes the active trustworthy anchor from a successor awaiting its exact fast pair',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        pendingAnchorCaptureId: 'run-8-1084-4',
+        pendingAnchorAgeMs: 18,
+        pendingAnchorState: 'none',
+      },
+    },
+  }),
+  'inactive pending anchor must not carry staged-anchor diagnostics',
+);
 
 const transientFallbackState = {
   ...hybridState,
@@ -727,6 +827,43 @@ const transientFallbackState = {
 assert(
   transientHybridFallbackReason(transientFallbackState) === 'reanchor_step_trust_conflict',
   'admits a source-identifiable transient hybrid fallback for stale-surface presentation',
+);
+const failedPendingFallback = normalizeTransientHybridFallback({
+  ...transientFallbackState,
+  frame: {
+    ...transientFallbackState.frame,
+    diagnostics: {
+      ...transientFallbackState.frame.diagnostics,
+      pendingAnchorCaptureId: 'run-8-1084-4',
+      pendingAnchorAgeMs: 31,
+      pendingAnchorState: 'calibration_failed',
+      pendingAnchorError: 'paired palm calibration is reflected',
+    },
+  },
+});
+assert(
+  failedPendingFallback?.reason === 'reanchor_step_trust_conflict'
+    && failedPendingFallback.pendingAnchor.captureId === 'run-8-1084-4'
+    && failedPendingFallback.pendingAnchor.ageMs === 31
+    && failedPendingFallback.pendingAnchor.state === 'calibration_failed'
+    && failedPendingFallback.pendingAnchor.error === 'paired palm calibration is reflected',
+  'preserves validated pending-anchor failure truth through a held hybrid fallback',
+);
+assert(
+  transientHybridFallbackReason({
+    ...transientFallbackState,
+    frame: {
+      ...transientFallbackState.frame,
+      diagnostics: {
+        ...transientFallbackState.frame.diagnostics,
+        pendingAnchorCaptureId: 'run-8-1084-4',
+        pendingAnchorAgeMs: 18,
+        pendingAnchorState: 'none',
+        pendingAnchorError: null,
+      },
+    },
+  }) === null,
+  'rejects a held fallback whose pending-anchor identity contradicts its declared state',
 );
 assert(
   transientHybridFallbackReason({

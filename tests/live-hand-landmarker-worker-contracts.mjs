@@ -164,8 +164,18 @@ assert.match(
 );
 assert.match(
   liveHandSource,
-  /catch \(error\) \{[\s\S]*sourceMode === 'hybrid_mano'[\s\S]*transientHybridFallbackReason\(state\)[\s\S]*holdLastTrustworthySurface[\s\S]*deactivateFluidInlets\('invalid_or_stale_hand_state'\)/,
-  'only explicit transient hybrid fallback states can hold prior presentation',
+  /catch \(error\) \{[\s\S]*sourceMode === 'hybrid_mano'[\s\S]*normalizeTransientHybridFallback\(state\)[\s\S]*latestPendingAnchorTruth = transientFallback\.pendingAnchor[\s\S]*holdLastTrustworthySurface[\s\S]*deactivateFluidInlets\('invalid_or_stale_hand_state'\)/,
+  'only a validated transient fallback can retain pending-anchor truth and hold prior presentation',
+);
+assert.match(
+  liveHandSource,
+  /function updateHandSurface\(frame: NormalizedManoFrame\)[\s\S]*latestPresentedRouteFrame = frame[\s\S]*latestPendingAnchorTruth = \{[\s\S]*setRouteTruth\(frame\)/,
+  'a trustworthy presented frame retains active and pending route truth across no-frame status refreshes',
+);
+assert.match(
+  liveHandSource,
+  /if \(!preserveSurface\) \{[\s\S]*latestPresentedRouteFrame = null[\s\S]*state: 'none'/,
+  'hard hand invalidation clears retained active and pending route truth',
 );
 assert.doesNotMatch(
   liveHandSource,
