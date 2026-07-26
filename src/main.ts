@@ -104,6 +104,11 @@ import {
   type HillPhaseFilmstripFrame,
   type HillPhaseFilmstripFrameCount
 } from './terrain/hill-of-hills-phase-filmstrip.js';
+import {
+  HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
+  hillPrimaryViewerActorHost,
+  type HillPrimaryViewerActorHostReceipt
+} from './terrain/hill-primary-viewer-actor-host.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -254,6 +259,7 @@ let queuedTerrainParams: HillOfHillsTerrainParams | undefined;
 let latestWorkerDurationMs = 0;
 let latestWorkerError = 'none';
 let latestGrowthPlacementSummary = 'placement none';
+let latestActorHostReceipt: HillPrimaryViewerActorHostReceipt | undefined;
 
 try {
   workerTerrain = new Worker(new URL('./terrain/hill-of-hills.worker.ts', import.meta.url), { type: 'module' });
@@ -427,6 +433,38 @@ function render(timestampMs: number): void {
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
   drawTerrain(terrainBuffer, width, height);
+  latestActorHostReceipt = hillPrimaryViewerActorHost.draw({
+    timestampMs,
+    viewport: {
+      width,
+      height,
+      pixelRatio: window.devicePixelRatio || 1
+    },
+    terrain: {
+      frameId: terrainBuffer.source.frameId,
+      sampleChecksum: terrainBuffer.sampleChecksum,
+      topologyChecksum: terrainBuffer.topologyChecksum
+    },
+    view: {
+      yaw: viewState.yaw,
+      tilt: viewState.tilt,
+      zoom: viewState.zoom,
+      panX: viewState.panX,
+      panY: viewState.panY
+    },
+    surface: {
+      context: ctx
+    },
+    project: (point) =>
+      project(
+        point.x,
+        point.y,
+        point.z,
+        terrainBuffer,
+        width,
+        height
+      )
+  });
   if (previewSettings.mode !== 'neutral_geometry' && previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
@@ -1775,7 +1813,7 @@ function project(
   currentBuffer: HillOfHillsTerrainBuffer,
   width: number,
   height: number
-): { x: number; y: number } {
+): { x: number; y: number; depth: number } {
   const yawCos = Math.cos(viewState.yaw);
   const yawSin = Math.sin(viewState.yaw);
   const rotatedX = x * yawCos - z * yawSin;
@@ -1785,7 +1823,7 @@ function project(
   const scaleX = Math.min(width / 16, height / 11) * perspective;
   const screenX = width * (0.5 + viewState.panX) + rotatedX * scaleX;
   const screenY = height * (0.9 + viewState.panY) - zn * height * 0.68 * viewState.tilt - y * 42 * perspective;
-  return { x: screenX, y: screenY };
+  return { x: screenX, y: screenY, depth: rotatedZ };
 }
 
 function projectSample(currentBuffer: HillOfHillsTerrainBuffer, index: number, width: number, height: number, yOffset = 0): { x: number; y: number } {
@@ -1960,6 +1998,8 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `growth skin: density ${previewSettings.growthSkin.density.toFixed(2)} opacity ${previewSettings.growthSkin.opacity.toFixed(2)}`,
     `overlays: lines ${previewSettings.overlays.topologyLineStrength.toFixed(2)} contours ${previewSettings.overlays.topographicContourStrength.toFixed(2)} spacing ${previewSettings.overlays.topographicContourSpacing.toFixed(2)} pressure ${previewSettings.overlays.pressureField} ${previewSettings.overlays.pressureOverlayStrength.toFixed(2)}`,
     `pressure: ${pressureFieldWitnessSummary(witness)}`,
+    `actor host: ${latestActorHostReceipt?.route.effective ?? HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE} layers ${latestActorHostReceipt?.drawnLayerCount ?? 0}/${latestActorHostReceipt?.registeredLayerCount ?? 0}`,
+    `actor routes: ${latestActorHostReceipt?.effectiveActorRoutes.join(',') || 'none'}`,
     latestGrowthPlacementSummary,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
