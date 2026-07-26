@@ -33,6 +33,7 @@ const report = {
   schema: 'lerms.horde-live-runtime-browser-witness.v0',
   requestedUrl: options.url,
   effectiveUrl: null,
+  presentationMode: options.mode,
   viewport: { width: options.width, height: options.height },
   phase: 'launch',
   failurePhase: null,
@@ -127,6 +128,8 @@ async function runWitness() {
         carrierStatus: data.carrierStatus ?? null,
         requestedRoute: data.requestedRoute ?? null,
         effectiveRoute: data.effectiveRoute ?? null,
+        requestedPresentation: data.requestedPresentation ?? null,
+        effectivePresentation: data.effectivePresentation ?? null,
         requestedRenderer: data.requestedRenderer ?? null,
         effectiveRenderer: data.effectiveRenderer ?? null,
         sourceStatus: data.sourceStatus ?? null,
@@ -151,6 +154,8 @@ async function runWitness() {
     );
     assert.equal(identity.requestedRoute, EXPECTED_ROUTE);
     assert.equal(identity.effectiveRoute, EXPECTED_ROUTE);
+    assert.equal(identity.requestedPresentation, options.mode);
+    assert.equal(identity.effectivePresentation, options.mode);
     assert.equal(identity.requestedRenderer, EXPECTED_RENDERER);
     assert.equal(identity.effectiveRenderer, EXPECTED_RENDERER);
     assert.equal(identity.sourceStatus, 'live-incremental-current-hill');
@@ -196,6 +201,11 @@ async function runWitness() {
     assert.ok(report.oneRendererVerified, 'live stage is split or replay-controlled');
     assert.ok(report.nativeDepthVerified, 'live renderer has no depth buffer');
     assert.ok(report.fullHillGeometryVerified, 'live Hill grid is partial');
+
+    if (options.mode === 'operator-live') {
+      await runOperatorLiveView(browser);
+      return;
+    }
 
     report.phase = 'paused-on-open';
     const initial = await currentState(browser);
@@ -503,6 +513,159 @@ async function runWitness() {
   }
 }
 
+async function runOperatorLiveView(browser) {
+  report.phase = 'operator-live-direct-link';
+  const initial = await currentState(browser);
+  const initialUi = await browser.evaluate(`(() => ({
+    carrierStatus: document.documentElement.dataset.carrierStatus,
+    receiptStatus:
+      document.documentElement.dataset.carrierReceiptStatus,
+    operatorPlayCount:
+      document.documentElement.dataset.operatorPlayCount,
+    operatorLoopCount:
+      Number(document.documentElement.dataset.operatorLoopCount),
+    transportDisplay:
+      getComputedStyle(document.querySelector('.transport')).display,
+    presentationLabel:
+      document.querySelector('[data-presentation-label]')?.textContent,
+    receipt: window.__lermHordeLiveRuntimeReport ?? null,
+  }))()`);
+  assert.equal(initialUi.carrierStatus, 'operator-live-running');
+  assert.equal(
+    initialUi.receiptStatus,
+    'not-applicable-operator-live',
+  );
+  assert.equal(initialUi.operatorPlayCount, '0');
+  assert.equal(initialUi.operatorLoopCount, 0);
+  assert.equal(initialUi.transportDisplay, 'none');
+  assert.equal(initialUi.presentationLabel, 'AUTO LIVE / LOOPS');
+  assert.equal(initialUi.receipt, null);
+
+  await delay(650);
+  const sampleA = await currentState(browser);
+  const pixelsA = await readScenePixels(browser);
+  await captureScreenshot(browser, options.sampleAScreenshot);
+  await delay(1_100);
+  const sampleB = await currentState(browser);
+  const pixelsB = await readScenePixels(browser);
+  await captureScreenshot(browser, options.sampleBScreenshot);
+  report.liveStateSamples = [sampleA, sampleB];
+  report.livePixelSamples = [pixelsA, pixelsB];
+  report.liveClockVerified =
+    sampleA.elapsedMs > initial.elapsedMs &&
+    sampleB.elapsedMs > sampleA.elapsedMs &&
+    sampleA.tickCount > initial.tickCount &&
+    sampleB.tickCount > sampleA.tickCount &&
+    sampleB.sourceDistance > sampleA.sourceDistance;
+  report.carrierCanvasNonblank =
+    pixelsA.nonBackgroundSamples >= 32 &&
+    pixelsA.distinctColors >= 8;
+  report.carrierCanvasMotionPixels = Number(
+    Math.hypot(
+      pixelsB.redCentroidX - pixelsA.redCentroidX,
+      pixelsB.redCentroidY - pixelsA.redCentroidY,
+    ).toFixed(2),
+  );
+  assert.ok(
+    report.liveClockVerified,
+    'operator-live direct link did not advance without a click',
+  );
+  assert.ok(report.carrierCanvasNonblank, 'operator-live canvas is blank');
+  assert.ok(
+    report.carrierCanvasMotionPixels >= 4,
+    'operator-live carrier pixels did not move',
+  );
+
+  report.phase = 'operator-live-loop';
+  await waitFor(
+    () =>
+      browser.evaluate(
+        `Number(document.documentElement.dataset.operatorLoopCount) >= 1`,
+      ),
+    15_000,
+    'operator-live traversal loop',
+  );
+  await delay(350);
+  const looped = await browser.evaluate(`(() => ({
+    state: {
+      elapsedMs: Number(
+        document.querySelector('[data-smoke-viewport]')?.dataset.elapsedMs
+      ),
+      tickCount: Number(
+        document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex
+      ),
+    },
+    carrierStatus: document.documentElement.dataset.carrierStatus,
+    receiptStatus:
+      document.documentElement.dataset.carrierReceiptStatus,
+    operatorPlayCount:
+      document.documentElement.dataset.operatorPlayCount,
+    operatorLoopCount:
+      Number(document.documentElement.dataset.operatorLoopCount),
+    receipt: window.__lermHordeLiveRuntimeReport ?? null,
+  }))()`);
+  report.operatorLoopCount = looped.operatorLoopCount;
+  report.operatorLiveNonReceiptVerified =
+    looped.carrierStatus === 'operator-live-running' &&
+    looped.receiptStatus === 'not-applicable-operator-live' &&
+    looped.operatorPlayCount === '0' &&
+    looped.operatorLoopCount >= 1 &&
+    looped.receipt === null;
+  assert.ok(
+    report.operatorLiveNonReceiptVerified,
+    'operator-live route impersonated the acceptance receipt',
+  );
+  assert.ok(
+    looped.state.tickCount < 18 &&
+      looped.state.elapsedMs < 3_500,
+    'operator-live route did not restart into a new traversal',
+  );
+
+  report.phase = 'operator-live-layout';
+  const layout = await browser.evaluate(`(() => {
+    const selectors = ['.smoke-header', '.stage', '.smoke-footer'];
+    const rects = selectors.map((selector) => {
+      const rect = document.querySelector(selector)?.getBoundingClientRect();
+      return rect && {
+        left: rect.left, top: rect.top, right: rect.right,
+        bottom: rect.bottom, width: rect.width, height: rect.height,
+      };
+    });
+    return {
+      contained: rects.every((rect) =>
+        rect && rect.left >= -0.5 && rect.top >= -0.5 &&
+        rect.right <= innerWidth + 0.5 && rect.bottom <= innerHeight + 0.5 &&
+        rect.width > 0 && rect.height > 0
+      ),
+      ordered: rects.every((rect, index) =>
+        index === 0 || rect.top >= rects[index - 1].bottom - 0.5
+      ),
+      noOverflow:
+        document.documentElement.scrollWidth <= innerWidth &&
+        document.documentElement.scrollHeight <= innerHeight,
+    };
+  })()`);
+  report.layout = layout;
+  report.layoutContained =
+    layout.contained && layout.ordered && layout.noOverflow;
+  assert.ok(report.layoutContained, 'operator-live layout overlaps or clips');
+
+  await captureScreenshot(browser, options.screenshot);
+  report.primaryOutputWritten =
+    statSync(options.screenshot).size >= 10_000 &&
+    statSync(options.sampleAScreenshot).size >= 10_000 &&
+    statSync(options.sampleBScreenshot).size >= 10_000;
+  assert.ok(
+    report.primaryOutputWritten,
+    'operator-live visual evidence is missing or blank',
+  );
+  report.phase = 'complete';
+  report.ok = true;
+  console.log(
+    `Lerm Horde operator-live browser witness passed: ${options.report}`,
+  );
+}
+
 async function currentState(browser, togglePlay = false) {
   return browser.evaluate(`(() => {
     ${
@@ -610,8 +773,13 @@ function parseArgs(args) {
   const match = /^(\d+)x(\d+)$/.exec(viewport);
   if (!match) throw new Error(`invalid --viewport ${viewport}`);
   const label = values.get('label') ?? 'desktop';
+  const mode = values.get('mode') ?? 'acceptance-witness';
+  if (!['acceptance-witness', 'operator-live'].includes(mode)) {
+    throw new Error(`invalid --mode ${mode}`);
+  }
   return {
     url: values.get('url') ?? 'http://127.0.0.1:4198/smoke.html',
+    mode,
     width: Number(match[1]),
     height: Number(match[2]),
     report: resolve(

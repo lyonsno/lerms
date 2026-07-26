@@ -190,6 +190,10 @@ html[data-smoke-status="failed"] .source-state__light {
   background: #0a1913;
 }
 
+html[data-presentation="operator-live"] .transport {
+  display: none;
+}
+
 .transport__buttons {
   display: flex;
   gap: 7px;

@@ -23,6 +23,9 @@ import {
 } from './terrain/hill-of-hills.js';
 
 const LIVE_PRESENTATION_STEP_MS = 200;
+const ACCEPTANCE_PRESENTATION = 'acceptance-witness';
+const OPERATOR_LIVE_PRESENTATION = 'operator-live';
+const OPERATOR_LIVE_QUERY = 'presentation=operator-live';
 
 const stage = required<HTMLElement>('[data-smoke-viewport]');
 const statusLabel = required<HTMLElement>('[data-smoke-status-label]');
@@ -36,6 +39,9 @@ const playIcon = required<HTMLElement>('[data-play-icon]');
 const restart = required<HTMLButtonElement>('[data-restart]');
 const failure = required<HTMLElement>('[data-smoke-failure]');
 const errorOutput = required<HTMLElement>('[data-smoke-error]');
+const presentationLabel = required<HTMLElement>(
+  '[data-presentation-label]',
+);
 
 let carrier: ExactCarrierRenderer | null = null;
 let playing = false;
@@ -43,20 +49,37 @@ let operatorPlayCount = 0;
 let receiptPublished = false;
 let elapsedMs = 0;
 let liveClockOriginMs: number | null = null;
+let operatorLoopCount = 0;
+let requestedPresentation = ACCEPTANCE_PRESENTATION;
+let operatorLive = false;
 
 void initialize();
 
 async function initialize(): Promise<void> {
   try {
+    requestedPresentation = resolveRequestedPresentation(
+      window.location.search,
+    );
+    operatorLive =
+      requestedPresentation === OPERATOR_LIVE_PRESENTATION;
     carrier = await createExactCarrierRenderer(stage);
     renderState(carrier.state);
 
     const documentState = document.documentElement.dataset;
     documentState.smokeStatus = 'verified';
-    documentState.carrierStatus = 'verified-paused';
-    documentState.carrierReceiptStatus = 'pending-play';
+    documentState.carrierStatus = operatorLive
+      ? 'operator-live-running'
+      : 'verified-paused';
+    documentState.carrierReceiptStatus = operatorLive
+      ? 'not-applicable-operator-live'
+      : 'pending-play';
     documentState.requestedRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
     documentState.effectiveRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
+    documentState.requestedPresentation = requestedPresentation;
+    documentState.effectivePresentation = operatorLive
+      ? OPERATOR_LIVE_PRESENTATION
+      : ACCEPTANCE_PRESENTATION;
+    documentState.presentation = documentState.effectivePresentation;
     documentState.requestedRenderer = FULL_HILL_RENDERER_ID;
     documentState.effectiveRenderer = carrier.rendererId;
     documentState.sourceStatus = 'live-incremental-current-hill';
@@ -84,8 +107,15 @@ async function initialize(): Promise<void> {
     documentState.prefixRebuildCount = '0';
     documentState.replayConstructorCalls = '0';
     documentState.bodyVertexCount = String(carrier.bodyVertexCount);
+    documentState.operatorLoopCount = '0';
+    presentationLabel.textContent = operatorLive
+      ? 'AUTO LIVE / LOOPS'
+      : 'OPERATOR START';
     updatePlayState(false);
     window.requestAnimationFrame(tick);
+    if (operatorLive) {
+      startOperatorLive();
+    }
   } catch (error) {
     failSmoke(error);
   }
@@ -110,8 +140,12 @@ function tick(clockMs: number): void {
       try {
         renderState(carrier.advanceTo(elapsedMs));
         if (elapsedMs >= carrier.completionElapsedMs) {
-          updatePlayState(false);
-          publishReceipt();
+          if (operatorLive) {
+            restartOperatorLive(clockMs);
+          } else {
+            updatePlayState(false);
+            publishReceipt();
+          }
         }
       } catch (error) {
         failSmoke(error);
@@ -174,13 +208,16 @@ function updatePlayState(nextPlaying: boolean): void {
     : 'Start live traversal';
   playIcon.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
   statusLabel.textContent = playing
-    ? 'Live rail + current Hill / running'
+    ? operatorLive
+      ? 'Operator live view / auto-running'
+      : 'Live rail + current Hill / running'
     : receiptPublished
       ? 'Live rail + current Hill / complete'
       : 'Live rail + current Hill / paused';
 }
 
 playToggle.addEventListener('click', () => {
+  if (operatorLive) return;
   if (playing) {
     updatePlayState(false);
     return;
@@ -198,7 +235,34 @@ playToggle.addEventListener('click', () => {
   updatePlayState(true);
 });
 
-restart.addEventListener('click', resetTraversal);
+restart.addEventListener('click', () => {
+  if (operatorLive) return;
+  resetTraversal();
+});
+
+function startOperatorLive(): void {
+  if (!carrier) return;
+  document.documentElement.dataset.carrierStatus =
+    'operator-live-running';
+  document.documentElement.dataset.carrierReceiptStatus =
+    'not-applicable-operator-live';
+  updatePlayState(true);
+}
+
+function restartOperatorLive(clockMs: number): void {
+  if (!carrier) return;
+  document.documentElement.dataset.carrierStatus =
+    'operator-live-complete';
+  operatorLoopCount += 1;
+  document.documentElement.dataset.operatorLoopCount =
+    String(operatorLoopCount);
+  elapsedMs = 0;
+  renderState(carrier.reset());
+  liveClockOriginMs = clockMs;
+  document.documentElement.dataset.carrierStatus =
+    'operator-live-running';
+  statusLabel.textContent = 'Operator live view / auto-running';
+}
 
 function resetTraversal(): void {
   if (!carrier) return;
@@ -246,4 +310,16 @@ function required<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
   if (!element) throw new Error(`missing smoke element ${selector}`);
   return element;
+}
+
+function resolveRequestedPresentation(search: string): string {
+  const params = new URLSearchParams(search);
+  const presentation = params.get('presentation');
+  if (presentation === null) return ACCEPTANCE_PRESENTATION;
+  if (presentation === OPERATOR_LIVE_PRESENTATION) {
+    return OPERATOR_LIVE_PRESENTATION;
+  }
+  throw new Error(
+    `unsupported smoke presentation "${presentation}"; use ${OPERATOR_LIVE_QUERY}`,
+  );
 }
