@@ -19,6 +19,20 @@ import {
   type FittedRegistration,
   type SmoothFittedBinding,
 } from './kaminos-719024-fitted-body.js';
+import type { LermHordeProducerHistoryCompositionReceipt } from './lerm-horde-producer-history-composition.js';
+import {
+  FULL_HILL_ONE_RENDERER_SCHEMA,
+  FULL_HILL_RENDERER_ID,
+  createFullHillOneRendererSource,
+  createHillTerrainGeometry,
+  updateHillTerrainGeometry,
+  validateFullHillOneRendererReceipt,
+  type FullHillOneRendererReceipt,
+  type FullHillOneRendererSource,
+} from './lerm-horde-full-hill-renderer.js';
+import {
+  HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA,
+} from './terrain/hill-of-hills.js';
 
 const SOURCE_ROOT = '/vendor/kaminos-6217fff8/artifacts';
 const BODY_PATH = `${SOURCE_ROOT}/motion-ready-719024/creature.glb`;
@@ -29,7 +43,7 @@ const RAIL_MODULE_PATH =
   '/vendor/kaminos-ced6db3d/motion-ready-719024-core.js';
 const RAIL_HISTORY_PATH =
   '/vendor/lerms-c0ba891/artifacts/lerm-horde-producer-history/receipt.json';
-const VIEW_EXTENT = 4.8;
+const VIEW_EXTENT = 9.2;
 
 interface ProducerHistoryReceipt {
   ok: boolean;
@@ -98,21 +112,23 @@ export interface CarrierRootSample {
   railRootPosition: [number, number, number];
   hillSupportRootPosition: [number, number, number];
   supportHeightDelta: number;
-  hillSupportScreenAnchor: [number, number];
-  projectedRootScreenAnchor: [number, number];
-  screenAnchorErrorPx: number;
-  hillScreenProjectionApplications: number;
   railId: string;
   rootFrameSource:
-    '0482274.acceptedHillRootHeight+ced6db3d.railFrame';
+    'f6458e5.liveHillRoot+ced6db3d.railFrame';
   rootFrame: CreatureRootFrame;
 }
 
 export interface ExactCarrierRenderer {
+  frames: FullHillOneRendererSource['replay']['frames'];
   samples: readonly CarrierRootSample[];
   renderFrame(frameIndex: number): void;
   resize(): void;
+  createReceipt(operatorPlayCount: number): FullHillOneRendererReceipt;
   bodyVertexCount: number;
+  terrainSampleCount: number;
+  terrainTriangleCount: number;
+  depthBits: number;
+  rendererId: typeof FULL_HILL_RENDERER_ID;
   effectiveEvaluatorRoute: typeof EXACT_3D_CARRIER_EVALUATOR_ROUTE;
   railModuleSha256: typeof EXACT_3D_CARRIER_RAIL_MODULE_SHA256;
   railHistorySha256: typeof EXACT_3D_CARRIER_RAIL_HISTORY_SHA256;
@@ -121,8 +137,6 @@ export interface ExactCarrierRenderer {
 
 export async function createExactCarrierRenderer(
   stage: HTMLElement,
-  viewport: SVGSVGElement,
-  panelGroups: readonly SVGGElement[],
 ): Promise<ExactCarrierRenderer> {
   const [
     bodyResponse,
@@ -221,42 +235,84 @@ export async function createExactCarrierRenderer(
     registration,
   );
 
+  const fullHillSource = createFullHillOneRendererSource(
+    railHistory as unknown as LermHordeProducerHistoryCompositionReceipt,
+  );
+  const acceptedRoots = fullHillSource.replay.frames
+    .filter((frame) => frame.kind === 'actor-prefix')
+    .map((frame) => {
+      if (!frame.actor) {
+        throw new Error(`full-Hill actor frame ${frame.index} is missing its root`);
+      }
+      return frame.actor.rootWorld;
+    });
+  const samples = createRootSamples(acceptedRoots, railHistory, railCore);
+  const firstTerrain = fullHillSource.buffers[0];
+  if (!firstTerrain) throw new Error('full-Hill replay has no terrain buffer');
+
   const canvas = document.createElement('canvas');
-  canvas.className = 'stage__carrier';
+  canvas.className = 'stage__renderer';
   canvas.dataset.exactCarrier = '719024';
-  canvas.setAttribute('aria-hidden', 'true');
-  stage.append(canvas);
+  canvas.dataset.rendererId = FULL_HILL_RENDERER_ID;
+  canvas.dataset.fullHill = 'true';
+  canvas.setAttribute(
+    'aria-label',
+    'Full Hill of Hills and exact 719024 carrier in one 3D renderer',
+  );
+  stage.prepend(canvas);
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    alpha: true,
+    alpha: false,
     antialias: true,
     preserveDrawingBuffer: true,
   });
-  renderer.setClearColor(0x000000, 0);
+  renderer.setClearColor(0x06100d, 1);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x06100d);
+  scene.fog = new THREE.Fog(0x06100d, 20, 34);
   const camera = new THREE.OrthographicCamera(
     -VIEW_EXTENT,
     VIEW_EXTENT,
     VIEW_EXTENT,
     -VIEW_EXTENT,
     0.1,
-    60,
+    80,
   );
-  camera.position.set(8, 7, -8);
-  camera.lookAt(0, 0, 0);
-  const material = new THREE.MeshStandardMaterial({
+  camera.position.set(12, 10, -15);
+  camera.lookAt(0, 0.4, 0);
+
+  const terrainGeometry = createHillTerrainGeometry(firstTerrain);
+  const terrainMaterial = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.82,
+    metalness: 0,
+    side: THREE.DoubleSide,
+    depthTest: true,
+    depthWrite: true,
+  });
+  const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
+  terrainMesh.name = 'full-hill-terrain';
+  terrainMesh.frustumCulled = false;
+  terrainMesh.renderOrder = 0;
+  scene.add(terrainMesh);
+
+  const bodyMaterial = new THREE.MeshStandardMaterial({
     color: 0xd82938,
     roughness: 0.62,
     metalness: 0.02,
     side: THREE.DoubleSide,
+    depthTest: true,
+    depthWrite: true,
   });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.frustumCulled = false;
-  scene.add(mesh);
+  const bodyMesh = new THREE.Mesh(geometry, bodyMaterial);
+  bodyMesh.name = 'exact-719024-carrier';
+  bodyMesh.frustumCulled = false;
+  bodyMesh.renderOrder = 1;
+  scene.add(bodyMesh);
   scene.add(new THREE.HemisphereLight(0xfff0c2, 0x183228, 2.1));
   const key = new THREE.DirectionalLight(0xffd88e, 3.2);
   key.position.set(-4, 8, 14);
@@ -265,107 +321,42 @@ export async function createExactCarrierRenderer(
   rim.position.set(8, -2, 8);
   scene.add(rim);
 
-  const actorGroups = panelGroups
-    .map((panel) =>
-      panel.querySelector<SVGGElement>('[data-visible-lerm-body="true"]'),
-    )
-    .filter((group): group is SVGGElement => group !== null);
-  if (actorGroups.length !== 15) {
-    throw new Error(
-      `exact carrier requires 15 accepted actor roots, received ${actorGroups.length}`,
-    );
-  }
-  const supportMarkers = actorGroups.map((group) =>
-    group.querySelector<SVGCircleElement>('circle[fill="#ffe06f"]'),
-  );
-  if (supportMarkers.some((marker) => marker === null)) {
-    throw new Error('accepted Hill actor roots are missing support markers');
-  }
-  const samples = createRootSamples(actorGroups, railHistory, railCore);
-  actorGroups.forEach((group) => {
-    group.dataset.hiddenByExactCarrier = 'true';
-    group.style.opacity = '0';
-  });
-
   let lastFrameIndex = -1;
-  const alignCameraToHillSupport = (
-    sample: CarrierRootSample,
-    supportMarker: SVGCircleElement,
-  ): void => {
-    const width = Math.max(1, stage.clientWidth);
-    const height = Math.max(1, stage.clientHeight);
-    const root = new THREE.Vector3(
-      sample.rootFrame.origin.x,
-      sample.rootFrame.origin.y,
-      sample.rootFrame.origin.z,
-    );
-    camera.clearViewOffset();
-    camera.position.set(root.x + 8, root.y + 7, root.z - 8);
-    camera.lookAt(root);
-    camera.updateMatrixWorld(true);
-    camera.updateProjectionMatrix();
-
-    const stageRect = stage.getBoundingClientRect();
-    const markerRect = supportMarker.getBoundingClientRect();
-    const targetX = markerRect.left + markerRect.width / 2 - stageRect.left;
-    const targetY = markerRect.top + markerRect.height / 2 - stageRect.top;
-    if (
-      markerRect.width <= 0 ||
-      markerRect.height <= 0 ||
-      ![targetX, targetY].every(Number.isFinite)
-    ) {
-      throw new Error(
-        `accepted Hill support marker ${sample.frameIndex} is not projectable`,
-      );
-    }
-    camera.setViewOffset(
-      width,
-      height,
-      width / 2 - targetX,
-      height / 2 - targetY,
-      width,
-      height,
-    );
-    camera.updateProjectionMatrix();
-    const projected = root.clone().project(camera);
-    const projectedX = ((projected.x + 1) / 2) * width;
-    const projectedY = ((1 - projected.y) / 2) * height;
-    sample.hillSupportScreenAnchor = [targetX, targetY];
-    sample.projectedRootScreenAnchor = [projectedX, projectedY];
-    sample.screenAnchorErrorPx = Math.hypot(
-      projectedX - targetX,
-      projectedY - targetY,
-    );
-    sample.hillScreenProjectionApplications = 1;
-  };
   const renderFrame = (frameIndex: number): void => {
-    if (frameIndex < 1 || frameIndex > 15) {
-      mesh.visible = false;
-      renderer.render(scene, camera);
-      lastFrameIndex = frameIndex;
-      return;
+    const frame = fullHillSource.replay.frames[frameIndex];
+    const terrainBuffer = fullHillSource.buffers[frameIndex];
+    if (!frame || !terrainBuffer) {
+      throw new Error(`full-Hill frame ${frameIndex} is unavailable`);
     }
-    const sample = samples[frameIndex - 1];
-    const supportMarker = supportMarkers[frameIndex - 1];
-    if (!supportMarker) {
-      throw new Error(`accepted Hill support marker ${frameIndex} is missing`);
+    updateHillTerrainGeometry(terrainGeometry, terrainBuffer);
+    if (frame.kind === 'actor-prefix') {
+      const sample = samples[frameIndex - 1];
+      if (!sample || !frame.actor) {
+        throw new Error(`full-Hill carrier sample ${frameIndex} is unavailable`);
+      }
+      const positions = evaluateSmoothFittedPhase(
+        binding,
+        sample.progress,
+        sample.rootFrame,
+        0.18,
+      );
+      const attribute = geometry.getAttribute('position') as THREE.BufferAttribute;
+      attribute.copyArray(positions);
+      attribute.needsUpdate = true;
+      if (lastFrameIndex !== frameIndex) {
+        geometry.computeVertexNormals();
+        geometry.computeBoundingSphere();
+      }
+      bodyMesh.visible = true;
+    } else {
+      bodyMesh.visible = false;
     }
-    alignCameraToHillSupport(sample, supportMarker);
-    const rootFrame = sample.rootFrame;
-    const positions = evaluateSmoothFittedPhase(
-      binding,
-      sample.progress,
-      rootFrame,
-      0.18,
-    );
-    const attribute = geometry.getAttribute('position') as THREE.BufferAttribute;
-    attribute.copyArray(positions);
-    attribute.needsUpdate = true;
-    if (lastFrameIndex !== frameIndex) {
-      geometry.computeVertexNormals();
-      geometry.computeBoundingSphere();
-    }
-    mesh.visible = true;
+    canvas.dataset.frameIndex = String(frameIndex);
+    canvas.dataset.frameKind = frame.kind;
+    canvas.dataset.terrainSampleChecksum = terrainBuffer.sampleChecksum;
+    canvas.dataset.terrainTopologyChecksum = terrainBuffer.topologyChecksum;
+    canvas.dataset.trafficChecksum =
+      terrainBuffer.witness.producerTrafficFieldChecksum;
     renderer.render(scene, camera);
     lastFrameIndex = frameIndex;
   };
@@ -387,28 +378,122 @@ export async function createExactCarrierRenderer(
       camera.bottom = -VIEW_EXTENT / aspect;
     }
     camera.updateProjectionMatrix();
-    if (lastFrameIndex >= 1 && lastFrameIndex <= 15) {
-      const sample = samples[lastFrameIndex - 1];
-      const supportMarker = supportMarkers[lastFrameIndex - 1];
-      if (sample && supportMarker) {
-        alignCameraToHillSupport(sample, supportMarker);
-      }
-    }
     renderer.render(scene, camera);
   };
   resize();
   new ResizeObserver(resize).observe(stage);
-  viewport.dataset.carrierAssetSha256 = bodySha256;
-  viewport.dataset.carrierRegistrationSha256 = registrationSha256;
-  viewport.dataset.railModuleSha256 = railModuleSha256;
-  viewport.dataset.railHistorySha256 = railHistorySha256;
-  viewport.dataset.effectiveRailId = EXACT_3D_CARRIER_RAIL_ID;
+  const depthBits = renderer
+    .getContext()
+    .getParameter(renderer.getContext().DEPTH_BITS) as number;
+  const terrainTriangleCount =
+    (firstTerrain.gridResolution.x - 1) *
+    (firstTerrain.gridResolution.z - 1) *
+    2;
+
+  const createReceipt = (
+    operatorPlayCount: number,
+  ): FullHillOneRendererReceipt => {
+    const canvasCount = stage.querySelectorAll('canvas').length;
+    const visibleSvgCount = [...stage.querySelectorAll('svg')].filter(
+      (svg) =>
+        !svg.hasAttribute('hidden') && getComputedStyle(svg).display !== 'none',
+    ).length;
+    const hillHistoryRetained =
+      fullHillSource.buffers[16]?.witness.producerTrafficFieldChecksum ===
+      fullHillSource.buffers[17]?.witness.producerTrafficFieldChecksum;
+    if (
+      canvasCount !== 1 ||
+      visibleSvgCount !== 0 ||
+      operatorPlayCount !== 1 ||
+      !hillHistoryRetained
+    ) {
+      throw new Error(
+        'full-Hill completion cannot close with split presentation, autoplay, or lost history',
+      );
+    }
+    const receipt: FullHillOneRendererReceipt = {
+      schema: FULL_HILL_ONE_RENDERER_SCHEMA,
+      status: {
+        ok: true,
+        phase: 'complete',
+        fallbackStatus: 'none',
+        staleStatus: 'fresh',
+        failurePhase: null,
+      },
+      renderer: {
+        requested: FULL_HILL_RENDERER_ID,
+        effective: FULL_HILL_RENDERER_ID,
+        canvasCount,
+        sceneCount: 1,
+        cameraCount: 1,
+        depthBufferCount: 1,
+        depthBits,
+        visibleSvgCount,
+        terrainTextureSubstitution: false,
+      },
+      terrain: {
+        schema: HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA,
+        gridResolution: { ...firstTerrain.gridResolution },
+        sampleCount: firstTerrain.sampleCount,
+        triangleCount: terrainTriangleCount,
+        indexOrder: 'z-major-two-triangles-per-cell',
+        frameCount: fullHillSource.buffers.length,
+        frames: fullHillSource.replay.frames.map((frame, index) => {
+          const buffer = fullHillSource.buffers[index];
+          if (!buffer) throw new Error(`full-Hill buffer ${index} is missing`);
+          return {
+            index,
+            kind: frame.kind,
+            timestampMs: frame.timestampMs,
+            prefixSampleCount: frame.prefixSampleCount,
+            frameId: buffer.source.frameId,
+            sampleChecksum: buffer.sampleChecksum,
+            topologyChecksum: buffer.topologyChecksum,
+            proxyMaterialChecksum: buffer.proxyMaterialChecksum,
+            trafficChecksum: buffer.witness.producerTrafficFieldChecksum,
+          };
+        }),
+      },
+      carrier: {
+        identity: '719024',
+        bodySha256: EXACT_3D_CARRIER_BODY_SHA256,
+        visiblePrefixFrameCount: samples.length,
+        departed: true,
+      },
+      playback: {
+        initialState: 'paused',
+        operatorPlayCount,
+        autoplayObserved: false,
+      },
+      departure: {
+        bodyVisible: false,
+        hillHistoryRetained,
+        trafficChecksum:
+          fullHillSource.buffers[17]?.witness.producerTrafficFieldChecksum ?? '',
+      },
+    };
+    return validateFullHillOneRendererReceipt(receipt);
+  };
+
+  stage.dataset.carrierAssetSha256 = bodySha256;
+  stage.dataset.carrierRegistrationSha256 = registrationSha256;
+  stage.dataset.railModuleSha256 = railModuleSha256;
+  stage.dataset.railHistorySha256 = railHistorySha256;
+  stage.dataset.effectiveRailId = EXACT_3D_CARRIER_RAIL_ID;
+  stage.dataset.terrainSampleCount = String(firstTerrain.sampleCount);
+  stage.dataset.terrainTriangleCount = String(terrainTriangleCount);
 
   return {
+    frames: fullHillSource.replay.frames,
     samples,
     renderFrame,
     resize,
+    createReceipt,
     bodyVertexCount: binding.vertexCount,
+    terrainSampleCount: firstTerrain.sampleCount,
+    terrainTriangleCount,
+    depthBits,
+    rendererId: FULL_HILL_RENDERER_ID,
     effectiveEvaluatorRoute: EXACT_3D_CARRIER_EVALUATOR_ROUTE,
     railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
     railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
@@ -476,15 +561,13 @@ function verifyProducerArtifacts(
 }
 
 function createRootSamples(
-  actorGroups: readonly SVGGElement[],
+  acceptedRoots: readonly (readonly [number, number, number])[],
   receipt: ProducerHistoryReceipt,
   railCore: RailCoreModule,
 ): CarrierRootSample[] {
   const rail = rehydrateReviewedRail(receipt);
-  return actorGroups.map((group, index) => {
-    const acceptedRootWorld = (group.dataset.rootWorld ?? '')
-      .split(',')
-      .map(Number) as [number, number, number];
+  return acceptedRoots.map((acceptedRoot, index) => {
+    const acceptedRootWorld = [...acceptedRoot] as [number, number, number];
     const reviewed = receipt.history.samples[index];
     if (!reviewed || reviewed.sequence !== index) {
       throw new Error(`reviewed rail history sample ${index} is missing`);
@@ -532,13 +615,8 @@ function createRootSamples(
       railRootPosition: sampled.position,
       hillSupportRootPosition: acceptedRootWorld,
       supportHeightDelta: acceptedRootWorld[1] - sampled.position[1],
-      hillSupportScreenAnchor: [Number.NaN, Number.NaN],
-      projectedRootScreenAnchor: [Number.NaN, Number.NaN],
-      screenAnchorErrorPx: Number.NaN,
-      hillScreenProjectionApplications: 0,
       railId: sampled.railId,
-      rootFrameSource:
-        '0482274.acceptedHillRootHeight+ced6db3d.railFrame',
+      rootFrameSource: 'f6458e5.liveHillRoot+ced6db3d.railFrame',
       rootFrame,
     };
   });

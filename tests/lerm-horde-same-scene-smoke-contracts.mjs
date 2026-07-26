@@ -1,221 +1,122 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = process.cwd();
-const smokeHtmlPath = resolve(root, 'smoke.html');
-const smokeModulePath = resolve(root, 'src/lerm-horde-same-scene-smoke.ts');
-const smokeContractPath = resolve(
-  root,
-  'src/lerm-horde-same-scene-smoke-contract.ts',
-);
-const browserWitnessPath = resolve(
-  root,
-  'tests/lerm-horde-same-scene-browser-witness.mjs',
-);
-const replayPath = resolve(
-  root,
-  'public/smoke/horde-same-scene-0482274/replay.svg',
-);
-const manifestPath = resolve(
-  root,
-  'public/smoke/horde-same-scene-0482274/manifest.json',
-);
+const paths = {
+  html: resolve(root, 'smoke.html'),
+  viewer: resolve(root, 'src/lerm-horde-same-scene-smoke.ts'),
+  renderer: resolve(root, 'src/lerm-horde-3d-carrier-renderer.ts'),
+  adapter: resolve(root, 'src/lerm-horde-full-hill-renderer.ts'),
+  witness: resolve(root, 'tests/lerm-horde-same-scene-browser-witness.mjs'),
+  historicalSvg: resolve(
+    root,
+    'public/smoke/horde-same-scene-0482274/replay.svg',
+  ),
+};
 
-assert.ok(
-  existsSync(smokeHtmlPath),
-  'the exact same-scene timed smoke route must exist',
-);
-assert.ok(
-  existsSync(smokeModulePath) && existsSync(smokeContractPath),
-  'the timed smoke viewer and source verifier must exist',
-);
-assert.ok(
-  existsSync(browserWitnessPath),
-  'the timed smoke route must have a reusable browser witness',
-);
-assert.ok(
-  existsSync(replayPath) && existsSync(manifestPath),
-  'the exact accepted replay assets must be mounted in the smoke route',
-);
+for (const [label, path] of Object.entries(paths)) {
+  assert.ok(existsSync(path), `${label} must exist`);
+}
 
-const smokeHtml = readFileSync(smokeHtmlPath, 'utf8');
-const smokeModule = readFileSync(smokeModulePath, 'utf8');
-const smokeContract = readFileSync(smokeContractPath, 'utf8');
-const browserWitness = readFileSync(browserWitnessPath, 'utf8');
-const replay = readFileSync(replayPath);
-const replayText = replay.toString('utf8');
-const manifestText = readFileSync(manifestPath, 'utf8');
-const manifest = JSON.parse(manifestText);
+const html = readFileSync(paths.html, 'utf8');
+const viewer = readFileSync(paths.viewer, 'utf8');
+const renderer = readFileSync(paths.renderer, 'utf8');
+const adapter = readFileSync(paths.adapter, 'utf8');
+const witness = readFileSync(paths.witness, 'utf8');
 
 assert.match(
-  smokeHtml,
-  /src\/lerm-horde-same-scene-smoke\.ts/,
-  'smoke.html must load the exact same-scene viewer',
+  html,
+  /class="stage"\s+data-smoke-viewport/,
+  'the full-Hill stage must be the smoke viewport',
+);
+assert.doesNotMatch(
+  html,
+  /<svg\b/,
+  'the active full-Hill route must not seat an SVG presentation layer',
+);
+assert.doesNotMatch(
+  viewer,
+  /replay\.svg|mountSvg|ACCEPTED_SAME_SCENE_ASSET_ROOT/,
+  'the active route must not fetch or mount the historical SVG replay',
 );
 assert.match(
-  smokeModule,
-  /requestAnimationFrame/,
-  'the viewer must advance accepted frames over time',
+  viewer,
+  /createExactCarrierRenderer\(stage\)/,
+  'the viewer must initialize the shared terrain and body renderer',
 );
 assert.match(
-  smokeModule,
-  /data-smoke-status/,
-  'the viewer must expose requested/effective source status',
+  viewer,
+  /__lermHordeFullHillReport/,
+  'the viewer must publish the full-Hill completion receipt',
 );
 assert.match(
-  smokeContract,
-  /0482274d0612b55969ad6c71f8f5c79c8721ce77/,
-  'the source verifier must pin the accepted presenter revision',
+  renderer,
+  /createHillTerrainGeometry\(firstTerrain\)/,
+  'the renderer must create actual Three geometry from the Hill buffer',
 );
 assert.match(
-  smokeContract,
-  /f916a9309ef4ab3f35d3a94d4e6084a3cdd2f474/,
-  'the source verifier must pin the reviewed Horde verifier',
+  renderer,
+  /updateHillTerrainGeometry\(terrainGeometry, terrainBuffer\)/,
+  'the renderer must update the live terrain for every canonical frame',
 );
-for (const requiredBrowserCheck of [
-  'smokeStatus',
-  'carrierStatus',
-  'carrierReceiptComplete',
-  'initialPauseHeld',
-  'oneOperatorPlay',
-  'exactCarrierVisible',
-  'hiddenGlyphAbsent',
+assert.match(
+  renderer,
+  /depthTest: true[\s\S]*depthWrite: true/,
+  'terrain and body must participate in native depth',
+);
+assert.match(
+  renderer,
+  /getParameter\(renderer\.getContext\(\)\.DEPTH_BITS\)/,
+  'the renderer must measure its effective depth-buffer capacity',
+);
+assert.match(
+  adapter,
+  /createHillHordeSameScenePrefixReplay\(admission, motion\)/,
+  'the adapter must consume the canonical replay constructor',
+);
+assert.match(
+  adapter,
+  /createHillOfHillsTerrainBuffer\(terrain\)/,
+  'the adapter must consume Hill source buffers rather than SVG pixels',
+);
+
+for (const requiredEvidence of [
+  'oneRendererVerified',
+  'nativeDepthVerified',
+  'fullHillGeometryVerified',
   'carrierCanvasNonblank',
   'carrierCanvasMotionPixels',
-  'railFrameVerified',
-  'hillSupportTrackingVerified',
-  'hillScreenTrackingVerified',
-  'requestedRoute',
-  'effectiveRoute',
-  'playbackAdvanced',
-  'pauseHeld',
+  'terrainChangedAcrossPrefixes',
   'departureBodyAbsent',
-  'activePanelIsolated',
-  'motionBodyVisible',
-  'layoutContained',
-  'headerHeightAcceptable',
+  'departureHistoryRetained',
+  'carrierReceiptComplete',
+  'oneOperatorPlay',
+  'requestedRenderer',
+  'effectiveRenderer',
+  'terrainSampleCount',
+  'terrainTriangleCount',
+  'depthBits',
   'primaryOutputWritten',
 ]) {
   assert.match(
-    browserWitness,
-    new RegExp(requiredBrowserCheck),
-    `the browser witness must report ${requiredBrowserCheck}`,
+    witness,
+    new RegExp(requiredEvidence),
+    `the browser witness must report ${requiredEvidence}`,
   );
 }
-for (const exactCarrierIdentity of [
-  'carrierBodySha256',
-  'carrierRegistrationSha256',
-  'carrierRailRevision',
-  'carrierRailModuleSha256',
-  'carrierRailHistorySha256',
-  'effectiveRailId',
-  'carrierPresentationRevision',
-  'carrierPlaybackRevision',
-  'effectiveEvaluatorRoute',
+for (const falseClosureProbe of [
+  "querySelectorAll('.stage canvas').length",
+  "querySelectorAll('.stage svg')",
+  'readPixels',
+  'redBodySamples === 0',
+  'hillHistoryRetained === true',
 ]) {
   assert.match(
-    browserWitness,
-    new RegExp(exactCarrierIdentity),
-    `the browser witness must preserve exact ${exactCarrierIdentity} identity`,
-  );
-}
-for (const exactIdentityField of [
-  'presenterRevision',
-  'verifierRevision',
-  'verifierModuleBlob',
-  'acceptedReceiptSha256',
-  'manifestSha256',
-  'svgSha256',
-  'sourceStatus',
-]) {
-  assert.match(
-    browserWitness,
-    new RegExp(exactIdentityField),
-    `the browser witness must preserve exact ${exactIdentityField} identity`,
+    witness,
+    new RegExp(falseClosureProbe.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    `the browser witness must probe ${falseClosureProbe}`,
   );
 }
 
-assert.equal(
-  createHash('sha256').update(replay).digest('hex'),
-  'f657e3365833e5e0465a208ea367ce6c40a429125528f82f25fa71dda39e626c',
-  'the smoke route must mount the exact accepted replay SVG bytes',
-);
-assert.equal(
-  createHash('sha256').update(manifestText).digest('hex'),
-  'c8a25168cbbf9d45f7f2b225ab630e088f14a5b97f8b5cb561af7258e335c341',
-  'the smoke route must mount the exact public-safe accepted manifest bytes',
-);
-assert.equal(
-  manifest.acceptedReceiptSha256,
-  'c5e087987ebe5e092d7b83d56f3c514c97629413d3e81e5989955b0acf323663',
-  'the public manifest must retain the accepted source receipt identity',
-);
-assert.equal(
-  manifest.identity.presenterRevision,
-  '0482274d0612b55969ad6c71f8f5c79c8721ce77',
-  'the mounted manifest must name the accepted presenter',
-);
-assert.equal(
-  manifest.identity.verifierRevision,
-  'f916a9309ef4ab3f35d3a94d4e6084a3cdd2f474',
-  'the mounted manifest must name the reviewed verifier',
-);
-assert.equal(manifest.frames.length, 18);
-assert.equal(
-  manifest.frames.filter(({ kind }) => kind === 'actor-prefix').length,
-  15,
-);
-assert.equal(manifest.frames.at(-2)?.kind, 'actor-departed');
-assert.equal(manifest.frames.at(-1)?.kind, 'after-departure');
-assert.equal(
-  manifest.frames.at(-2)?.trafficChecksum,
-  manifest.frames.at(-1)?.trafficChecksum,
-  'pressure must persist across both departure states',
-);
-
-const { verifyAcceptedSameSceneSmokeSource } = await import(
-  '../src/lerm-horde-same-scene-smoke-contract.ts'
-);
-const verified = await verifyAcceptedSameSceneSmokeSource(
-  manifestText,
-  replayText,
-);
-assert.equal(verified.frames.length, 18);
-assert.equal(verified.sourceStatus, 'exact-accepted-replay');
-await assert.rejects(
-  () =>
-    verifyAcceptedSameSceneSmokeSource(
-      manifestText.replace(
-        '0482274d0612b55969ad6c71f8f5c79c8721ce77',
-        '0000000000000000000000000000000000000000',
-      ),
-      replayText,
-    ),
-  /manifest bytes are missing or substituted/,
-  'a substituted presenter manifest must fail before playback',
-);
-await assert.rejects(
-  () =>
-    verifyAcceptedSameSceneSmokeSource(
-      manifestText,
-      replayText.replace('data-visible-lerm-body="true"', ''),
-    ),
-  /SVG bytes are missing or substituted/,
-  'a partial moving-body SVG must fail before playback',
-);
-await assert.rejects(
-  () =>
-    verifyAcceptedSameSceneSmokeSource(
-      manifestText.replace(
-        '"effective": "lerms/hill-of-hills/horde-same-scene-prefix-replay"',
-        '"effective": "lerms/fallback/replay"',
-      ),
-      replayText,
-    ),
-  /manifest bytes are missing or substituted/,
-  'a fallback effective route must fail before playback',
-);
-
-console.log('Lerm Horde exact same-scene timed smoke contracts ok');
+console.log('Lerm Horde full-Hill one-renderer smoke contracts ok');

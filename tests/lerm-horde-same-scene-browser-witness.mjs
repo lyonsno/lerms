@@ -5,28 +5,17 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import {
   mkdtempSync,
-  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { inflateSync } from 'node:zlib';
 
 const EXPECTED_ROUTE = 'lerms/hill-of-hills/horde-same-scene-prefix-replay';
-const EXPECTED_PRESENTER =
-  '0482274d0612b55969ad6c71f8f5c79c8721ce77';
-const EXPECTED_VERIFIER =
-  'f916a9309ef4ab3f35d3a94d4e6084a3cdd2f474';
-const EXPECTED_VERIFIER_BLOB =
-  'ae5aec5b6978a6f9d192d0a37aa7a254408201d7';
-const EXPECTED_RECEIPT_SHA256 =
-  'c5e087987ebe5e092d7b83d56f3c514c97629413d3e81e5989955b0acf323663';
-const EXPECTED_MANIFEST_SHA256 =
-  'c8a25168cbbf9d45f7f2b225ab630e088f14a5b97f8b5cb561af7258e335c341';
-const EXPECTED_SVG_SHA256 =
-  'f657e3365833e5e0465a208ea367ce6c40a429125528f82f25fa71dda39e626c';
+const EXPECTED_RENDERER = 'three-webgl-full-hill-v0';
+const EXPECTED_RECEIPT_SCHEMA = 'lerms.horde-full-hill-one-renderer.v0';
+const EXPECTED_TERRAIN_SCHEMA = 'lerms.hill-of-hills-terrain-buffer.v0';
 const EXPECTED_CARRIER_SHA256 =
   '8fed20d958ef48797c14ad1d3846a50eae05d43e6ae67f8805060b02f1abde8e';
 const EXPECTED_REGISTRATION_SHA256 =
@@ -39,10 +28,6 @@ const EXPECTED_RAIL_HISTORY_SHA256 =
   'c56627554f5cacb8f151361419bfe70177e2d86490193e30b2f148a11b430b2e';
 const EXPECTED_RAIL_ID =
   'lerm-horde-719024-control-crossing-v0-left-longitudinal-short-rail';
-const EXPECTED_PRESENTATION_REVISION =
-  '6217fff858c0b12e330499baf28127f9122826f7';
-const EXPECTED_PLAYBACK_REVISION =
-  'fbe2e851130bd142b64727a494809141b9954cef';
 const EXPECTED_EVALUATOR_ROUTE =
   'kaminos/fitted-proxy-rig/arbitrary-phase-plus-semantic-probes-v0';
 const CHROME =
@@ -50,7 +35,7 @@ const CHROME =
 
 const options = parseArgs(process.argv.slice(2));
 const report = {
-  schema: 'lerms.horde-same-scene-browser-witness.v0',
+  schema: 'lerms.horde-full-hill-browser-witness.v0',
   requestedUrl: options.url,
   effectiveUrl: null,
   viewport: { width: options.width, height: options.height },
@@ -63,502 +48,363 @@ const report = {
   carrierReceiptComplete: false,
   initialPauseHeld: false,
   oneOperatorPlay: false,
+  oneRendererVerified: false,
+  nativeDepthVerified: false,
+  fullHillGeometryVerified: false,
   exactCarrierVisible: false,
-  hiddenGlyphAbsent: false,
   carrierCanvasNonblank: false,
   carrierCanvasMotionPixels: 0,
   railFrameVerified: false,
   hillSupportTrackingVerified: false,
-  hillScreenTrackingVerified: false,
+  terrainChangedAcrossPrefixes: false,
+  departureBodyAbsent: false,
+  departureHistoryRetained: false,
+  motionBodyVisible: false,
+  requestedRoute: null,
+  effectiveRoute: null,
+  requestedRenderer: null,
+  effectiveRenderer: null,
+  sourceStatus: null,
+  terrainBufferSchema: null,
+  terrainSampleCount: null,
+  terrainTriangleCount: null,
+  depthBits: null,
   carrierBodySha256: null,
   carrierRegistrationSha256: null,
   carrierRailRevision: null,
   carrierRailModuleSha256: null,
   carrierRailHistorySha256: null,
   effectiveRailId: null,
-  carrierPresentationRevision: null,
-  carrierPlaybackRevision: null,
   effectiveEvaluatorRoute: null,
-  requestedRoute: null,
-  effectiveRoute: null,
-  presenterRevision: null,
-  verifierRevision: null,
-  verifierModuleBlob: null,
-  acceptedReceiptSha256: null,
-  manifestSha256: null,
-  svgSha256: null,
-  sourceStatus: null,
   playbackAdvanced: false,
   pauseHeld: false,
-  departureBodyAbsent: false,
-  activePanelIsolated: false,
-  motionBodyVisible: false,
   layoutContained: false,
   headerHeightAcceptable: false,
   primaryOutputWritten: false,
   screenshot: options.screenshot,
+  departureScreenshot: options.departureScreenshot,
 };
 
 async function runWitness() {
   let browser;
   let chrome;
   let profileDir;
-
   try {
-  const port = await freePort();
-  profileDir = mkdtempSync(`${tmpdir()}/lerms-same-scene-chrome-`);
-  chrome = spawn(
-    CHROME,
-    [
-      '--headless=new',
-      '--disable-background-networking',
-      '--disable-breakpad',
-      '--disable-component-update',
-      '--disable-default-apps',
-      '--disable-extensions',
-      '--disable-features=Translate',
-      '--disable-sync',
-      '--hide-scrollbars',
-      '--metrics-recording-only',
-      '--no-first-run',
-      '--no-default-browser-check',
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${profileDir}`,
-      'about:blank',
-    ],
-    { stdio: ['ignore', 'ignore', 'pipe'] },
-  );
-
-  const target = await waitForPageTarget(port, chrome);
-  browser = await CdpConnection.open(target.webSocketDebuggerUrl);
-  await browser.command('Page.enable');
-  await browser.command('Runtime.enable');
-  await browser.command('Emulation.setDeviceMetricsOverride', {
-    width: options.width,
-    height: options.height,
-    deviceScaleFactor: 1,
-    mobile: options.width <= 700,
-  });
-  report.phase = 'navigate';
-  await browser.command('Page.navigate', { url: options.url });
-  await waitFor(
-    async () => {
-      const status = await browser.evaluate(
-        'document.documentElement.dataset.smokeStatus',
-      );
-      return status === 'verified' || status === 'failed';
-    },
-    12_000,
-    'smoke source verification',
-  );
-
-  report.phase = 'source-identity';
-  const identity = await browser.evaluate(`(() => ({
-    effectiveUrl: location.href,
-    smokeStatus: document.documentElement.dataset.smokeStatus ?? null,
-    carrierStatus: document.documentElement.dataset.carrierStatus ?? null,
-    carrierBodySha256:
-      document.documentElement.dataset.carrierBodySha256 ?? null,
-    carrierRegistrationSha256:
-      document.documentElement.dataset.carrierRegistrationSha256 ?? null,
-    carrierRailRevision:
-      document.documentElement.dataset.carrierRailRevision ?? null,
-    carrierRailModuleSha256:
-      document.documentElement.dataset.carrierRailModuleSha256 ?? null,
-    carrierRailHistorySha256:
-      document.documentElement.dataset.carrierRailHistorySha256 ?? null,
-    effectiveRailId:
-      document.documentElement.dataset.effectiveRailId ?? null,
-    carrierPresentationRevision:
-      document.documentElement.dataset.carrierPresentationRevision ?? null,
-    carrierPlaybackRevision:
-      document.documentElement.dataset.carrierPlaybackRevision ?? null,
-    effectiveEvaluatorRoute:
-      document.documentElement.dataset.effectiveEvaluatorRoute ?? null,
-    requestedRoute: document.documentElement.dataset.requestedRoute ?? null,
-    effectiveRoute: document.documentElement.dataset.effectiveRoute ?? null,
-    presenterRevision:
-      document.documentElement.dataset.presenterRevision ?? null,
-    verifierRevision:
-      document.documentElement.dataset.verifierRevision ?? null,
-    verifierModuleBlob:
-      document.documentElement.dataset.verifierModuleBlob ?? null,
-    acceptedReceiptSha256:
-      document.documentElement.dataset.acceptedReceiptSha256 ?? null,
-    manifestSha256:
-      document.documentElement.dataset.manifestSha256 ?? null,
-    svgSha256: document.documentElement.dataset.svgSha256 ?? null,
-    sourceStatus: document.documentElement.dataset.sourceStatus ?? null,
-    error: document.querySelector('[data-smoke-error]')?.textContent ?? null,
-  }))()`);
-  Object.assign(report, identity);
-  assert.equal(
-    report.smokeStatus,
-    'verified',
-    `smoke source did not verify: ${identity.error ?? 'no error surfaced'}`,
-  );
-  assert.equal(report.requestedRoute, EXPECTED_ROUTE);
-  assert.equal(report.effectiveRoute, EXPECTED_ROUTE);
-  assert.equal(report.presenterRevision, EXPECTED_PRESENTER);
-  assert.equal(report.verifierRevision, EXPECTED_VERIFIER);
-  assert.equal(report.verifierModuleBlob, EXPECTED_VERIFIER_BLOB);
-  assert.equal(report.acceptedReceiptSha256, EXPECTED_RECEIPT_SHA256);
-  assert.equal(report.manifestSha256, EXPECTED_MANIFEST_SHA256);
-  assert.equal(report.svgSha256, EXPECTED_SVG_SHA256);
-  assert.equal(report.sourceStatus, 'exact-accepted-replay');
-  assert.equal(report.carrierStatus, 'verified-paused');
-  assert.equal(report.carrierBodySha256, EXPECTED_CARRIER_SHA256);
-  assert.equal(
-    report.carrierRegistrationSha256,
-    EXPECTED_REGISTRATION_SHA256,
-  );
-  assert.equal(report.carrierRailRevision, EXPECTED_RAIL_REVISION);
-  assert.equal(report.carrierRailModuleSha256, EXPECTED_RAIL_MODULE_SHA256);
-  assert.equal(report.carrierRailHistorySha256, EXPECTED_RAIL_HISTORY_SHA256);
-  assert.equal(report.effectiveRailId, EXPECTED_RAIL_ID);
-  assert.equal(
-    report.carrierPresentationRevision,
-    EXPECTED_PRESENTATION_REVISION,
-  );
-  assert.equal(report.carrierPlaybackRevision, EXPECTED_PLAYBACK_REVISION);
-  assert.equal(report.effectiveEvaluatorRoute, EXPECTED_EVALUATOR_ROUTE);
-
-  report.phase = 'paused-containment';
-  const initialFrame = await browser.evaluate(
-    `document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex`,
-  );
-  await delay(1_100);
-  const heldInitialFrame = await browser.evaluate(
-    `document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex`,
-  );
-  report.initialPauseHeld =
-    initialFrame === '1' &&
-    heldInitialFrame === initialFrame &&
-    (await browser.evaluate(
-      `document.documentElement.dataset.operatorPlayCount`,
-    )) === '0';
-  report.pauseHeld = report.initialPauseHeld;
-  assert.ok(
-    report.initialPauseHeld,
-    'exact carrier autoplayed or did not begin on the first authored sample',
-  );
-  const initialCarrierPixels = await readCarrierCentroid(browser);
-
-  report.phase = 'mid-traversal-carrier';
-  await browser.evaluate(
-    `document.querySelector('.timeline__step[data-frame-index="${options.carrierFrame}"]')?.click()`,
-  );
-  await delay(300);
-  const carrierEvidence = await browser.evaluate(`(() => {
-    const canvas = document.querySelector('.stage__carrier');
-    const viewport = document.querySelector('[data-smoke-viewport]');
-    const panel = viewport?.querySelector('[data-panel="${options.carrierFrame}"]');
-    const glyph = panel?.querySelector('[data-visible-lerm-body="true"]');
-    return {
-      canvasPresent: canvas instanceof HTMLCanvasElement,
-      frameIndex: viewport?.dataset.frameIndex,
-      glyphOpacity: glyph ? getComputedStyle(glyph).opacity : null,
-      carrierIdentity: canvas?.dataset.exactCarrier ?? null,
-    };
-  })()`);
-  const midCarrierPixels = await readCarrierCentroid(browser);
-  report.carrierCanvasNonblank =
-    carrierEvidence.canvasPresent &&
-    midCarrierPixels.nontransparentSamples >= 8;
-  report.carrierCanvasMotionPixels = Number(
-    Math.hypot(
-      midCarrierPixels.centroidX - initialCarrierPixels.centroidX,
-      midCarrierPixels.centroidY - initialCarrierPixels.centroidY,
-    ).toFixed(2),
-  );
-  report.exactCarrierVisible =
-    carrierEvidence.frameIndex === String(options.carrierFrame) &&
-    carrierEvidence.carrierIdentity === '719024' &&
-    report.carrierCanvasNonblank &&
-    report.carrierCanvasMotionPixels >= 8;
-  report.hiddenGlyphAbsent = carrierEvidence.glyphOpacity === '0';
-  assert.ok(
-    report.exactCarrierVisible,
-    'mid-traversal exact carrier canvas is missing or blank',
-  );
-  assert.ok(
-    report.hiddenGlyphAbsent,
-    'accepted glyph remained visible under the exact 3D carrier',
-  );
-
-  report.phase = 'one-play-completion';
-  await browser.evaluate(
-    `document.querySelector('[data-restart]')?.click()`,
-  );
-  await browser.evaluate(
-    `document.querySelector('[data-speed="1.5"]')?.click()`,
-  );
-  await browser.evaluate(
-    `document.querySelector('[data-play-toggle]')?.click()`,
-  );
-  await delay(700);
-  const advancedFrame = await browser.evaluate(
-    `document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex`,
-  );
-  report.playbackAdvanced = advancedFrame !== '1';
-  assert.ok(report.playbackAdvanced, 'operator-started traversal did not advance');
-  await waitFor(
-    () =>
-      browser.evaluate(
-        `document.documentElement.dataset.carrierReceiptStatus === 'complete'`,
-      ),
-    12_000,
-    'exact carrier completion receipt',
-  );
-  const completed = await browser.evaluate(`(() => ({
-    receipt: window.__lermHorde3dCarrierReport ?? null,
-    operatorPlayCount: document.documentElement.dataset.operatorPlayCount,
-    carrierStatus: document.documentElement.dataset.carrierStatus,
-    frameIndex:
-      document.querySelector('[data-smoke-viewport]')?.dataset.frameIndex,
-  }))()`);
-  report.carrierReceipt = completed.receipt;
-  report.carrierStatus = completed.carrierStatus;
-  report.railFrameVerified =
-    completed.receipt?.identity?.railModuleSha256 ===
-      EXPECTED_RAIL_MODULE_SHA256 &&
-    completed.receipt?.identity?.railHistorySha256 ===
-      EXPECTED_RAIL_HISTORY_SHA256 &&
-    completed.receipt?.identity?.effectiveRailId === EXPECTED_RAIL_ID &&
-    completed.receipt?.samples?.length === 15 &&
-    completed.receipt.samples.every(
-      (sample) =>
-        sample.rootFrameSource ===
-          '0482274.acceptedHillRootHeight+ced6db3d.railFrame' &&
-        sample.rootTransformApplications === 1 &&
-        sample.rootFrameOrigin?.length === 3 &&
-        sample.rootFrameLateral?.length === 3 &&
-        sample.rootFrameNormal?.length === 3 &&
-        sample.rootFrameTangent?.length === 3,
+    const port = await freePort();
+    profileDir = mkdtempSync(`${tmpdir()}/lerms-full-hill-chrome-`);
+    chrome = spawn(
+      CHROME,
+      [
+        '--headless=new',
+        '--disable-background-networking',
+        '--disable-breakpad',
+        '--disable-component-update',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-features=Translate',
+        '--disable-sync',
+        '--hide-scrollbars',
+        '--metrics-recording-only',
+        '--no-first-run',
+        '--no-default-browser-check',
+        `--remote-debugging-port=${port}`,
+        `--user-data-dir=${profileDir}`,
+        'about:blank',
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
     );
-  report.hillSupportTrackingVerified =
-    completed.receipt?.composition?.hillSupportHeightPath ===
-      '0482274.accepted-root-world-y' &&
-    completed.receipt?.composition?.hillSupportHeightApplicationsPerSample ===
-      1 &&
-    completed.receipt?.samples?.length === 15 &&
-    completed.receipt.samples.some(
-      (sample) => Math.abs(sample.supportHeightDelta) > 1e-9,
-    ) &&
-    completed.receipt.samples.every(
-      (sample) =>
-        sample.hillSupportHeightApplications === 1 &&
-        sample.railRootPosition?.length === 3 &&
-        sample.hillSupportRootPosition?.length === 3 &&
-        sample.rootFrameOrigin?.length === 3 &&
-        nearlyEqual(
-          sample.rootFrameOrigin[1],
-          sample.hillSupportRootPosition[1],
-        ) &&
-        nearlyEqual(
-          sample.rootFrameOrigin[0],
-          sample.railRootPosition[0],
-        ) &&
-        nearlyEqual(
-          sample.rootFrameOrigin[2],
-          sample.railRootPosition[2],
-        ) &&
-        nearlyEqual(
-          sample.supportHeightDelta,
-          sample.hillSupportRootPosition[1] - sample.railRootPosition[1],
-        ),
-    );
-  report.hillScreenTrackingVerified =
-    completed.receipt?.composition?.hillScreenProjectionPath ===
-      '0482274.accepted-support-marker' &&
-    completed.receipt?.composition
-      ?.hillScreenProjectionApplicationsPerSample === 1 &&
-    completed.receipt?.samples?.length === 15 &&
-    completed.receipt.samples.every(
-      (sample) =>
-        sample.hillScreenProjectionApplications === 1 &&
-        sample.hillSupportScreenAnchor?.length === 2 &&
-        sample.projectedRootScreenAnchor?.length === 2 &&
-        sample.screenAnchorErrorPx <= 0.5 &&
-        nearlyEqual(
-          sample.screenAnchorErrorPx,
-          Math.hypot(
-            sample.hillSupportScreenAnchor[0] -
-              sample.projectedRootScreenAnchor[0],
-            sample.hillSupportScreenAnchor[1] -
-              sample.projectedRootScreenAnchor[1],
-          ),
-          1e-6,
-        ),
-    );
-  report.carrierReceiptComplete =
-    completed.receipt?.status?.ok === true &&
-    completed.receipt?.status?.phase === 'complete' &&
-    completed.carrierStatus === 'complete';
-  report.oneOperatorPlay =
-    completed.operatorPlayCount === '1' &&
-    completed.receipt?.playback?.operatorPlayCount === 1 &&
-    completed.receipt?.playback?.autoplayObserved === false;
-  assert.ok(
-    report.carrierReceiptComplete,
-    'exact carrier completion receipt is missing, partial, or failed',
-  );
-  assert.ok(
-    report.oneOperatorPlay,
-    'exact carrier traversal did not complete under exactly one operator Play',
-  );
-  assert.ok(
-    report.railFrameVerified,
-    'completion receipt did not preserve all exact rail-derived root frames',
-  );
-  assert.ok(
-    report.hillSupportTrackingVerified,
-    'completion receipt did not apply the accepted Hill support height exactly once',
-  );
-  assert.ok(
-    report.hillScreenTrackingVerified,
-    'completion receipt did not align the rendered root with the accepted Hill support marker',
-  );
 
-  report.phase = 'departure';
-  await browser.evaluate(
-    `document.querySelector('.timeline__step[data-frame-index="17"]')?.click()`,
-  );
-  await delay(200);
-  const departure = await browser.evaluate(`(() => {
-    const viewport = document.querySelector('[data-smoke-viewport]');
-    const panel = viewport?.querySelector('[data-panel="17"]');
-    return {
-      frameIndex: viewport?.dataset.frameIndex,
-      frameKind: viewport?.dataset.frameKind,
-      prefixSampleCount: viewport?.dataset.prefixSampleCount,
-      bodyAbsent: Boolean(panel) &&
-        !panel.querySelector('[data-visible-lerm-body="true"]'),
-      visiblePanelCount: [...(viewport?.querySelectorAll('[data-panel]') ?? [])]
-        .filter((candidate) => getComputedStyle(candidate).display !== 'none')
-        .length,
-    };
-  })()`);
-  report.departureBodyAbsent =
-    departure.frameIndex === '17' &&
-    departure.frameKind === 'after-departure' &&
-    departure.prefixSampleCount === '15' &&
-    departure.bodyAbsent === true &&
-    completed.receipt?.departure?.bodyVisible === false &&
-    completed.receipt?.departure?.hillHistoryRetained === true;
-  assert.ok(
-    report.departureBodyAbsent,
-    'later Hill frame did not preserve the accepted body-absent state',
-  );
-  report.activePanelIsolated = departure.visiblePanelCount === 1;
-  assert.ok(
-    report.activePanelIsolated,
-    'inactive replay panels can bleed into the active viewport',
-  );
-
-  await browser.evaluate(
-    `document.querySelector('.timeline__step[data-frame-index="${options.carrierFrame}"]')?.click()`,
-  );
-  await delay(200);
-  const moving = await browser.evaluate(`(() => {
-    const viewport = document.querySelector('[data-smoke-viewport]');
-    const panel = viewport?.querySelector('[data-panel="${options.carrierFrame}"]');
-    return {
-      frameIndex: viewport?.dataset.frameIndex,
-      frameKind: viewport?.dataset.frameKind,
-      prefixSampleCount: viewport?.dataset.prefixSampleCount,
-      bodyVisible: Boolean(
-        panel?.querySelector('[data-visible-lerm-body="true"]'),
-      ),
-    };
-  })()`);
-  report.motionBodyVisible =
-    moving.frameIndex === String(options.carrierFrame) &&
-    moving.frameKind === 'actor-prefix' &&
-    moving.prefixSampleCount === String(options.carrierFrame) &&
-    moving.bodyVisible === true &&
-    report.exactCarrierVisible &&
-    report.hiddenGlyphAbsent;
-  assert.ok(
-    report.motionBodyVisible,
-    'mid-traversal capture does not contain the accepted moving Lerm body',
-  );
-
-  report.phase = 'layout';
-  const layout = await browser.evaluate(`(() => {
-    const selectors = [
-      '.smoke-header',
-      '.stage',
-      '.transport',
-      '.smoke-footer',
-    ];
-    const rects = selectors.map((selector) => {
-      const rect = document.querySelector(selector)?.getBoundingClientRect();
-      return rect && {
-        selector,
-        left: rect.left,
-        top: rect.top,
-        right: rect.right,
-        bottom: rect.bottom,
-        width: rect.width,
-        height: rect.height,
-      };
+    const target = await waitForPageTarget(port, chrome);
+    browser = await CdpConnection.open(target.webSocketDebuggerUrl);
+    await browser.command('Page.enable');
+    await browser.command('Runtime.enable');
+    await browser.command('Emulation.setDeviceMetricsOverride', {
+      width: options.width,
+      height: options.height,
+      deviceScaleFactor: 1,
+      mobile: options.width <= 700,
     });
-    const contained = rects.every((rect) =>
-      rect &&
-      rect.left >= -0.5 &&
-      rect.top >= -0.5 &&
-      rect.right <= innerWidth + 0.5 &&
-      rect.bottom <= innerHeight + 0.5 &&
-      rect.width > 0 &&
-      rect.height > 0
+    report.phase = 'navigate';
+    await browser.command('Page.navigate', { url: options.url });
+    await waitFor(
+      async () => {
+        const status = await browser.evaluate(
+          'document.documentElement.dataset.smokeStatus',
+        );
+        return status === 'verified' || status === 'failed';
+      },
+      15_000,
+      'full-Hill smoke verification',
     );
-    const ordered = rects.every((rect, index) =>
-      index === 0 || rect.top >= rects[index - 1].bottom - 0.5
-    );
-    const noPageOverflow =
-      document.documentElement.scrollWidth <= innerWidth &&
-      document.documentElement.scrollHeight <= innerHeight;
-    const unclippedControls = [
-      ...document.querySelectorAll('button, .source-state, .smoke-footer strong'),
-    ].every((element) =>
-      element.scrollWidth <= element.clientWidth + 1 &&
-      element.scrollHeight <= element.clientHeight + 1
-    );
-    return { rects, contained, ordered, noPageOverflow, unclippedControls };
-  })()`);
-  report.layout = layout;
-  report.headerHeightAcceptable =
-    layout.rects[0].height <= (options.width <= 700 ? 120 : 100);
-  report.layoutContained =
-    layout.contained &&
-    layout.ordered &&
-    layout.noPageOverflow &&
-    layout.unclippedControls &&
-    report.headerHeightAcceptable;
-  assert.ok(report.layoutContained, 'smoke layout is clipped or overlapping');
 
-  report.phase = 'primary-output';
-  const capture = await browser.command('Page.captureScreenshot', {
-    format: 'png',
-    fromSurface: true,
-    captureBeyondViewport: false,
-  });
-  const png = Buffer.from(capture.data, 'base64');
-  writeFileSync(options.screenshot, png);
-  const pixelEvidence = inspectPng(png);
-  report.pixelEvidence = pixelEvidence;
-  report.primaryOutputWritten =
-    statSync(options.screenshot).size === png.length &&
-    pixelEvidence.sampledColors >= 32 &&
-    pixelEvidence.luminanceRange >= 24;
-  assert.ok(
-    report.primaryOutputWritten,
-    'browser screenshot is missing, blank, or partial',
-  );
+    report.phase = 'source-identity';
+    const identity = await browser.evaluate(`(() => {
+      const data = document.documentElement.dataset;
+      return {
+        effectiveUrl: location.href,
+        smokeStatus: data.smokeStatus ?? null,
+        carrierStatus: data.carrierStatus ?? null,
+        requestedRoute: data.requestedRoute ?? null,
+        effectiveRoute: data.effectiveRoute ?? null,
+        requestedRenderer: data.requestedRenderer ?? null,
+        effectiveRenderer: data.effectiveRenderer ?? null,
+        sourceStatus: data.sourceStatus ?? null,
+        fullHillReceiptSchema: data.fullHillReceiptSchema ?? null,
+        terrainBufferSchema: data.terrainBufferSchema ?? null,
+        terrainSampleCount: Number(data.terrainSampleCount),
+        terrainTriangleCount: Number(data.terrainTriangleCount),
+        depthBits: Number(data.depthBits),
+        carrierBodySha256: data.carrierBodySha256 ?? null,
+        carrierRegistrationSha256: data.carrierRegistrationSha256 ?? null,
+        carrierRailRevision: data.carrierRailRevision ?? null,
+        carrierRailModuleSha256: data.carrierRailModuleSha256 ?? null,
+        carrierRailHistorySha256: data.carrierRailHistorySha256 ?? null,
+        effectiveRailId: data.effectiveRailId ?? null,
+        effectiveEvaluatorRoute: data.effectiveEvaluatorRoute ?? null,
+        error: document.querySelector('[data-smoke-error]')?.textContent ?? null,
+      };
+    })()`);
+    Object.assign(report, identity);
+    assert.equal(
+      report.smokeStatus,
+      'verified',
+      `smoke failed: ${identity.error ?? 'no error surfaced'}`,
+    );
+    assert.equal(report.requestedRoute, EXPECTED_ROUTE);
+    assert.equal(report.effectiveRoute, EXPECTED_ROUTE);
+    assert.equal(report.requestedRenderer, EXPECTED_RENDERER);
+    assert.equal(report.effectiveRenderer, EXPECTED_RENDERER);
+    assert.equal(report.sourceStatus, 'canonical-dynamic-full-hill-replay');
+    assert.equal(identity.fullHillReceiptSchema, EXPECTED_RECEIPT_SCHEMA);
+    assert.equal(report.terrainBufferSchema, EXPECTED_TERRAIN_SCHEMA);
+    assert.equal(report.terrainSampleCount, 2_880);
+    assert.equal(report.terrainTriangleCount, 5_546);
+    assert.ok(report.depthBits >= 16);
+    assert.equal(report.carrierBodySha256, EXPECTED_CARRIER_SHA256);
+    assert.equal(
+      report.carrierRegistrationSha256,
+      EXPECTED_REGISTRATION_SHA256,
+    );
+    assert.equal(report.carrierRailRevision, EXPECTED_RAIL_REVISION);
+    assert.equal(report.carrierRailModuleSha256, EXPECTED_RAIL_MODULE_SHA256);
+    assert.equal(report.carrierRailHistorySha256, EXPECTED_RAIL_HISTORY_SHA256);
+    assert.equal(report.effectiveRailId, EXPECTED_RAIL_ID);
+    assert.equal(report.effectiveEvaluatorRoute, EXPECTED_EVALUATOR_ROUTE);
 
-  report.phase = 'complete';
-  report.ok = true;
+    report.phase = 'one-renderer-structure';
+    const structure = await browser.evaluate(`(() => ({
+      rendererCanvasCount: document.querySelectorAll('.stage canvas').length,
+      fullHillCanvasCount:
+        document.querySelectorAll('.stage__renderer[data-full-hill="true"]').length,
+      visibleSvgCount: [...document.querySelectorAll('.stage svg')]
+        .filter((svg) => getComputedStyle(svg).display !== 'none').length,
+      rendererId:
+        document.querySelector('.stage__renderer')?.dataset.rendererId ?? null,
+    }))()`);
+    report.oneRendererVerified =
+      structure.rendererCanvasCount === 1 &&
+      structure.fullHillCanvasCount === 1 &&
+      structure.visibleSvgCount === 0 &&
+      structure.rendererId === EXPECTED_RENDERER;
+    report.nativeDepthVerified = report.depthBits >= 16;
+    report.fullHillGeometryVerified =
+      report.terrainSampleCount === 2_880 &&
+      report.terrainTriangleCount === 5_546;
+    assert.ok(report.oneRendererVerified, 'stage is not one renderer with zero SVG');
+    assert.ok(report.nativeDepthVerified, 'renderer has no usable depth buffer');
+    assert.ok(
+      report.fullHillGeometryVerified,
+      'renderer did not consume the full 48 by 60 Hill grid',
+    );
+
+    report.phase = 'paused-containment';
+    const initialFrame = await currentFrame(browser);
+    await delay(1_100);
+    const heldInitialFrame = await currentFrame(browser);
+    report.initialPauseHeld =
+      initialFrame.frameIndex === '1' &&
+      heldInitialFrame.frameIndex === initialFrame.frameIndex &&
+      (await browser.evaluate(
+        'document.documentElement.dataset.operatorPlayCount',
+      )) === '0';
+    report.pauseHeld = report.initialPauseHeld;
+    assert.ok(report.initialPauseHeld, 'full-Hill traversal autoplayed');
+    const initialPixels = await readScenePixels(browser);
+
+    report.phase = 'moving-prefixes';
+    await selectFrame(browser, options.carrierFrame);
+    const movingFrame = await currentFrame(browser);
+    const movingPixels = await readScenePixels(browser);
+    await selectFrame(browser, 14);
+    const lateFrame = await currentFrame(browser);
+    const latePixels = await readScenePixels(browser);
+    report.carrierCanvasNonblank =
+      movingPixels.nonBackgroundSamples >= 32 &&
+      movingPixels.distinctColors >= 8;
+    report.carrierCanvasMotionPixels = Number(
+      Math.hypot(
+        movingPixels.redCentroidX - initialPixels.redCentroidX,
+        movingPixels.redCentroidY - initialPixels.redCentroidY,
+      ).toFixed(2),
+    );
+    report.exactCarrierVisible =
+      movingFrame.frameKind === 'actor-prefix' &&
+      movingPixels.redBodySamples >= 8 &&
+      latePixels.redBodySamples >= 8;
+    report.motionBodyVisible = report.exactCarrierVisible;
+    report.terrainChangedAcrossPrefixes =
+      movingFrame.terrainSampleChecksum !== lateFrame.terrainSampleChecksum ||
+      movingFrame.terrainTopologyChecksum !==
+        lateFrame.terrainTopologyChecksum;
+    assert.ok(report.carrierCanvasNonblank, 'full-Hill canvas is blank or partial');
+    assert.ok(report.exactCarrierVisible, 'exact red carrier is absent');
+    assert.ok(
+      report.carrierCanvasMotionPixels >= 4,
+      'exact carrier did not move in rendered pixels',
+    );
+    assert.ok(
+      report.terrainChangedAcrossPrefixes,
+      'Hill buffer did not change across moving prefixes',
+    );
+
+    report.phase = 'departure';
+    await selectFrame(browser, 17);
+    const departure = await currentFrame(browser);
+    const departurePixels = await readScenePixels(browser);
+    report.departureBodyAbsent =
+      departure.frameKind === 'after-departure' &&
+      departure.prefixSampleCount === '15' &&
+      departurePixels.redBodySamples === 0;
+    assert.ok(report.departureBodyAbsent, 'body remained after departure');
+    await captureScreenshot(browser, options.departureScreenshot);
+
+    report.phase = 'one-play-completion';
+    await browser.evaluate(
+      `document.querySelector('[data-restart]')?.click();
+       document.querySelector('[data-speed="1.5"]')?.click();
+       document.querySelector('[data-play-toggle]')?.click();`,
+    );
+    await delay(700);
+    report.playbackAdvanced = (await currentFrame(browser)).frameIndex !== '1';
+    assert.ok(report.playbackAdvanced, 'operator-started traversal did not advance');
+    await waitFor(
+      () =>
+        browser.evaluate(
+          `document.documentElement.dataset.carrierReceiptStatus === 'complete'`,
+        ),
+      12_000,
+      'full-Hill completion receipt',
+    );
+    const completed = await browser.evaluate(`(() => ({
+      receipt: window.__lermHordeFullHillReport ?? null,
+      operatorPlayCount: document.documentElement.dataset.operatorPlayCount,
+      carrierStatus: document.documentElement.dataset.carrierStatus,
+    }))()`);
+    report.carrierReceipt = completed.receipt;
+    report.carrierStatus = completed.carrierStatus;
+    report.carrierReceiptComplete =
+      completed.receipt?.schema === EXPECTED_RECEIPT_SCHEMA &&
+      completed.receipt?.status?.ok === true &&
+      completed.receipt?.status?.phase === 'complete' &&
+      completed.carrierStatus === 'complete';
+    report.oneOperatorPlay =
+      completed.operatorPlayCount === '1' &&
+      completed.receipt?.playback?.operatorPlayCount === 1 &&
+      completed.receipt?.playback?.autoplayObserved === false;
+    report.railFrameVerified =
+      completed.receipt?.carrier?.bodySha256 === EXPECTED_CARRIER_SHA256 &&
+      completed.receipt?.carrier?.visiblePrefixFrameCount === 15;
+    report.hillSupportTrackingVerified =
+      completed.receipt?.terrain?.frameCount === 18 &&
+      completed.receipt?.terrain?.frames?.length === 18 &&
+      completed.receipt.terrain.frames.every(
+        (frame, index) =>
+          frame.index === index &&
+          frame.frameId &&
+          /^[0-9a-f]{8,64}$/.test(frame.sampleChecksum) &&
+          /^[0-9a-f]{8,64}$/.test(frame.topologyChecksum) &&
+          /^[0-9a-f]{8,64}$/.test(frame.trafficChecksum),
+      );
+    report.departureHistoryRetained =
+      completed.receipt?.departure?.bodyVisible === false &&
+      completed.receipt?.departure?.hillHistoryRetained === true &&
+      completed.receipt?.departure?.trafficChecksum ===
+        completed.receipt?.terrain?.frames?.[17]?.trafficChecksum;
+    assert.ok(report.carrierReceiptComplete, 'completion receipt is missing');
+    assert.ok(report.oneOperatorPlay, 'completion was not exactly one Play');
+    assert.ok(report.railFrameVerified, 'carrier identity was substituted');
+    assert.ok(
+      report.hillSupportTrackingVerified,
+      'terrain frame identity or checksums were lost',
+    );
+    assert.ok(
+      report.departureHistoryRetained,
+      'departure lost retained Hill history',
+    );
+
+    report.phase = 'layout';
+    await selectFrame(browser, options.carrierFrame);
+    const layout = await browser.evaluate(`(() => {
+      const selectors = ['.smoke-header', '.stage', '.transport', '.smoke-footer'];
+      const rects = selectors.map((selector) => {
+        const rect = document.querySelector(selector)?.getBoundingClientRect();
+        return rect && {
+          selector,
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        };
+      });
+      return {
+        rects,
+        contained: rects.every((rect) =>
+          rect && rect.left >= -0.5 && rect.top >= -0.5 &&
+          rect.right <= innerWidth + 0.5 && rect.bottom <= innerHeight + 0.5 &&
+          rect.width > 0 && rect.height > 0
+        ),
+        ordered: rects.every((rect, index) =>
+          index === 0 || rect.top >= rects[index - 1].bottom - 0.5
+        ),
+        noPageOverflow:
+          document.documentElement.scrollWidth <= innerWidth &&
+          document.documentElement.scrollHeight <= innerHeight,
+        unclippedControls: [
+          ...document.querySelectorAll('button, .source-state, .smoke-footer strong'),
+        ].every((element) =>
+          element.scrollWidth <= element.clientWidth + 1 &&
+          element.scrollHeight <= element.clientHeight + 1
+        ),
+      };
+    })()`);
+    report.layout = layout;
+    report.headerHeightAcceptable =
+      layout.rects[0].height <= (options.width <= 700 ? 120 : 100);
+    report.layoutContained =
+      layout.contained &&
+      layout.ordered &&
+      layout.noPageOverflow &&
+      layout.unclippedControls &&
+      report.headerHeightAcceptable;
+    assert.ok(report.layoutContained, 'smoke layout is clipped or overlapping');
+
+    report.phase = 'primary-output';
+    await captureScreenshot(browser, options.screenshot);
+    const finalPixels = await readScenePixels(browser);
+    report.primaryOutputWritten =
+      statSync(options.screenshot).size >= 10_000 &&
+      finalPixels.nonBackgroundSamples >= 32 &&
+      finalPixels.distinctColors >= 8 &&
+      finalPixels.redBodySamples >= 8;
+    assert.ok(
+      report.primaryOutputWritten,
+      'browser screenshot is missing, blank, partial, or lacks the carrier',
+    );
+    report.pixelEvidence = finalPixels;
+    report.phase = 'complete';
+    report.ok = true;
   } catch (error) {
     report.failurePhase = report.phase;
     report.error = error instanceof Error ? error.message : String(error);
@@ -592,60 +438,104 @@ async function runWitness() {
 
   if (report.ok) {
     console.log(
-      `Lerm Horde browser witness passed: ${options.report} / ${options.screenshot}`,
+      `Lerm Horde full-Hill browser witness passed: ${options.report} / ${options.screenshot}`,
     );
   } else {
     console.error(
-      `Lerm Horde browser witness failed during ${report.failurePhase}: ${report.error}`,
+      `Lerm Horde full-Hill browser witness failed during ${report.failurePhase}: ${report.error}`,
     );
   }
 }
 
-async function readCarrierCentroid(browser) {
+async function selectFrame(browser, frameIndex) {
+  await browser.evaluate(
+    `document.querySelector('.timeline__step[data-frame-index="${frameIndex}"]')?.click()`,
+  );
+  await delay(260);
+}
+
+async function currentFrame(browser) {
   return browser.evaluate(`(() => {
-    const canvas = document.querySelector('.stage__carrier');
+    const stage = document.querySelector('[data-smoke-viewport]');
+    return {
+      frameIndex: stage?.dataset.frameIndex ?? null,
+      frameKind: stage?.dataset.frameKind ?? null,
+      prefixSampleCount: stage?.dataset.prefixSampleCount ?? null,
+      terrainSampleChecksum: stage?.dataset.terrainSampleChecksum ?? null,
+      terrainTopologyChecksum: stage?.dataset.terrainTopologyChecksum ?? null,
+      trafficChecksum: stage?.dataset.trafficChecksum ?? null,
+    };
+  })()`);
+}
+
+async function readScenePixels(browser) {
+  return browser.evaluate(`(() => {
+    const canvas = document.querySelector('.stage__renderer');
     const context = canvas?.getContext('webgl2') ?? canvas?.getContext('webgl');
     if (!canvas || !context) {
       return {
-        nontransparentSamples: 0,
-        centroidX: Number.NaN,
-        centroidY: Number.NaN,
+        nonBackgroundSamples: 0,
+        redBodySamples: 0,
+        distinctColors: 0,
+        redCentroidX: Number.NaN,
+        redCentroidY: Number.NaN,
       };
     }
     const pixels = new Uint8Array(canvas.width * canvas.height * 4);
     context.readPixels(
-      0,
-      0,
-      canvas.width,
-      canvas.height,
-      context.RGBA,
-      context.UNSIGNED_BYTE,
-      pixels,
+      0, 0, canvas.width, canvas.height,
+      context.RGBA, context.UNSIGNED_BYTE, pixels,
     );
-    let nontransparentSamples = 0;
+    const colors = new Set();
+    let nonBackgroundSamples = 0;
+    let redBodySamples = 0;
     let weightedX = 0;
     let weightedY = 0;
     for (let y = 0; y < canvas.height; y += 4) {
       for (let x = 0; x < canvas.width; x += 4) {
-        const alpha = pixels[(y * canvas.width + x) * 4 + 3];
-        if (alpha === 0) continue;
-        nontransparentSamples += 1;
-        weightedX += x;
-        weightedY += y;
+        const offset = (y * canvas.width + x) * 4;
+        const red = pixels[offset];
+        const green = pixels[offset + 1];
+        const blue = pixels[offset + 2];
+        if (Math.abs(red - 6) + Math.abs(green - 16) + Math.abs(blue - 13) > 12) {
+          nonBackgroundSamples += 1;
+          colors.add(
+            [Math.round(red / 16), Math.round(green / 16), Math.round(blue / 16)]
+              .join(','),
+          );
+        }
+        if (red > 70 && red > green * 1.35 && red > blue * 1.2) {
+          redBodySamples += 1;
+          weightedX += x;
+          weightedY += y;
+        }
       }
     }
     return {
-      nontransparentSamples,
-      centroidX:
-        nontransparentSamples > 0
-          ? weightedX / nontransparentSamples
-          : Number.NaN,
-      centroidY:
-        nontransparentSamples > 0
-          ? weightedY / nontransparentSamples
-          : Number.NaN,
+      nonBackgroundSamples,
+      redBodySamples,
+      distinctColors: colors.size,
+      redCentroidX:
+        redBodySamples > 0 ? weightedX / redBodySamples : Number.NaN,
+      redCentroidY:
+        redBodySamples > 0 ? weightedY / redBodySamples : Number.NaN,
     };
   })()`);
+}
+
+async function captureScreenshot(browser, outputPath) {
+  const capture = await browser.command('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+    captureBeyondViewport: false,
+  });
+  const png = Buffer.from(capture.data, 'base64');
+  assert.deepEqual(
+    png.subarray(0, 8),
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    'primary output is not PNG',
+  );
+  writeFileSync(outputPath, png);
 }
 
 function parseArgs(args) {
@@ -662,7 +552,7 @@ function parseArgs(args) {
   const match = /^(\d+)x(\d+)$/.exec(viewport);
   if (!match) throw new Error(`invalid --viewport ${viewport}`);
   const label = values.get('label') ?? 'desktop';
-  const carrierFrame = Number(values.get('carrier-frame') ?? 8);
+  const carrierFrame = Number(values.get('carrier-frame') ?? 10);
   if (!Number.isInteger(carrierFrame) || carrierFrame < 1 || carrierFrame > 15) {
     throw new Error(`invalid --carrier-frame ${values.get('carrier-frame')}`);
   }
@@ -673,11 +563,15 @@ function parseArgs(args) {
     carrierFrame,
     report: resolve(
       values.get('report') ??
-        `${tmpdir()}/lerms-same-scene-smoke-${label}.json`,
+        `${tmpdir()}/lerms-full-hill-smoke-${label}.json`,
     ),
     screenshot: resolve(
       values.get('screenshot') ??
-        `${tmpdir()}/lerms-same-scene-smoke-${label}.png`,
+        `${tmpdir()}/lerms-full-hill-smoke-${label}.png`,
+    ),
+    departureScreenshot: resolve(
+      values.get('departure-screenshot') ??
+        `${tmpdir()}/lerms-full-hill-smoke-${label}-departure.png`,
     ),
   };
 }
@@ -789,106 +683,6 @@ async function waitFor(predicate, timeoutMs, label) {
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
-}
-
-function nearlyEqual(left, right, tolerance = 1e-9) {
-  return Math.abs(left - right) <= tolerance;
-}
-
-function inspectPng(png) {
-  assert.deepEqual(
-    png.subarray(0, 8),
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    'primary output is not PNG',
-  );
-  let offset = 8;
-  let width;
-  let height;
-  let bitDepth;
-  let colorType;
-  let interlace;
-  const compressed = [];
-  while (offset < png.length) {
-    const length = png.readUInt32BE(offset);
-    const type = png.subarray(offset + 4, offset + 8).toString('ascii');
-    const data = png.subarray(offset + 8, offset + 8 + length);
-    offset += 12 + length;
-    if (type === 'IHDR') {
-      width = data.readUInt32BE(0);
-      height = data.readUInt32BE(4);
-      bitDepth = data[8];
-      colorType = data[9];
-      interlace = data[12];
-    } else if (type === 'IDAT') {
-      compressed.push(data);
-    } else if (type === 'IEND') {
-      break;
-    }
-  }
-  assert.equal(bitDepth, 8, 'unsupported screenshot PNG bit depth');
-  assert.equal(interlace, 0, 'unsupported interlaced screenshot PNG');
-  const channels = colorType === 6 ? 4 : colorType === 2 ? 3 : null;
-  assert.ok(channels, `unsupported screenshot PNG color type ${colorType}`);
-  assert.equal(width, options.width);
-  assert.equal(height, options.height);
-
-  const raw = inflateSync(Buffer.concat(compressed));
-  const stride = width * channels;
-  const previous = Buffer.alloc(stride);
-  const current = Buffer.alloc(stride);
-  const colors = new Set();
-  let minLuminance = 255;
-  let maxLuminance = 0;
-  let rawOffset = 0;
-  for (let y = 0; y < height; y += 1) {
-    const filter = raw[rawOffset++];
-    for (let x = 0; x < stride; x += 1) {
-      const value = raw[rawOffset++];
-      const left = x >= channels ? current[x - channels] : 0;
-      const up = previous[x];
-      const upperLeft = x >= channels ? previous[x - channels] : 0;
-      current[x] = unfilter(filter, value, left, up, upperLeft);
-    }
-    if (y % 12 === 0) {
-      for (let x = 0; x < width; x += 12) {
-        const pixel = x * channels;
-        const red = current[pixel];
-        const green = current[pixel + 1];
-        const blue = current[pixel + 2];
-        colors.add(`${red},${green},${blue}`);
-        const luminance = (red * 299 + green * 587 + blue * 114) / 1000;
-        minLuminance = Math.min(minLuminance, luminance);
-        maxLuminance = Math.max(maxLuminance, luminance);
-      }
-    }
-    current.copy(previous);
-  }
-  return {
-    width,
-    height,
-    sampledColors: colors.size,
-    luminanceRange: Number((maxLuminance - minLuminance).toFixed(2)),
-  };
-}
-
-function unfilter(filter, value, left, up, upperLeft) {
-  if (filter === 0) return value;
-  if (filter === 1) return (value + left) & 0xff;
-  if (filter === 2) return (value + up) & 0xff;
-  if (filter === 3) return (value + Math.floor((left + up) / 2)) & 0xff;
-  if (filter === 4) return (value + paeth(left, up, upperLeft)) & 0xff;
-  throw new Error(`unsupported screenshot PNG filter ${filter}`);
-}
-
-function paeth(left, up, upperLeft) {
-  const prediction = left + up - upperLeft;
-  const leftDistance = Math.abs(prediction - left);
-  const upDistance = Math.abs(prediction - up);
-  const upperLeftDistance = Math.abs(prediction - upperLeft);
-  if (leftDistance <= upDistance && leftDistance <= upperLeftDistance) {
-    return left;
-  }
-  return upDistance <= upperLeftDistance ? up : upperLeft;
 }
 
 await runWitness();
