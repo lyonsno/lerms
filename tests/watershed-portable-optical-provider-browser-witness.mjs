@@ -113,6 +113,25 @@ try {
   const postScreenshot = await captureScreenshot(cdp);
   const postPath = join(outputDirectory, `${options.runId}-post-remap.png`);
   await writeFile(postPath, postScreenshot);
+  let opticalOnlyPath = null;
+  let opticalOnlyBytes = null;
+  let opticalObservedPixelCount = null;
+  if (options.url.includes('watershedOptics=1')) {
+    await cdp.command('Runtime.evaluate', {
+      expression: `(() => {
+        document.body.style.background = '#000';
+        for (const element of document.body.children) {
+          if (element.id !== 'hill-fluid-optical-canvas') element.style.visibility = 'hidden';
+        }
+      })()`,
+      returnByValue: true
+    });
+    const opticalOnlyScreenshot = await captureScreenshot(cdp);
+    opticalOnlyPath = join(outputDirectory, `${options.runId}-optical-only.png`);
+    opticalOnlyBytes = opticalOnlyScreenshot.length;
+    opticalObservedPixelCount = await countNonBlackPixels(cdp, opticalOnlyScreenshot);
+    await writeFile(opticalOnlyPath, opticalOnlyScreenshot);
+  }
 
   const receipt = {
     schema: 'lerms.hill-of-hills.portable-macro-optical-browser-receipt.v1',
@@ -134,18 +153,26 @@ try {
     screenshots: {
       pre: prePath,
       post: postPath,
+      opticalOnly: opticalOnlyPath,
       preBytes: preScreenshot.length,
-      postBytes: postScreenshot.length
-    }
+      postBytes: postScreenshot.length,
+      opticalOnlyBytes
+    },
+    opticalObservation: opticalOnlyPath ? {
+      authority: 'browser_screenshot_pixel_readback',
+      observedPixelCount: opticalObservedPixelCount,
+      blank: opticalObservedPixelCount === 0
+    } : null
   };
-  assertReceipt(receipt);
   const reportPath = join(outputDirectory, `${options.runId}-receipt.json`);
   await writeFile(reportPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  assertReceipt(receipt);
   console.log(JSON.stringify({
     ok: true,
     reportPath,
     prePath,
     postPath,
+    opticalOnlyPath,
     preStep: pre.stepCount,
     postStep: post.stepCount,
     sourceHandleId: post.portableOpticalProvider.source.handleId,
@@ -311,6 +338,35 @@ async function captureScreenshot(cdp) {
   return Buffer.from(result.data, 'base64');
 }
 
+async function countNonBlackPixels(cdp, png) {
+  const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
+  const result = await cdp.command('Runtime.evaluate', {
+    expression: `(async () => {
+      const image = new Image();
+      image.src = ${JSON.stringify(dataUrl)};
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let observed = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index] > 8 || pixels[index + 1] > 8 || pixels[index + 2] > 8) observed += 1;
+      }
+      return observed;
+    })()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  const observed = result.result?.value;
+  if (!Number.isSafeInteger(observed) || observed < 0) {
+    throw new Error('optical screenshot pixel readback returned invalid evidence');
+  }
+  return observed;
+}
+
 function assertReceipt(receipt) {
   const before = receipt.pre.portableOpticalProvider;
   const after = receipt.post.portableOpticalProvider;
@@ -320,6 +376,22 @@ function assertReceipt(receipt) {
     receipt.screenshots.postBytes < 100_000
   ) {
     throw new Error('browser witness is blank or emitted an exception');
+  }
+  if (
+    receipt.url.includes('watershedOptics=1') &&
+    (
+      receipt.post.opticalCompositorStatus !== 'submitted-unobserved' ||
+      receipt.post.opticalCompositor?.route?.effective !==
+        'lerms/hill-of-hills/c7-portable-macro-optical-compositor-v0' ||
+      receipt.post.opticalCompositor.route.fallback !== null ||
+      receipt.post.opticalCompositor.output.drawableWetTriangleCount <= 0 ||
+      receipt.screenshots.opticalOnlyBytes < 10_000 ||
+      receipt.opticalObservation?.authority !== 'browser_screenshot_pixel_readback' ||
+      receipt.opticalObservation.observedPixelCount <= 0 ||
+      receipt.opticalObservation.blank
+    )
+  ) {
+    throw new Error('browser witness did not observe a nonblank exact-route optical target');
   }
   if (
     before.source.handleId !== after.source.handleId ||

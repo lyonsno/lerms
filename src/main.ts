@@ -1,3 +1,4 @@
+import { Matrix4, OrthographicCamera, Vector3, WebGPUCoordinateSystem } from 'three';
 import {
   createHillOfHillsLayerTileCache,
   createHillOfHillsTerrainBuffer,
@@ -114,6 +115,10 @@ import {
   createHillKaminosPhaseMorphRecipeBuffer,
   createHillKaminosPhaseMorphRecipeParams
 } from './fluid/hill-kaminos-phase-morph-recipe.js';
+import {
+  createHillKaminosOpticalCompositor,
+  type HillKaminosOpticalRenderResult
+} from './fluid/hill-kaminos-optical-compositor.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -243,6 +248,8 @@ function withoutPreviewDitchFormation(nextParams: HillOfHillsTerrainParams): Hil
 
 const searchParams = new URLSearchParams(window.location.search);
 const watershedFluidEnabled = searchParams.get('watershedFluid') === '1';
+const watershedOpticsEnabled = watershedFluidEnabled && searchParams.get('watershedOptics') === '1';
+const watershedOpticsDepthDiagnostic = watershedOpticsEnabled && searchParams.get('watershedOpticsDepth') === 'off';
 const hillDiagnosticPreset = watershedFluidEnabled
   ? HILL_KAMINOS_PHASE_MORPH_RECIPE.preset
   : hillDiagnosticPresetFromSearch(window.location.search);
@@ -281,6 +288,36 @@ let latestWorkerError = 'none';
 let latestGrowthPlacementSummary = 'placement none';
 let hillKaminosRuntime: HillKaminosBrowserRuntime | undefined;
 let hillKaminosRuntimeStatus = watershedFluidEnabled ? 'loading' : 'disabled';
+const hillOpticalCamera = new OrthographicCamera(-10, 10, 10, -10, 0.1, 80);
+hillOpticalCamera.coordinateSystem = WebGPUCoordinateSystem;
+const hillOpticalProjectionPoint = new Vector3();
+const hillOpticalViewProjection = new Matrix4();
+const hillOpticalCanvas = watershedOpticsEnabled ? document.createElement('canvas') : null;
+let hillOpticalCompositor: Awaited<ReturnType<typeof createHillKaminosOpticalCompositor>> | undefined;
+let hillOpticalStatus = watershedOpticsEnabled ? 'loading' : 'disabled';
+let hillOpticalFrameSequence = 0;
+let hillOpticalLastRenderAt = 0;
+let hillOpticalResult: HillKaminosOpticalRenderResult | null = null;
+
+if (hillOpticalCanvas) {
+  hillOpticalCanvas.id = 'hill-fluid-optical-canvas';
+  hillOpticalCanvas.setAttribute('aria-label', 'Kaminos full fluid optical overlay');
+  Object.assign(hillOpticalCanvas.style, {
+    position: 'fixed',
+    inset: '0',
+    pointerEvents: 'none',
+    zIndex: '1',
+  });
+  appCanvas.insertAdjacentElement('afterend', hillOpticalCanvas);
+  void createHillKaminosOpticalCompositor(hillOpticalCanvas, appCanvas)
+    .then((compositor) => {
+      hillOpticalCompositor = compositor;
+      hillOpticalStatus = 'active';
+    })
+    .catch((error: unknown) => {
+      hillOpticalStatus = `failed: ${error instanceof Error ? error.message : String(error)}`;
+    });
+}
 
 if (watershedFluidEnabled) {
   void createHillKaminosBrowserRuntime(terrainBuffer, {
@@ -467,12 +504,14 @@ function render(timestampMs: number): void {
 
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
+  updateHillOpticalCamera(width, height);
   hillKaminosRuntime?.advance(timestampMs);
   remapWatershedTerrainIfReady();
   drawTerrain(terrainBuffer, width, height);
-  if (hillKaminosRuntime) {
+  if (hillKaminosRuntime && !watershedOpticsEnabled) {
     drawKaminosFluidFeedback(terrainBuffer, hillKaminosRuntime, width, height);
   }
+  renderHillOptics(timestampMs);
   if (previewSettings.mode !== 'neutral_geometry' && previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
@@ -1902,6 +1941,13 @@ function project(
   width: number,
   height: number
 ): { x: number; y: number } {
+  if (watershedOpticsEnabled) {
+    hillOpticalProjectionPoint.set(x, y, z).project(hillOpticalCamera);
+    return {
+      x: (hillOpticalProjectionPoint.x * 0.5 + 0.5) * width,
+      y: (-hillOpticalProjectionPoint.y * 0.5 + 0.5) * height,
+    };
+  }
   const yawCos = Math.cos(viewState.yaw);
   const yawSin = Math.sin(viewState.yaw);
   const rotatedX = x * yawCos - z * yawSin;
@@ -2115,12 +2161,91 @@ function publishHillKaminosDebugState(): void {
   target.__lermsHillKaminosDebugState = hillKaminosRuntime
     ? {
         ...hillKaminosRuntime.witness,
-        consumerStatus: hillKaminosRuntimeStatus
+        consumerStatus: hillKaminosRuntimeStatus,
+        opticalCompositorStatus: hillOpticalStatus,
+        opticalCompositor: hillOpticalResult
       }
     : {
         schema: 'lerms.hill-of-hills.kaminos-browser-witness.v2',
         status: hillKaminosRuntimeStatus
       };
+}
+
+function updateHillOpticalCamera(width: number, height: number): void {
+  if (!watershedOpticsEnabled) return;
+  const aspect = Math.max(0.1, width / Math.max(1, height));
+  const verticalSpan = 20 / viewState.zoom;
+  hillOpticalCamera.left = -verticalSpan * aspect * 0.5;
+  hillOpticalCamera.right = verticalSpan * aspect * 0.5;
+  hillOpticalCamera.top = verticalSpan * 0.5;
+  hillOpticalCamera.bottom = -verticalSpan * 0.5;
+  hillOpticalCamera.position.set(
+    Math.sin(viewState.yaw) * 20,
+    8 + viewState.tilt * 10,
+    Math.cos(viewState.yaw) * 20,
+  );
+  hillOpticalCamera.lookAt(viewState.panX * 8, 0.6, viewState.panY * 8);
+  hillOpticalCamera.updateProjectionMatrix();
+  hillOpticalCamera.updateMatrixWorld(true);
+  hillOpticalViewProjection.multiplyMatrices(
+    hillOpticalCamera.projectionMatrix,
+    hillOpticalCamera.matrixWorldInverse,
+  );
+}
+
+let cachedTerrainIndexKey = '';
+let cachedTerrainIndices = new Uint32Array();
+
+function terrainTriangleIndices(buffer: HillOfHillsTerrainBuffer): Uint32Array {
+  const key = `${buffer.gridResolution.x}x${buffer.gridResolution.z}`;
+  if (key === cachedTerrainIndexKey) return cachedTerrainIndices;
+  const indices: number[] = [];
+  for (let z = 0; z < buffer.gridResolution.z - 1; z += 1) {
+    for (let x = 0; x < buffer.gridResolution.x - 1; x += 1) {
+      const a = z * buffer.gridResolution.x + x;
+      const b = a + 1;
+      const c = a + buffer.gridResolution.x;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  cachedTerrainIndexKey = key;
+  cachedTerrainIndices = Uint32Array.from(indices);
+  return cachedTerrainIndices;
+}
+
+function renderHillOptics(timestampMs: number): void {
+  if (!watershedOpticsEnabled || !hillOpticalCompositor || !hillKaminosRuntime) return;
+  if (timestampMs - hillOpticalLastRenderAt < 72) return;
+  hillOpticalLastRenderAt = timestampMs;
+  hillOpticalFrameSequence += 1;
+  try {
+    hillOpticalResult = hillOpticalCompositor.render({
+      frameSequence: hillOpticalFrameSequence,
+      camera: {
+        view: hillOpticalCamera.matrixWorldInverse.elements,
+        viewProjection: hillOpticalViewProjection.elements,
+        inverseViewProjection: hillOpticalViewProjection.clone().invert().elements,
+        positionWorld: [
+          hillOpticalCamera.position.x,
+          hillOpticalCamera.position.y,
+          hillOpticalCamera.position.z,
+        ],
+        nearMeters: hillOpticalCamera.near,
+        farMeters: hillOpticalCamera.far,
+      },
+      providerMount: hillKaminosRuntime.portableOpticalProvider,
+      terrainPositions: Float32Array.from(terrainBuffer.positions),
+      terrainIndices: terrainTriangleIndices(terrainBuffer),
+      depthOcclusionEnabled: !watershedOpticsDepthDiagnostic,
+    });
+    hillOpticalStatus = watershedOpticsDepthDiagnostic
+      ? 'submitted-unobserved-depth-disabled-diagnostic'
+      : 'submitted-unobserved';
+  } catch (error) {
+    hillOpticalStatus = `failed: ${error instanceof Error ? error.message : String(error)}`;
+    hillOpticalResult = null;
+  }
 }
 
 function pressureFieldWitnessSummary(witness: HillOfHillsTerrainBuffer['witness']): string {
