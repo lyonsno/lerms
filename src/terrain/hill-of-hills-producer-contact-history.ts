@@ -5,6 +5,9 @@ export const HILL_OF_HILLS_PRODUCER_TRAFFIC_FIELD_SCHEMA =
 
 export type HillOfHillsContactState = 'stance' | 'release' | 'swing';
 export type HillOfHillsVec3 = readonly [number, number, number];
+export type HillOfHillsProducerTrafficDepositionLaw =
+  | 'additive_v0'
+  | 'bounded_exponential_v1';
 
 export interface HillOfHillsProducerContactPatch {
   id: string;
@@ -103,6 +106,7 @@ export interface HillOfHillsProducerTrafficGrid {
 
 export interface HillOfHillsProducerTrafficField extends HillOfHillsProducerTrafficGrid {
   schema: typeof HILL_OF_HILLS_PRODUCER_TRAFFIC_FIELD_SCHEMA;
+  depositionLaw: HillOfHillsProducerTrafficDepositionLaw;
   sourceLineageKey: string;
   values: readonly number[];
   admittedHistoryChecksums: readonly string[];
@@ -285,12 +289,15 @@ export function validateHillOfHillsProducerContactHistory(
 
 export function createEmptyHillOfHillsProducerTrafficField(
   grid: HillOfHillsProducerTrafficGrid,
-  sourceLineageKey = 'unbound'
+  sourceLineageKey = 'unbound',
+  depositionLaw: HillOfHillsProducerTrafficDepositionLaw =
+    'bounded_exponential_v1'
 ): HillOfHillsProducerTrafficField {
   validateGrid(grid);
   if (!sourceLineageKey.trim()) throw new Error('producer traffic source lineage key is required');
   const field: HillOfHillsProducerTrafficField = {
     schema: HILL_OF_HILLS_PRODUCER_TRAFFIC_FIELD_SCHEMA,
+    depositionLaw,
     sourceLineageKey,
     ...grid,
     values: new Array(grid.xCount * grid.zCount).fill(0),
@@ -343,7 +350,8 @@ export function admitHillOfHillsProducerContactHistory(
         sample.root.worldPosition[0],
         sample.root.worldPosition[2],
         contactRadius * (sample.contacts ? 0.8 : 1),
-        rootExposure
+        rootExposure,
+        previous.depositionLaw
       );
     }
     if (!sample.contacts || !sample.locomotion) continue;
@@ -358,7 +366,15 @@ export function admitHillOfHillsProducerContactHistory(
       stanceContactCount += 1;
       exposureSeconds += contactExposure;
       if (contactExposure <= 0) continue;
-      depositContact(values, previous, patch.terrainPosition[0], patch.terrainPosition[2], contactRadius, contactExposure);
+      depositContact(
+        values,
+        previous,
+        patch.terrainPosition[0],
+        patch.terrainPosition[2],
+        contactRadius,
+        contactExposure,
+        previous.depositionLaw
+      );
     }
   }
 
@@ -421,7 +437,8 @@ function depositContact(
   x: number,
   z: number,
   radius: number,
-  exposure: number
+  exposure: number,
+  depositionLaw: HillOfHillsProducerTrafficDepositionLaw
 ): void {
   const dx = (grid.xMax - grid.xMin) / (grid.xCount - 1);
   const dz = (grid.zMax - grid.zMin) / (grid.zCount - 1);
@@ -451,7 +468,14 @@ function depositContact(
     }
   }
   for (const candidate of candidates) {
-    values[candidate.index] += exposure * candidate.weight / Math.max(Number.EPSILON, weightSum);
+    const depositedExposure =
+      exposure * candidate.weight / Math.max(Number.EPSILON, weightSum);
+    if (depositionLaw === 'additive_v0') {
+      values[candidate.index] += depositedExposure;
+    } else {
+      values[candidate.index] =
+        1 - (1 - values[candidate.index]) * Math.exp(-depositedExposure);
+    }
   }
 }
 
@@ -480,8 +504,24 @@ function validateTrafficField(field: HillOfHillsProducerTrafficField): void {
   if (!field.sourceLineageKey?.trim()) {
     throw new Error('producer traffic field source lineage key is required');
   }
-  if (field.values.length !== field.xCount * field.zCount || field.values.some((value) => !Number.isFinite(value) || value < 0)) {
-    throw new Error('producer traffic field values must match its grid and remain finite and nonnegative');
+  if (
+    field.depositionLaw !== 'additive_v0' &&
+    field.depositionLaw !== 'bounded_exponential_v1'
+  ) {
+    throw new Error('producer traffic field deposition law is invalid');
+  }
+  if (
+    field.values.length !== field.xCount * field.zCount ||
+    field.values.some(
+      (value) =>
+        !Number.isFinite(value) ||
+        value < 0 ||
+        (field.depositionLaw === 'bounded_exponential_v1' && value > 1)
+    )
+  ) {
+    throw new Error(
+      'producer traffic field values must match its grid and remain within the deposition law'
+    );
   }
 }
 
@@ -512,6 +552,9 @@ function trafficFieldChecksum(field: HillOfHillsProducerTrafficField): string {
       field.zMin,
       field.zMax,
       field.sourceLineageKey,
+      ...(field.depositionLaw === 'bounded_exponential_v1'
+        ? [field.depositionLaw]
+        : []),
       field.admittedHistoryChecksums.join(','),
       ...field.values.map((value) => value.toFixed(8))
     ].join('|')

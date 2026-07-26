@@ -13,6 +13,10 @@ import {
   createHillOfHillsTerrain,
   createHillOfHillsTerrainWithCache
 } from '../src/terrain/hill-of-hills.js';
+import {
+  HILL_OF_HILLS_TRAVERSAL_AFFORDANCE_SCHEMA,
+  sampleHillOfHillsTraversalAffordance
+} from '../src/terrain/hill-of-hills-traversal-affordance.js';
 
 const patchIds = ['front-left', 'front-right', 'rear-left', 'rear-right'] as const;
 
@@ -123,7 +127,17 @@ assert.equal(validated.samples.length, 4);
 assert.deepEqual(validated.patchIds, patchIds);
 
 const empty = createEmptyHillOfHillsProducerTrafficField(grid);
+const legacyAdditiveEmpty = createEmptyHillOfHillsProducerTrafficField(
+  grid,
+  'unbound',
+  'additive_v0'
+);
 assert.equal(empty.range.max, 0, 'no-history control starts with no traffic');
+assert.notEqual(
+  empty.checksum,
+  legacyAdditiveEmpty.checksum,
+  'traffic identity distinguishes the active deposition law even before contact arrives'
+);
 
 const left = admitHillOfHillsProducerContactHistory(empty, leftHistory);
 const leftRepeat = admitHillOfHillsProducerContactHistory(left, leftHistory);
@@ -147,6 +161,26 @@ assert.ok(
   sampleHillOfHillsProducerTrafficField(right, 1.25, -0.8) >
     sampleHillOfHillsProducerTrafficField(right, -1.25, -0.8)
 );
+
+let boundedRepeat = createEmptyHillOfHillsProducerTrafficField(grid);
+const repeatedPeakDeltas: number[] = [];
+for (let pass = 0; pass < 64; pass += 1) {
+  const priorPeak = boundedRepeat.range.max;
+  boundedRepeat = admitHillOfHillsProducerContactHistory(
+    boundedRepeat,
+    historyAt(-1.25, `bounded-repeat-${pass}`)
+  );
+  repeatedPeakDeltas.push(boundedRepeat.range.max - priorPeak);
+}
+assert.ok(
+  boundedRepeat.values.every((value) => value >= 0 && value <= 1),
+  'persistent producer memory remains a bounded environmental state under repeated exposure'
+);
+assert.ok(
+  repeatedPeakDeltas.at(-1)! < repeatedPeakDeltas[0] * 0.25,
+  'repeated exposure has diminishing marginal effect instead of freezing the first successful route through unbounded accumulation'
+);
+assert.equal(boundedRepeat.depositionLaw, 'bounded_exponential_v1');
 
 const railOnlyHistory = structuredClone(leftHistory) as any;
 railOnlyHistory.episodeId = 'rail-only-crossing';
@@ -242,6 +276,12 @@ function terrainAfterCrossing(xOffset: number, episodeId: string) {
 
 const leftCrossing = terrainAfterCrossing(-1.25, 'hill-left-crossing');
 const rightCrossing = terrainAfterCrossing(1.25, 'hill-right-crossing');
+const noHistoryCache = createHillOfHillsLayerTileCache();
+createHillOfHillsTerrainWithCache(noHistoryCache, terrainParams);
+const noHistoryAtDeparture = createHillOfHillsTerrainWithCache(
+  noHistoryCache,
+  { ...terrainParams, topologyPhaseTimeMs: 900 }
+);
 assert.equal(leftCrossing.before.witness.producerTrafficAdmittedEpisodeCount, 0);
 assert.equal(leftCrossing.before.witness.producerTrafficFieldRange.max, 0);
 assert.equal(leftCrossing.admitted.witness.producerTrafficAdmittedEpisodeCount, 1);
@@ -261,6 +301,97 @@ assert.equal(
   leftCrossing.afterDeparture.witness.supportFrame.shockClassCounts.shock_reset ?? 0,
   0,
   'contact-history admission does not reset or teleport the support surface'
+);
+
+const inheritedAffordance = sampleHillOfHillsTraversalAffordance(
+  leftCrossing.afterDeparture,
+  [-1.25, 0, -0.8],
+  [0, 0, 1]
+);
+const repeatedAffordance = sampleHillOfHillsTraversalAffordance(
+  leftCrossing.afterDeparture,
+  [-1.25, 0, -0.8],
+  [0, 0, 1]
+);
+const noHistoryAffordance = sampleHillOfHillsTraversalAffordance(
+  noHistoryAtDeparture,
+  [-1.25, 0, -0.8],
+  [0, 0, 1]
+);
+const inheritedSpatialControl = sampleHillOfHillsTraversalAffordance(
+  leftCrossing.afterDeparture,
+  [3.25, 0, 4.25],
+  [0, 0, 1]
+);
+assert.equal(inheritedAffordance.schema, HILL_OF_HILLS_TRAVERSAL_AFFORDANCE_SCHEMA);
+assert.deepEqual(inheritedAffordance, repeatedAffordance, 'local affordance sampling is deterministic');
+assert.deepEqual(
+  {
+    depositionLaw: inheritedAffordance.memory.depositionLaw,
+    capacity: inheritedAffordance.memory.capacity
+  },
+  {
+    depositionLaw: 'bounded_exponential_v1',
+    capacity: 1
+  },
+  'the consumer sees the bounded environmental-memory law rather than inferring it from values'
+);
+assert.equal(inheritedAffordance.source.frameId, leftCrossing.afterDeparture.source.frameId);
+assert.equal(
+  inheritedAffordance.source.sampleChecksum,
+  leftCrossing.afterDeparture.witness.sampleChecksum
+);
+assert.equal(
+  inheritedAffordance.source.topologyChecksum,
+  leftCrossing.afterDeparture.witness.topologyChecksum
+);
+assert.equal(
+  inheritedAffordance.source.supportFrameChecksum,
+  leftCrossing.afterDeparture.witness.supportFrame.supportFrameChecksum
+);
+assert.equal(
+  inheritedAffordance.source.producerTrafficFieldChecksum,
+  leftCrossing.afterDeparture.witness.producerTrafficFieldChecksum
+);
+assert.ok(
+  inheritedAffordance.memory.localExposure > noHistoryAffordance.memory.localExposure,
+  'inherited embodied history changes the local environmental-memory component at the traversed branch'
+);
+assert.ok(
+  inheritedAffordance.memory.localExposure > inheritedSpatialControl.memory.localExposure,
+  'history-conditioned affordance remains spatially attached instead of becoming a global preference'
+);
+for (const value of [
+  inheritedAffordance.support.stability,
+  inheritedAffordance.traversal.uphillEffort,
+  inheritedAffordance.traversal.directionalPermeability,
+  inheritedAffordance.terrain.routePressure,
+  inheritedAffordance.memory.affinity
+]) {
+  assert.ok(Number.isFinite(value) && value >= 0 && value <= 1);
+}
+assert.ok(
+  inheritedAffordance.traversal.signedGrade >= -1 &&
+    inheritedAffordance.traversal.signedGrade <= 1
+);
+assert.ok(
+  inheritedAffordance.traversal.flowAlignment >= -1 &&
+    inheritedAffordance.traversal.flowAlignment <= 1
+);
+assert.equal(
+  'score' in inheritedAffordance,
+  false,
+  'Hill returns causal local quantities rather than choosing a route for Horde'
+);
+assert.throws(
+  () =>
+    sampleHillOfHillsTraversalAffordance(
+      leftCrossing.afterDeparture,
+      [-1.25, 0, -0.8],
+      [0, 0, 0]
+    ),
+  /direction/,
+  'a missing candidate direction cannot silently become a traversal affordance'
 );
 
 assert.throws(

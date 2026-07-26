@@ -15,6 +15,7 @@ import {
   createEmptyHillOfHillsProducerTrafficField,
   sampleHillOfHillsProducerTrafficField,
   type HillOfHillsProducerContactHistory,
+  type HillOfHillsProducerTrafficDepositionLaw,
   type HillOfHillsProducerTrafficField
 } from './hill-of-hills-producer-contact-history.js';
 
@@ -470,6 +471,7 @@ export interface HillOfHillsTerrainParams {
   topologyPhaseDurationMs: number;
   topologyDynamicsMode: HillOfHillsTopologyDynamicsMode;
   topologyPossibilityMode: HillOfHillsTopologyPossibilityMode;
+  producerTrafficDepositionLaw: HillOfHillsProducerTrafficDepositionLaw;
   topologyEventClasses: HillOfHillsTopologyEventClassConfigMap;
   gridResolutionX: number;
   gridResolutionZ: number;
@@ -1049,6 +1051,7 @@ export const defaultHillOfHillsParams: HillOfHillsTerrainParams = {
   topologyPhaseDurationMs: 1800,
   topologyDynamicsMode: 'direct_synthesis',
   topologyPossibilityMode: 'inherited',
+  producerTrafficDepositionLaw: 'bounded_exponential_v1',
   topologyEventClasses: defaultHillOfHillsTopologyEventClasses,
   gridResolutionX: 72,
   gridResolutionZ: 96,
@@ -1095,7 +1098,7 @@ function emptyProducerTrafficFieldFor(
     xMax: params.width * 0.5,
     zMin: -params.length * 0.5,
     zMax: params.length * 0.5
-  }, sourceLineageKey);
+  }, sourceLineageKey, params.producerTrafficDepositionLaw);
 }
 
 function producerTrafficGridMatches(
@@ -1111,6 +1114,7 @@ function producerTrafficGridMatches(
     field.xMax === expected.xMax &&
     field.zMin === expected.zMin &&
     field.zMax === expected.zMax &&
+    field.depositionLaw === expected.depositionLaw &&
     field.sourceLineageKey === sourceLineageKey
   );
 }
@@ -1585,6 +1589,10 @@ function normalizeParams(params: HillOfHillsTerrainParams): HillOfHillsTerrainPa
       params.topologyPossibilityMode === 'reauthored' || params.topologyPossibilityMode === 'phase_recomposed'
         ? params.topologyPossibilityMode
         : 'inherited',
+    producerTrafficDepositionLaw:
+      params.producerTrafficDepositionLaw === 'additive_v0'
+        ? 'additive_v0'
+        : 'bounded_exponential_v1',
     topologyEventClasses: normalizeTopologyEventClasses(params.topologyEventClasses),
     gridResolutionX: Math.max(8, Math.round(finiteOr(params.gridResolutionX, 72))),
     gridResolutionZ: Math.max(8, Math.round(finiteOr(params.gridResolutionZ, 96))),
