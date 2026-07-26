@@ -12,7 +12,7 @@ import {
 } from './lerm-horde-3d-carrier-renderer.js';
 import {
   FULL_HILL_RENDERER_ID,
-} from './lerm-horde-full-hill-renderer.js';
+} from './lerm-horde-hill-geometry.js';
 import {
   LERM_HORDE_LIVE_RUNTIME_ROUTE,
   LERM_HORDE_LIVE_RUNTIME_SCHEMA,

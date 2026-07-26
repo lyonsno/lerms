@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import ts from 'typescript';
 
 const root = process.cwd();
 const paths = {
@@ -87,6 +88,13 @@ assert.doesNotMatch(
   /createHillHordeSameScenePrefixReplay|hill-horde-same-scene-prefix-replay/,
   'the live runtime must not import or call the replay constructor',
 );
+const activeModuleGraph = collectTypeScriptModuleGraph(paths.viewer);
+assert.ok(
+  !activeModuleGraph.some((path) =>
+    path.endsWith('/hill-horde-same-scene-prefix-replay.ts'),
+  ),
+  'the active browser module graph must not import the replay constructor module',
+);
 assert.doesNotMatch(
   viewer,
   /timeline__step|data-speed|selectFrame|createTimeline/,
@@ -140,3 +148,30 @@ for (const falseClosureProbe of [
 }
 
 console.log('Lerm Horde full-Hill one-renderer smoke contracts ok');
+
+function collectTypeScriptModuleGraph(entry) {
+  const visited = new Set();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+    const source = readFileSync(current, 'utf8');
+    const imports = ts.preProcessFile(source, true, true).importedFiles;
+    for (const imported of imports) {
+      if (!imported.fileName.startsWith('.')) {
+        continue;
+      }
+      const candidate = resolve(
+        dirname(current),
+        imported.fileName.replace(/\.js$/, '.ts'),
+      );
+      if (existsSync(candidate)) {
+        queue.push(candidate);
+      }
+    }
+  }
+  return [...visited];
+}

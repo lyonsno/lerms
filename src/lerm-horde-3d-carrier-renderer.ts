@@ -24,7 +24,7 @@ import {
   FULL_HILL_RENDERER_ID,
   createHillTerrainGeometry,
   updateHillTerrainGeometry,
-} from './lerm-horde-full-hill-renderer.js';
+} from './lerm-horde-hill-geometry.js';
 import {
   LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
 } from './lerm-horde-live-body-motion.js';

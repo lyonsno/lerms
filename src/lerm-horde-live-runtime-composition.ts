@@ -602,7 +602,10 @@ function nextIntervalEnd(
   requestedMs: number,
   durationMs: number,
 ): number {
-  let next = Math.min(requestedMs, currentMs + MAX_INCREMENT_MS);
+  const nextGlobalBoundary =
+    (Math.floor(currentMs / MAX_INCREMENT_MS) + 1) *
+    MAX_INCREMENT_MS;
+  let next = Math.min(requestedMs, nextGlobalBoundary);
   if (currentMs < durationMs && next > durationMs) next = durationMs;
   return next;
 }

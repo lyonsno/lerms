@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import type { LermHordeProducerHistoryCompositionReceipt } from '../src/lerm-horde-producer-history-composition.js';
 import {
@@ -148,6 +149,60 @@ assert.equal(runtimeReceipt.claimBoundary.liveCurrentHillTruth, true);
 assert.equal(runtimeReceipt.claimBoundary.liveRootExposureTruth, true);
 assert.equal(runtimeReceipt.claimBoundary.liveContactTruth, false);
 
+const reviewedVendorRailSampler =
+  await createReviewedVendorRailSampler(receipt);
+const canonicalRuntime = createLermHordeLiveRuntime({
+  producerReceipt: receipt,
+  railSampler: reviewedVendorRailSampler,
+  hillRevision: 'f6458e5bd74d9305c4149e6a2ee3844bf4613150',
+});
+for (
+  let elapsedMs = 200;
+  elapsedMs <= 3_200;
+  elapsedMs += 200
+) {
+  canonicalRuntime.advanceTo(elapsedMs);
+}
+canonicalRuntime.advanceTo(receipt.historySummary.lastTimestampMs + 900);
+const canonicalReceipt = canonicalRuntime.createReceipt();
+assert.equal(canonicalReceipt.clock.tickCount, 18);
+assert.equal(canonicalReceipt.admission.intervalCount, 13);
+assert.equal(canonicalReceipt.admission.uniqueEpisodeCount, 13);
+assert.equal(
+  canonicalReceipt.admission.exposureSeconds,
+  1.93321673232201,
+);
+assert.equal(canonicalReceipt.admission.trafficChecksum, '057c750d');
+assert.equal(canonicalReceipt.terrain.sampleChecksum, '840883ac');
+assert.equal(canonicalReceipt.terrain.topologyChecksum, '9616b1f6');
+assert.equal(
+  canonicalReceipt.terrain.supportFrameChecksum,
+  'ab24b35a',
+);
+
+const burstRuntime = createLermHordeLiveRuntime({
+  producerReceipt: receipt,
+  railSampler: reviewedVendorRailSampler,
+  hillRevision: 'f6458e5bd74d9305c4149e6a2ee3844bf4613150',
+});
+for (const elapsedMs of [400, 1_600, 2_400, 2_800, 3_336]) {
+  burstRuntime.advanceTo(elapsedMs);
+}
+const burstReceipt = burstRuntime.createReceipt();
+assert.deepEqual(
+  {
+    clock: burstReceipt.clock,
+    admission: burstReceipt.admission,
+    terrain: burstReceipt.terrain,
+  },
+  {
+    clock: canonicalReceipt.clock,
+    admission: canonicalReceipt.admission,
+    terrain: canonicalReceipt.terrain,
+  },
+  'caller batching must not author final live-runtime identity',
+);
+
 console.log('lerm Horde live runtime composition contracts passed');
 
 function createReceiptRailSampler(
@@ -238,6 +293,62 @@ function createReceiptRailSampler(
       },
     };
   };
+}
+
+async function createReviewedVendorRailSampler(
+  source: LermHordeProducerHistoryCompositionReceipt,
+): Promise<(sourceDistance: number) => LermHordeLiveRailSample> {
+  const modulePath = resolve(
+    'public/vendor/kaminos-ced6db3d/motion-ready-719024-core.js',
+  );
+  const railCore = (await import(pathToFileURL(modulePath).href)) as {
+    sampleCreatureScaleLocomotionRail(
+      rail: unknown,
+      sourceDistance: number,
+    ): LermHordeLiveRailSample;
+  };
+  const samples = source.history.samples.map(({ root }) => ({
+    sourceDistance: root.sourceDistance,
+    position: root.worldPosition,
+    tangent: root.tangent,
+    curvature: 0,
+    support: {
+      schema: root.support.schema,
+      clearance: 0,
+      scale: 1,
+      corridorRadius: 0,
+      supportSampleSpacing: 1,
+      terrainCellWidth: 1,
+      rootLift: root.support.rootLift,
+      profile: [],
+      samples: [],
+      compliance: {
+        exceeded: root.support.disposition === 'reroute-required',
+        outOfBounds: false,
+        maxEnvelopeLift: root.support.rootLift,
+        rootLiftAboveClearance: root.support.rootLift,
+        maxSuspensionLift: 0,
+        measuredPitchRadians: 0,
+        measuredBendRadians: 0,
+        maxPitchRadians: Math.PI,
+        maxBendRadiansPerStation: Math.PI,
+        margins: {
+          reviewed: root.support.minimumComplianceMargin,
+        },
+        minimumNormalizedMargin:
+          root.support.minimumComplianceMargin,
+      },
+      plannerDisposition: root.support.disposition,
+    },
+  }));
+  const rail = {
+    schema: 'kaminos.creature-scale-locomotion-rail.v0',
+    id: source.producer.railId,
+    length: samples.at(-1)?.sourceDistance ?? 0,
+    samples,
+  };
+  return (sourceDistance) =>
+    railCore.sampleCreatureScaleLocomotionRail(rail, sourceDistance);
 }
 
 function mixVec3(
