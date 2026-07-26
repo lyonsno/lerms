@@ -49,5 +49,34 @@ assert.match(
   /operator-live.*operatorLoopCount/s,
   'browser witness does not exercise the self-running loop',
 );
+const operatorWitnessBody = browserWitness.slice(
+  browserWitness.indexOf('async function runOperatorLiveView'),
+  browserWitness.indexOf('async function currentState'),
+);
+assert.match(
+  operatorWitnessBody,
+  /report\.incrementalAdmissionVerified/,
+  'operator-live witness does not make incremental Hill admission load-bearing',
+);
+assert.match(
+  operatorWitnessBody,
+  /report\.currentHillSupportVerified/,
+  'operator-live witness does not make current-Hill support load-bearing',
+);
+assert.match(
+  operatorWitnessBody,
+  /report\.terrainChangedDuringRuntime/,
+  'operator-live witness does not make terrain change load-bearing',
+);
+assert.match(
+  controller,
+  /effectivePresentation\s*=\s*'rejected'/,
+  'unsupported presentation does not expose rejected effective identity',
+);
+assert.match(
+  browserWitness,
+  /rejected-presentation/,
+  'browser witness has no first-class rejected-presentation exercise',
+);
 
 console.log('Lerm Horde operator-live link contracts passed');

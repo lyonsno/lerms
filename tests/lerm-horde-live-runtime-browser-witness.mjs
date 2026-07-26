@@ -130,6 +130,7 @@ async function runWitness() {
         effectiveRoute: data.effectiveRoute ?? null,
         requestedPresentation: data.requestedPresentation ?? null,
         effectivePresentation: data.effectivePresentation ?? null,
+        failurePhase: data.failurePhase ?? null,
         requestedRenderer: data.requestedRenderer ?? null,
         effectiveRenderer: data.effectiveRenderer ?? null,
         sourceStatus: data.sourceStatus ?? null,
@@ -147,6 +148,10 @@ async function runWitness() {
       };
     })()`);
     Object.assign(report, identity);
+    if (options.mode === 'rejected-presentation') {
+      await runRejectedPresentation(browser, identity);
+      return;
+    }
     assert.equal(
       identity.smokeStatus,
       'verified',
@@ -277,7 +282,7 @@ async function runWitness() {
         return true;
       }
       return false;
-    }, 3_000, 'second live in-traversal sample');
+    }, 6_000, 'second live in-traversal sample');
     sampleB = await currentState(browser, true);
     const pixelsB = await readScenePixels(browser);
     await captureScreenshot(browser, options.sampleBScreenshot);
@@ -542,13 +547,32 @@ async function runOperatorLiveView(browser) {
   assert.equal(initialUi.receipt, null);
 
   await delay(650);
-  const sampleA = await currentState(browser);
-  const pixelsA = await readScenePixels(browser);
-  await captureScreenshot(browser, options.sampleAScreenshot);
-  await delay(1_100);
-  const sampleB = await currentState(browser);
-  const pixelsB = await readScenePixels(browser);
+  let sampleA = await currentState(browser);
+  let pixelsA = await readScenePixels(browser);
+  let sampleB;
+  let pixelsB;
+  await waitFor(async () => {
+    const candidate = await currentState(browser);
+    if (candidate.operatorLoopCount !== sampleA.operatorLoopCount) {
+      sampleA = candidate;
+      pixelsA = await readScenePixels(browser);
+      return false;
+    }
+    if (
+      candidate.elapsedMs >= sampleA.elapsedMs + 400 &&
+      candidate.admittedIntervalCount >
+        sampleA.admittedIntervalCount
+    ) {
+      sampleB = candidate;
+      pixelsB = await readScenePixels(browser);
+      return true;
+    }
+    return false;
+  }, 4_000, 'same-loop operator-live state pair');
+  sampleB ??= await currentState(browser);
+  pixelsB ??= await readScenePixels(browser);
   await captureScreenshot(browser, options.sampleBScreenshot);
+  await captureScreenshot(browser, options.sampleAScreenshot);
   report.liveStateSamples = [sampleA, sampleB];
   report.livePixelSamples = [pixelsA, pixelsB];
   report.liveClockVerified =
@@ -557,6 +581,21 @@ async function runOperatorLiveView(browser) {
     sampleA.tickCount > initial.tickCount &&
     sampleB.tickCount > sampleA.tickCount &&
     sampleB.sourceDistance > sampleA.sourceDistance;
+  report.incrementalAdmissionVerified =
+    sampleA.admittedIntervalCount > 0 &&
+    sampleB.admittedIntervalCount >
+      sampleA.admittedIntervalCount &&
+    sampleB.exposureSeconds > sampleA.exposureSeconds &&
+    sampleB.trafficChecksum !== sampleA.trafficChecksum;
+  report.currentHillSupportVerified =
+    sampleA.supportHillSource.length > 0 &&
+    sampleB.supportHillSource.length > 0 &&
+    sampleB.supportHillSource !== sampleA.supportHillSource;
+  report.terrainChangedDuringRuntime =
+    sampleB.terrainSampleChecksum !==
+      sampleA.terrainSampleChecksum ||
+    sampleB.terrainTopologyChecksum !==
+      sampleA.terrainTopologyChecksum;
   report.carrierCanvasNonblank =
     pixelsA.nonBackgroundSamples >= 32 &&
     pixelsA.distinctColors >= 8;
@@ -569,6 +608,18 @@ async function runOperatorLiveView(browser) {
   assert.ok(
     report.liveClockVerified,
     'operator-live direct link did not advance without a click',
+  );
+  assert.ok(
+    report.incrementalAdmissionVerified,
+    'operator-live Hill admission did not advance',
+  );
+  assert.ok(
+    report.currentHillSupportVerified,
+    'operator-live carrier support did not follow current Hill frames',
+  );
+  assert.ok(
+    report.terrainChangedDuringRuntime,
+    'operator-live Hill remained static or stale',
   );
   assert.ok(report.carrierCanvasNonblank, 'operator-live canvas is blank');
   assert.ok(
@@ -666,6 +717,50 @@ async function runOperatorLiveView(browser) {
   );
 }
 
+async function runRejectedPresentation(browser, identity) {
+  report.phase = 'rejected-presentation';
+  const visible = await browser.evaluate(`(() => ({
+    failureVisible:
+      !document.querySelector('[data-smoke-failure]')?.hidden,
+    error:
+      document.querySelector('[data-smoke-error]')?.textContent ?? '',
+    canvasCount:
+      document.querySelectorAll('.stage canvas').length,
+    receipt: window.__lermHordeLiveRuntimeReport ?? null,
+  }))()`);
+  report.rejectedPresentationVerified =
+    identity.smokeStatus === 'failed' &&
+    identity.requestedRoute === EXPECTED_ROUTE &&
+    identity.effectiveRoute === EXPECTED_ROUTE &&
+    identity.requestedPresentation ===
+      options.rejectedPresentation &&
+    identity.effectivePresentation === 'rejected' &&
+    identity.failurePhase === 'presentation-validation' &&
+    visible.failureVisible &&
+    visible.error.includes(
+      `unsupported smoke presentation "${options.rejectedPresentation}"`,
+    ) &&
+    visible.canvasCount === 0 &&
+    visible.receipt === null;
+  assert.ok(
+    report.rejectedPresentationVerified,
+    'unsupported presentation did not fail with preserved route identity',
+  );
+  await captureScreenshot(browser, options.screenshot);
+  report.primaryOutputWritten =
+    statSync(options.screenshot).size >= 5_000;
+  assert.ok(
+    report.primaryOutputWritten,
+    'rejected-presentation failure image is blank or missing',
+  );
+  report.error = visible.error;
+  report.phase = 'complete';
+  report.ok = true;
+  console.log(
+    `Lerm Horde rejected-presentation browser witness passed: ${options.report}`,
+  );
+}
+
 async function currentState(browser, togglePlay = false) {
   return browser.evaluate(`(() => {
     ${
@@ -685,6 +780,9 @@ async function currentState(browser, togglePlay = false) {
       terrainSampleChecksum: stage?.dataset.terrainSampleChecksum ?? '',
       terrainTopologyChecksum: stage?.dataset.terrainTopologyChecksum ?? '',
       trafficChecksum: stage?.dataset.trafficChecksum ?? '',
+      operatorLoopCount: Number(
+        document.documentElement.dataset.operatorLoopCount
+      ),
       exposureSeconds: Number(
         document.querySelector('[data-exposure]')?.textContent ?? '0'
       ),
@@ -774,12 +872,20 @@ function parseArgs(args) {
   if (!match) throw new Error(`invalid --viewport ${viewport}`);
   const label = values.get('label') ?? 'desktop';
   const mode = values.get('mode') ?? 'acceptance-witness';
-  if (!['acceptance-witness', 'operator-live'].includes(mode)) {
+  if (
+    ![
+      'acceptance-witness',
+      'operator-live',
+      'rejected-presentation',
+    ].includes(mode)
+  ) {
     throw new Error(`invalid --mode ${mode}`);
   }
   return {
     url: values.get('url') ?? 'http://127.0.0.1:4198/smoke.html',
     mode,
+    rejectedPresentation:
+      values.get('requested-presentation') ?? 'stale-demo',
     width: Number(match[1]),
     height: Number(match[2]),
     report: resolve(

@@ -56,16 +56,27 @@ let operatorLive = false;
 void initialize();
 
 async function initialize(): Promise<void> {
+  const documentState = document.documentElement.dataset;
+  const rawRequestedPresentation =
+    readRequestedPresentation(window.location.search);
+  documentState.requestedRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
+  documentState.effectiveRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
+  documentState.requestedPresentation = rawRequestedPresentation;
+  documentState.effectivePresentation = 'pending-validation';
+  documentState.failurePhase = 'presentation-validation';
   try {
     requestedPresentation = resolveRequestedPresentation(
-      window.location.search,
+      rawRequestedPresentation,
     );
     operatorLive =
       requestedPresentation === OPERATOR_LIVE_PRESENTATION;
+    documentState.effectivePresentation = requestedPresentation;
+    documentState.presentation = requestedPresentation;
+    documentState.failurePhase = 'renderer-initialization';
     carrier = await createExactCarrierRenderer(stage);
     renderState(carrier.state);
 
-    const documentState = document.documentElement.dataset;
+    delete documentState.failurePhase;
     documentState.smokeStatus = 'verified';
     documentState.carrierStatus = operatorLive
       ? 'operator-live-running'
@@ -73,13 +84,6 @@ async function initialize(): Promise<void> {
     documentState.carrierReceiptStatus = operatorLive
       ? 'not-applicable-operator-live'
       : 'pending-play';
-    documentState.requestedRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
-    documentState.effectiveRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
-    documentState.requestedPresentation = requestedPresentation;
-    documentState.effectivePresentation = operatorLive
-      ? OPERATOR_LIVE_PRESENTATION
-      : ACCEPTANCE_PRESENTATION;
-    documentState.presentation = documentState.effectivePresentation;
     documentState.requestedRenderer = FULL_HILL_RENDERER_ID;
     documentState.effectiveRenderer = carrier.rendererId;
     documentState.sourceStatus = 'live-incremental-current-hill';
@@ -148,6 +152,8 @@ function tick(clockMs: number): void {
           }
         }
       } catch (error) {
+        document.documentElement.dataset.failurePhase =
+          'runtime-advance';
         failSmoke(error);
       }
     }
@@ -296,9 +302,15 @@ function publishReceipt(): void {
 }
 
 function failSmoke(error: unknown): void {
-  document.documentElement.dataset.smokeStatus = 'failed';
-  document.documentElement.dataset.carrierStatus = 'failed';
-  document.documentElement.dataset.carrierReceiptStatus = 'failed';
+  const documentState = document.documentElement.dataset;
+  documentState.smokeStatus = 'failed';
+  documentState.carrierStatus = 'failed';
+  documentState.carrierReceiptStatus = 'failed';
+  if (documentState.effectivePresentation === 'pending-validation') {
+    documentState.effectivePresentation = 'rejected';
+    documentState.presentation = 'rejected';
+  }
+  documentState.failurePhase ??= 'unknown';
   failure.hidden = false;
   errorOutput.textContent =
     error instanceof Error ? error.message : String(error);
@@ -312,10 +324,15 @@ function required<T extends Element>(selector: string): T {
   return element;
 }
 
-function resolveRequestedPresentation(search: string): string {
+function readRequestedPresentation(search: string): string {
   const params = new URLSearchParams(search);
-  const presentation = params.get('presentation');
-  if (presentation === null) return ACCEPTANCE_PRESENTATION;
+  return params.get('presentation') ?? ACCEPTANCE_PRESENTATION;
+}
+
+function resolveRequestedPresentation(presentation: string): string {
+  if (presentation === ACCEPTANCE_PRESENTATION) {
+    return ACCEPTANCE_PRESENTATION;
+  }
   if (presentation === OPERATOR_LIVE_PRESENTATION) {
     return OPERATOR_LIVE_PRESENTATION;
   }
