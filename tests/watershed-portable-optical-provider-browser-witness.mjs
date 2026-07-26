@@ -141,7 +141,23 @@ try {
     opticalOnlyBytes = opticalOnlyScreenshot.length;
     opticalObservedPixelCount = await countNonBlackPixels(cdp, opticalOnlyScreenshot);
     await writeFile(opticalOnlyPath, opticalOnlyScreenshot);
+    await cdp.command('Runtime.evaluate', {
+      expression: `(() => {
+        document.body.style.background = '';
+        for (const element of document.body.children) element.style.visibility = '';
+      })()`,
+      returnByValue: true
+    });
   }
+  const regimeMatrix = options.regimeMatrix
+    ? await exerciseFluidRegimeMatrix(
+        cdp,
+        outputDirectory,
+        options.runId,
+        options.postStep,
+        options.timeoutMs
+      )
+    : null;
 
   const receipt = {
     schema: 'lerms.hill-of-hills.portable-macro-optical-browser-receipt.v1',
@@ -171,6 +187,7 @@ try {
       opticalOnlyBytes
     },
     cameraAttachmentProbe,
+    regimeMatrix,
     opticalObservation: opticalOnlyPath ? {
       authority: 'browser_screenshot_pixel_readback',
       observedPixelCount: opticalObservedPixelCount,
@@ -246,6 +263,7 @@ function parseArguments(argumentsList) {
     preStep: Number(values.get('--pre-step') ?? 12),
     postStep: Number(values.get('--post-step') ?? 84),
     timeoutMs: Number(values.get('--timeout-ms') ?? 30_000)
+    ,regimeMatrix: values.get('--regime-matrix') === '1'
     ,launchTimeoutMs: Number(values.get('--launch-timeout-ms') ?? 10_000)
     ,chrome: values.get('--chrome') ?? null
     ,browserCandidates: (values.get('--browser-candidates') ?? '').split(',').filter(Boolean)
@@ -430,9 +448,107 @@ async function exerciseOpticalCameraAttachment(cdp) {
   return probe;
 }
 
+async function exerciseFluidRegimeMatrix(
+  cdp,
+  outputDirectory,
+  runId,
+  postStep,
+  timeoutMs
+) {
+  const identityResult = await cdp.command('Runtime.evaluate', {
+    expression: `(() => {
+      window.__lermsRegimeMatrixDocumentToken ??= crypto.randomUUID();
+      return {
+        token: window.__lermsRegimeMatrixDocumentToken,
+        timeOrigin: performance.timeOrigin,
+        url: location.href
+      };
+    })()`,
+    returnByValue: true
+  });
+  const documentIdentity = identityResult.result?.value;
+  const captures = [];
+
+  async function switchRegime(mode, value = null) {
+    const result = await cdp.command('Runtime.evaluate', {
+      expression: `(() => {
+        const modeInput = document.querySelector(
+          '.fluid-regime-modes input[value="${mode}"]'
+        );
+        if (!modeInput) throw new Error('missing ${mode} regime control');
+        modeInput.checked = true;
+        modeInput.dispatchEvent(new Event('input', { bubbles: true }));
+        if (${JSON.stringify(value)} !== null) {
+          const axisInput = document.querySelector('.fluid-regime-axis input');
+          axisInput.value = String(${JSON.stringify(value)});
+          axisInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        return window.__lermsHillKaminosDebugState?.regime?.request?.requestId ?? null;
+      })()`,
+      returnByValue: true
+    });
+    const previousRequestId = result.result?.value;
+    const state = await waitForDebugState(
+      cdp,
+      candidate => (
+        candidate.status === 'active' &&
+        candidate.sequenceStage === 'post_remap' &&
+        candidate.stepCount >= postStep &&
+        candidate.regime?.request?.requested?.mode === mode &&
+        candidate.regime.request.effective.mode === mode &&
+        candidate.regime.request.requestId !== previousRequestId &&
+        (
+          value === null ||
+          (
+            mode === 'sustained' &&
+            candidate.regime.request.effective.sustainedFlowLitersPerSecond === value
+          ) ||
+          (
+            mode === 'waterline' &&
+            Math.abs(candidate.regime.request.effective.waterlineMeters - value) < 1e-9
+          )
+        )
+      ),
+      timeoutMs,
+      `${mode}-${value ?? 'default'}-post-remap`
+    );
+    const screenshot = await captureScreenshot(cdp);
+    const suffix = value === null ? mode : `${mode}-${String(value).replace('.', '_')}`;
+    const path = join(outputDirectory, `${runId}-${suffix}.png`);
+    await writeFile(path, screenshot);
+    const currentIdentityResult = await cdp.command('Runtime.evaluate', {
+      expression: `({
+        token: window.__lermsRegimeMatrixDocumentToken,
+        timeOrigin: performance.timeOrigin,
+        url: location.href
+      })`,
+      returnByValue: true
+    });
+    captures.push({
+      mode,
+      requestedValue: value,
+      documentIdentity: currentIdentityResult.result?.value,
+      screenshot: path,
+      screenshotBytes: screenshot.length,
+      state
+    });
+  }
+
+  await switchRegime('sustained', 60);
+  await switchRegime('waterline', 0.8);
+  await switchRegime('waterline', 1.48);
+
+  return {
+    authority: 'one_document_live_control_regime_matrix',
+    documentIdentity,
+    captures
+  };
+}
+
 function assertReceipt(receipt) {
   const before = receipt.pre.portableOpticalProvider;
   const after = receipt.post.portableOpticalProvider;
+  const requestedRegime = new URL(receipt.url).searchParams.get('watershedFluidRegime') ?? 'impulse';
   if (
     receipt.browserEvents.length !== 0 ||
     receipt.screenshots.preBytes < 100_000 ||
@@ -481,6 +597,63 @@ function assertReceipt(receipt) {
     )
   ) {
     throw new Error('browser witness did not observe a nonblank exact-route optical target');
+  }
+  if (
+    receipt.pre.regime?.route?.effective !==
+      'lerms/hill-of-hills/conservative-fluid-regime-v0' ||
+    receipt.post.regime?.route?.effective !==
+      'lerms/hill-of-hills/conservative-fluid-regime-v0' ||
+    receipt.pre.regime.route.fallback !== null ||
+    receipt.post.regime.route.fallback !== null ||
+    receipt.pre.regime.request.requested.mode !== requestedRegime ||
+    receipt.pre.regime.request.effective.mode !== requestedRegime ||
+    receipt.post.regime.request.requested.mode !== requestedRegime ||
+    receipt.post.regime.request.effective.mode !== requestedRegime ||
+    receipt.post.regime.request.defaultSubstitution !== false ||
+    receipt.post.regime.runtime.authority !== 'live_runtime' ||
+    receipt.post.regime.runtime.stale !== false ||
+    receipt.post.regime.inventory.inferredFromWetArea !== false ||
+    Math.abs(
+      receipt.post.regime.inventory.requestedDepositedLiters -
+      receipt.post.regime.inventory.effectiveDepositedLiters
+    ) > 1e-6 ||
+    receipt.post.regime.conservation.complete !== true ||
+    receipt.post.regime.conservation.transactionCount <= 0 ||
+    receipt.post.regime.conservation.maximumVolumeResidualM3 > 1e-9 ||
+    !receipt.post.regime.output.primaryOutputWritten ||
+    receipt.post.regime.output.blank ||
+    receipt.post.regime.output.partial
+  ) {
+    throw new Error('browser witness observed a stale, substituted, inferred, or nonconservative fluid regime');
+  }
+  if (receipt.regimeMatrix) {
+    const matrix = receipt.regimeMatrix;
+    const [sustained, lowWaterline, highWaterline] = matrix.captures;
+    if (
+      matrix.authority !== 'one_document_live_control_regime_matrix' ||
+      matrix.captures.length !== 3 ||
+      matrix.captures.some(capture => (
+        capture.documentIdentity.token !== matrix.documentIdentity.token ||
+        capture.documentIdentity.timeOrigin !== matrix.documentIdentity.timeOrigin ||
+        capture.documentIdentity.url !== matrix.documentIdentity.url ||
+        capture.screenshotBytes < 100_000 ||
+        capture.state.regime.output.blank ||
+        capture.state.regime.output.partial ||
+        capture.state.regime.request.defaultSubstitution !== false ||
+        capture.state.regime.conservation.maximumVolumeResidualM3 > 1e-9
+      )) ||
+      sustained.mode !== 'sustained' ||
+      sustained.state.regime.conservation.transactionCount <= 1 ||
+      lowWaterline.mode !== 'waterline' ||
+      highWaterline.mode !== 'waterline' ||
+      lowWaterline.state.regime.basin.initializedConnectedCellCount <= 0 ||
+      highWaterline.state.regime.basin.initializedConnectedCellCount <
+        lowWaterline.state.regime.basin.initializedConnectedCellCount ||
+      highWaterline.state.regime.inventory.effectiveDepositedLiters <=
+        lowWaterline.state.regime.inventory.effectiveDepositedLiters
+    ) {
+      throw new Error('browser regime matrix reloaded, defaulted, lost conservation, or failed its basin sweep');
+    }
   }
   if (
     before.source.handleId !== after.source.handleId ||

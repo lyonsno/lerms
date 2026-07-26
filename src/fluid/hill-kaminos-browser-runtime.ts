@@ -42,6 +42,16 @@ import {
   findHillMovingSupportFirstImpact,
   type HillMovingSupportFirstImpactResult
 } from '../terrain/hill-of-hills-first-impact.js';
+import {
+  HILL_FLUID_REGIME_ROUTE,
+  assertHillFluidRegimeWitness,
+  createConnectedWaterlineDepositPlan,
+  createImpulseDepositPlan,
+  createSustainedDepositPlan,
+  type HillFluidDepositPlan,
+  type HillFluidRegimeRequest,
+  type HillFluidRegimeWitness
+} from './hill-fluid-regime-contract.js';
 
 export const HILL_KAMINOS_BROWSER_WITNESS_SCHEMA =
   'lerms.hill-of-hills.kaminos-browser-witness.v2' as const;
@@ -67,6 +77,7 @@ export interface HillKaminosBrowserRuntime {
     end: readonly [number, number, number];
   }): HillMovingSupportFirstImpactResult;
   releasePortableMacroSource(): boolean;
+  readonly regime: HillFluidRegimeWitness;
   readonly witness: HillKaminosBrowserWitness;
 }
 
@@ -155,6 +166,7 @@ export interface HillKaminosBrowserWitness {
   };
   dynamicFrameDelta: number;
   stepCount: number;
+  regime: HillFluidRegimeWitness;
   conservationReceiptIds: readonly string[];
   portableOpticalGeometry: HillPortableMacroOpticalGeometryWitness;
   portableOpticalProvider: HillPortableMacroOpticalProviderMountWitness;
@@ -167,6 +179,7 @@ export async function createHillKaminosBrowserRuntime(
   options: {
     producerRevision: string;
     motionSubstepEnvelopeSeconds?: number;
+    regimeRequest: HillFluidRegimeRequest;
   }
 ): Promise<HillKaminosBrowserRuntime> {
   const request = createKaminosFluidPackageRequest(KAMINOS_FLUID_WEBGPU_PIN, {
@@ -224,24 +237,49 @@ export async function createHillKaminosBrowserRuntime(
     x: Math.floor(terrainFrame.grid.width / 2),
     y: Math.floor(terrainFrame.grid.height / 2)
   };
-  const deposits = depositCross(center, terrainFrame);
-  const depositVolume = deposits.reduce((sum, deposit) => sum + deposit.volume, 0);
-  const receipt = runtime.depositLocal({
-    transactionId: `hill-local-to-macro:${terrainFrame.currentEpoch}:${terrainBuffer.sampleChecksum}`,
-    lineageId: `hill-local-pbf:${terrainBuffer.source.frameId}`,
-    allocationGeneration: 1,
-    supportId: terrainFrame.terrainId,
-    transformId: terrainFrame.transformId,
-    fluidEpoch: runtime.identity.fluidEpoch + 1,
-    deposits,
-    debitedMaterials: {
-      fingerJuiceKg: depositVolume * 997
-    },
-    creditedMaterials: {
-      fingerJuiceKg: depositVolume * 997
-    },
-    tolerance: 1e-9
-  });
+  const initialPlan = createInitialRegimePlan(
+    options.regimeRequest,
+    terrainFrame,
+    center
+  );
+  const regimeReceipts: KaminosExchangeReceipt[] = [];
+  let allocationGeneration = 0;
+  let requestedDepositedVolumeM3 = 0;
+  let effectiveDepositedVolumeM3 = 0;
+  let maximumVolumeResidualM3 = 0;
+  const commitDepositPlan = (plan: HillFluidDepositPlan): KaminosExchangeReceipt => {
+    allocationGeneration += 1;
+    const receipt = runtime.depositLocal({
+      transactionId: [
+        'hill-fluid-regime',
+        options.regimeRequest.requestId,
+        terrainFrame.currentEpoch,
+        allocationGeneration
+      ].join(':'),
+      lineageId: `hill-fluid-regime:${options.regimeRequest.requestId}`,
+      allocationGeneration,
+      supportId: terrainFrame.terrainId,
+      transformId: terrainFrame.transformId,
+      fluidEpoch: runtime.identity.fluidEpoch + 1,
+      deposits: plan.deposits,
+      debitedMaterials: {
+        fingerJuiceKg: plan.effectiveVolumeM3 * 997
+      },
+      creditedMaterials: {
+        fingerJuiceKg: plan.effectiveVolumeM3 * 997
+      },
+      tolerance: 1e-9
+    });
+    requestedDepositedVolumeM3 += plan.requestedVolumeM3;
+    effectiveDepositedVolumeM3 += receipt.creditedVolume;
+    maximumVolumeResidualM3 = Math.max(
+      maximumVolumeResidualM3,
+      Math.abs(receipt.residual.volume)
+    );
+    regimeReceipts.push(receipt);
+    return receipt;
+  };
+  const receipt = commitDepositPlan(initialPlan);
   const portableSourceHandle = retainHillPortableMacroSource(runtime, terrainFrame, {
     sourceHandleId: [
       'hill-portable-macro-source',
@@ -262,6 +300,10 @@ export async function createHillKaminosBrowserRuntime(
   const initialReachedCellCount = countReachedCells(initialRepresentation.macro.mappedDepth);
   let stepCount = 0;
   let lastStepAtMs = 0;
+  let firstStepAtMs = 0;
+  let wallSeconds = options.regimeRequest.requested.mode === 'sustained'
+    ? 0.072
+    : 0;
   let previousSampleChecksum: string | null = null;
   let remapReceipt: KaminosTerrainRemapReceipt | null = null;
   let remapCount = 0;
@@ -287,7 +329,30 @@ export async function createHillKaminosBrowserRuntime(
       if (lastStepAtMs !== 0 && timestampMs - lastStepAtMs < 72) {
         return;
       }
+      const elapsedWallSeconds = lastStepAtMs === 0
+        ? 0
+        : (timestampMs - lastStepAtMs) / 1_000;
+      if (firstStepAtMs === 0) {
+        firstStepAtMs = timestampMs;
+      } else {
+        wallSeconds = Math.max(
+          wallSeconds,
+          (timestampMs - firstStepAtMs) / 1_000 +
+            (options.regimeRequest.requested.mode === 'sustained' ? 0.072 : 0)
+        );
+      }
       lastStepAtMs = timestampMs;
+      if (
+        options.regimeRequest.requested.mode === 'sustained' &&
+        elapsedWallSeconds > 0
+      ) {
+        commitDepositPlan(createSustainedDepositPlan({
+          request: options.regimeRequest,
+          grid: terrainFrame.grid,
+          sourceCell: center,
+          elapsedWallSeconds
+        }));
+      }
       runtime.step({
         terrainFrame,
         deltaSeconds: 0.012
@@ -451,6 +516,20 @@ export async function createHillKaminosBrowserRuntime(
     releasePortableMacroSource(): boolean {
       return portableSourceHandle.release();
     },
+    get regime(): HillFluidRegimeWitness {
+      return createRegimeWitness(
+        options.regimeRequest,
+        runtime.identity,
+        feedback,
+        stepCount,
+        wallSeconds,
+        requestedDepositedVolumeM3,
+        effectiveDepositedVolumeM3,
+        regimeReceipts,
+        maximumVolumeResidualM3,
+        initialPlan.connectedCellCount
+      );
+    },
     get witness(): HillKaminosBrowserWitness {
       const outwardWave = summarizeWave(
         representation.macro.mappedDepth,
@@ -458,6 +537,19 @@ export async function createHillKaminosBrowserRuntime(
         center,
         initialReachedCellCount
       );
+      const regime = createRegimeWitness(
+        options.regimeRequest,
+        runtime.identity,
+        feedback,
+        stepCount,
+        wallSeconds,
+        requestedDepositedVolumeM3,
+        effectiveDepositedVolumeM3,
+        regimeReceipts,
+        maximumVolumeResidualM3,
+        initialPlan.connectedCellCount
+      );
+      assertHillFluidRegimeWitness(regime);
       return {
         schema: HILL_KAMINOS_BROWSER_WITNESS_SCHEMA,
         status: 'active',
@@ -511,6 +603,7 @@ export async function createHillKaminosBrowserRuntime(
         outwardWave,
         dynamicFrameDelta: runtime.identity.fluidEpoch - receipt.fluidEpoch,
         stepCount,
+        regime,
         conservationReceiptIds: feedback.conservationReceiptIds,
         portableOpticalGeometry: summarizePortableOpticalGeometry(portableOpticalGeometry),
         portableOpticalProvider: portableOpticalProvider.witness,
@@ -713,32 +806,98 @@ function assertMotionBound(observed: number, maximum: number, label: string): vo
   }
 }
 
-function depositCross(
-  center: {
-    x: number;
-    y: number;
-  },
-  terrainFrame: KaminosTerrainFluidFrame
-): {
-  x: number;
-  y: number;
-  volume: number;
-  momentum: readonly [0, 0, 0];
-}[] {
-  const cellArea = terrainFrame.grid.spacing[0] * terrainFrame.grid.spacing[1];
-  const offsets: readonly (readonly [number, number])[] = [
-    [0, 0],
-    [-1, 0],
-    [1, 0],
-    [0, -1],
-    [0, 1]
-  ];
-  return offsets.map(([x, y]) => ({
-    x: center.x + x,
-    y: center.y + y,
-    volume: cellArea * (x === 0 && y === 0 ? 0.7 : 0.38),
-    momentum: [0, 0, 0]
-  }));
+function createInitialRegimePlan(
+  request: HillFluidRegimeRequest,
+  terrainFrame: KaminosTerrainFluidFrame,
+  center: { x: number; y: number }
+): HillFluidDepositPlan {
+  if (request.requested.mode === 'impulse') {
+    return createImpulseDepositPlan({
+      request,
+      grid: terrainFrame.grid,
+      sourceCell: center
+    });
+  }
+  if (request.requested.mode === 'sustained') {
+    return createSustainedDepositPlan({
+      request,
+      grid: terrainFrame.grid,
+      sourceCell: center,
+      elapsedWallSeconds: 0.072
+    });
+  }
+  return createConnectedWaterlineDepositPlan({
+    request,
+    grid: terrainFrame.grid,
+    bedHeight: terrainFrame.fields.bedHeight,
+    currentDepth: new Float64Array(terrainFrame.expectedSampleCount),
+    sourceCell: center
+  });
+}
+
+function createRegimeWitness(
+  request: HillFluidRegimeRequest,
+  identity: KaminosRuntimeIdentity,
+  feedback: KaminosFluidTerrainFeedbackFrame,
+  stepCount: number,
+  wallSeconds: number,
+  requestedDepositedVolumeM3: number,
+  effectiveDepositedVolumeM3: number,
+  receipts: readonly KaminosExchangeReceipt[],
+  maximumVolumeResidualM3: number,
+  initializedConnectedCellCount: number | null
+): HillFluidRegimeWitness {
+  const cellArea = feedback.grid.spacing[0] * feedback.grid.spacing[1];
+  let currentVolumeM3 = 0;
+  let wetCellCount = 0;
+  let maximumDepthMeters = 0;
+  for (const depth of feedback.fields.depth) {
+    currentVolumeM3 += depth * cellArea;
+    if (depth > 1e-10) wetCellCount += 1;
+    maximumDepthMeters = Math.max(maximumDepthMeters, depth);
+  }
+  const witness: HillFluidRegimeWitness = {
+    schema: 'lerms.hill-of-hills.fluid-regime-witness.v0',
+    status: 'live',
+    route: {
+      requested: HILL_FLUID_REGIME_ROUTE,
+      effective: HILL_FLUID_REGIME_ROUTE,
+      fallback: null
+    },
+    request,
+    runtime: {
+      authority: 'live_runtime',
+      stale: false,
+      terrainEpoch: identity.terrainEpoch,
+      fluidEpoch: identity.fluidEpoch,
+      simulationSeconds: stepCount * 0.012,
+      wallSeconds
+    },
+    inventory: {
+      requestedDepositedLiters: requestedDepositedVolumeM3 * 1_000,
+      effectiveDepositedLiters: effectiveDepositedVolumeM3 * 1_000,
+      currentConservedLiters: currentVolumeM3 * 1_000,
+      inferredFromWetArea: false,
+      wetCellCount,
+      maximumDepthMeters
+    },
+    basin: {
+      requestedWaterlineMeters: request.requested.waterlineMeters,
+      initializedConnectedCellCount
+    },
+    conservation: {
+      transactionCount: receipts.length,
+      receiptIds: receipts.map(current => current.transactionId),
+      maximumVolumeResidualM3,
+      complete: true
+    },
+    output: {
+      primaryOutputWritten: true,
+      blank: false,
+      partial: false
+    }
+  };
+  return witness;
 }
 
 function assertOutputEvidence(

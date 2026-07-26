@@ -3,6 +3,7 @@ import {
   createHillKaminosPhaseMorphRecipeBuffer
 } from '../src/fluid/hill-kaminos-phase-morph-recipe.js';
 import { createHillKaminosBrowserRuntime } from '../src/fluid/hill-kaminos-browser-runtime.js';
+import { createHillFluidRegimeRequest } from '../src/fluid/hill-fluid-regime-contract.js';
 import {
   HILL_PORTABLE_MACRO_DEBUG_OPTICAL_ROUTE,
   HILL_PORTABLE_MACRO_HOST_ROUTE,
@@ -38,7 +39,14 @@ const previousBuffer = createHillKaminosPhaseMorphRecipeBuffer(cache, 'previous'
 const currentBuffer = createHillKaminosPhaseMorphRecipeBuffer(cache, 'current');
 const runtime = await createHillKaminosBrowserRuntime(previousBuffer, {
   producerRevision: HILL_KAMINOS_PHASE_MORPH_RECIPE.producerRevision,
-  motionSubstepEnvelopeSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.motionSubstepEnvelopeSeconds
+  motionSubstepEnvelopeSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.motionSubstepEnvelopeSeconds,
+  regimeRequest: createHillFluidRegimeRequest({
+    requestId: 'portable-optical-provider-impulse',
+    mode: 'impulse',
+    sustainedFlowLitersPerSecond: 0,
+    waterlineMeters: null,
+    authority: 'operator_live_control'
+  })
 });
 
 for (let step = 0; step < 4; step += 1) {

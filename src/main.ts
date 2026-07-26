@@ -119,6 +119,12 @@ import {
   createHillKaminosOpticalCompositor,
   type HillKaminosOpticalRenderResult
 } from './fluid/hill-kaminos-optical-compositor.js';
+import {
+  createHillFluidRegimeRequest,
+  type HillFluidRegimeMode,
+  type HillFluidRegimeRequest,
+  type HillFluidRegimeWitness
+} from './fluid/hill-fluid-regime-contract.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -278,6 +284,31 @@ const previewSourceOptions = {
 let terrainBuffer = watershedFluidEnabled
   ? createHillKaminosPhaseMorphRecipeBuffer(terrainCache, 'previous')
   : createHillOfHillsTerrainBuffer(createHillOfHillsTerrainWithCache(terrainCache, params, previewSourceOptions));
+const requestedFluidRegime = searchParams.get('watershedFluidRegime') ?? 'impulse';
+if (!['impulse', 'sustained', 'waterline'].includes(requestedFluidRegime)) {
+  throw new Error(`unsupported watershed fluid regime: ${requestedFluidRegime}`);
+}
+const requestedSustainedFlow = Number(searchParams.get('watershedFlowLps') ?? 30);
+if (!Number.isFinite(requestedSustainedFlow) || requestedSustainedFlow <= 0) {
+  throw new Error('watershed sustained flow must be positive and finite');
+}
+const centerTerrainIndex =
+  Math.floor(terrainBuffer.gridResolution.z / 2) * terrainBuffer.gridResolution.x +
+  Math.floor(terrainBuffer.gridResolution.x / 2);
+const defaultWaterlineMeters = terrainBuffer.positions[centerTerrainIndex * 3 + 1] + 0.8;
+const requestedWaterlineMeters = Number(
+  searchParams.get('watershedWaterlineMeters') ?? defaultWaterlineMeters
+);
+if (!Number.isFinite(requestedWaterlineMeters)) {
+  throw new Error('watershed waterline must be finite');
+}
+let hillFluidControlState = {
+  mode: requestedFluidRegime as HillFluidRegimeMode,
+  sustainedFlowLitersPerSecond: requestedSustainedFlow,
+  waterlineMeters: requestedWaterlineMeters
+};
+let hillFluidRequestSequence = 0;
+let hillRuntimeMountGeneration = 0;
 let workerTerrain: Worker | undefined;
 let workerStatus = 'sync-fallback';
 let latestTerrainRequestId = 0;
@@ -319,15 +350,51 @@ if (hillOpticalCanvas) {
 }
 
 if (watershedFluidEnabled) {
-  void createHillKaminosBrowserRuntime(terrainBuffer, {
-    producerRevision: HILL_KAMINOS_PHASE_MORPH_RECIPE.producerRevision,
-    motionSubstepEnvelopeSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.motionSubstepEnvelopeSeconds
-  }).then((runtime) => {
+  void mountHillKaminosRuntime(createCurrentHillFluidRegimeRequest());
+}
+
+function createCurrentHillFluidRegimeRequest(): HillFluidRegimeRequest {
+  hillFluidRequestSequence += 1;
+  return createHillFluidRegimeRequest({
+    requestId: `hill-fluid-regime-${hillFluidRequestSequence}`,
+    mode: hillFluidControlState.mode,
+    sustainedFlowLitersPerSecond: hillFluidControlState.mode === 'sustained'
+      ? hillFluidControlState.sustainedFlowLitersPerSecond
+      : 0,
+    waterlineMeters: hillFluidControlState.mode === 'waterline'
+      ? hillFluidControlState.waterlineMeters
+      : null,
+    authority: 'operator_live_control'
+  });
+}
+
+async function mountHillKaminosRuntime(
+  regimeRequest: HillFluidRegimeRequest
+): Promise<void> {
+  const mountGeneration = hillRuntimeMountGeneration + 1;
+  hillRuntimeMountGeneration = mountGeneration;
+  hillKaminosRuntime?.releasePortableMacroSource();
+  hillKaminosRuntime = undefined;
+  hillOpticalResult = null;
+  hillKaminosRuntimeStatus = `loading-${regimeRequest.requested.mode}`;
+  terrainBuffer = createHillKaminosPhaseMorphRecipeBuffer(terrainCache, 'previous');
+  try {
+    const runtime = await createHillKaminosBrowserRuntime(terrainBuffer, {
+      producerRevision: HILL_KAMINOS_PHASE_MORPH_RECIPE.producerRevision,
+      motionSubstepEnvelopeSeconds: HILL_KAMINOS_PHASE_MORPH_RECIPE.motionSubstepEnvelopeSeconds,
+      regimeRequest
+    });
+    if (mountGeneration !== hillRuntimeMountGeneration) {
+      runtime.releasePortableMacroSource();
+      return;
+    }
     hillKaminosRuntime = runtime;
     hillKaminosRuntimeStatus = 'active-pre-remap';
-  }).catch((error: unknown) => {
-    hillKaminosRuntimeStatus = `failed: ${error instanceof Error ? error.message : String(error)}`;
-  });
+  } catch (error) {
+    if (mountGeneration !== hillRuntimeMountGeneration) return;
+    hillKaminosRuntimeStatus =
+      `failed-${regimeRequest.requested.mode}: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 try {
@@ -459,12 +526,18 @@ const previewLayerSpecs: readonly { key: HillPreviewLayerKey; label: string }[] 
 
 const controls = createControls();
 const viewControls = createViewControls();
+const fluidRegimeControls = watershedFluidEnabled
+  ? createFluidRegimeControls()
+  : null;
 let previewSettings: HillPreviewSettings = loadHillPreviewSettings(safePreviewSettingsStorage());
 previewSettings = applyHillDiagnosticPreviewPreset(previewSettings, hillDiagnosticPreset);
 const previewDebugControls = createPreviewDebugControls();
 const witnessPanel = createWitnessPanel();
 
 document.body.append(controls.element, viewControls.element, previewDebugControls.element, witnessPanel);
+if (fluidRegimeControls) {
+  document.body.append(fluidRegimeControls.element);
+}
 installCameraDrag();
 
 function resize(): void {
@@ -517,6 +590,10 @@ function render(timestampMs: number): void {
   }
   drawWitness(terrainBuffer);
   publishHillKaminosDebugState();
+  fluidRegimeControls?.refresh(
+    hillKaminosRuntime?.regime ?? null,
+    hillKaminosRuntimeStatus
+  );
 
   window.requestAnimationFrame(render);
 }
@@ -2316,7 +2393,8 @@ function createControls(): { element: HTMLElement } {
   style.textContent = `
     .terrain-controls,
     .view-controls,
-    .preview-debug-controls {
+    .preview-debug-controls,
+    .fluid-regime-controls {
       position: fixed;
       width: min(330px, calc(100vw - 32px));
       overflow: auto;
@@ -2327,6 +2405,7 @@ function createControls(): { element: HTMLElement } {
       color: #f4e3b0;
       font: 12px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
       backdrop-filter: blur(8px);
+      z-index: 3;
     }
     .terrain-controls {
       right: 16px;
@@ -2341,7 +2420,78 @@ function createControls(): { element: HTMLElement } {
       left: 16px;
       bottom: 16px;
       width: min(280px, calc(100vw - 32px));
-      max-height: calc(100vh - 250px);
+      max-height: calc(50vh - 40px);
+    }
+    .fluid-regime-controls {
+      left: 50%;
+      top: 16px;
+      width: min(390px, calc(100vw - 720px));
+      min-width: 300px;
+      transform: translateX(-50%);
+      overflow: visible;
+    }
+    .fluid-regime-modes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border: 1px solid rgba(136, 224, 186, 0.24);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .fluid-regime-modes label {
+      position: relative;
+      display: grid;
+      min-width: 0;
+      min-height: 28px;
+      cursor: pointer;
+    }
+    .fluid-regime-modes label + label {
+      border-left: 1px solid rgba(136, 224, 186, 0.24);
+    }
+    .fluid-regime-modes input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .fluid-regime-modes span {
+      display: grid;
+      min-width: 0;
+      place-items: center;
+      padding: 5px 6px;
+      overflow: hidden;
+      color: rgba(244, 227, 176, 0.78);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fluid-regime-modes input:checked + span {
+      background: rgba(136, 224, 186, 0.2);
+      color: #d7f7e8;
+    }
+    .fluid-regime-axis {
+      display: grid;
+      grid-template-columns: minmax(88px, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      min-height: 30px;
+      margin-top: 8px;
+    }
+    .fluid-regime-axis[hidden] {
+      display: none;
+    }
+    .fluid-regime-axis input {
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+      border: 1px solid rgba(136, 224, 186, 0.24);
+      background: rgba(3, 9, 8, 0.86);
+      color: #f4e3b0;
+      font: inherit;
+    }
+    .fluid-regime-status {
+      display: block;
+      min-height: 1.25em;
+      margin-top: 6px;
+      color: #88e0ba;
+      overflow-wrap: anywhere;
     }
     .preview-debug-controls h2 {
       margin: 0 0 8px;
@@ -2512,7 +2662,7 @@ function createControls(): { element: HTMLElement } {
       left: 16px;
       top: 16px;
       max-width: min(390px, calc(100vw - 32px));
-      max-height: calc(100vh - 360px);
+      max-height: calc(50vh - 40px);
       overflow: auto;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -2543,11 +2693,18 @@ function createControls(): { element: HTMLElement } {
         width: calc(100vw - 24px);
         max-height: 132px;
       }
-      .terrain-witness {
+      .fluid-regime-controls {
         left: 12px;
         top: 108px;
+        width: calc(100vw - 24px);
+        min-width: 0;
+        transform: none;
+      }
+      .terrain-witness {
+        left: 12px;
+        top: 224px;
         max-width: calc(100vw - 24px);
-        max-height: 150px;
+        max-height: 112px;
       }
     }
   `;
@@ -2812,6 +2969,143 @@ function createViewControls(): { element: HTMLElement; refresh: () => void } {
   }
 
   return { element, refresh };
+}
+
+function createFluidRegimeControls(): {
+  element: HTMLElement;
+  refresh: (witness: HillFluidRegimeWitness | null, runtimeStatus: string) => void;
+} {
+  const element = document.createElement('section');
+  const modes = document.createElement('div');
+  const axis = document.createElement('label');
+  const axisLabel = document.createElement('span');
+  const axisInput = document.createElement('input');
+  const status = document.createElement('output');
+  let applyTimer: number | undefined;
+
+  element.className = 'fluid-regime-controls';
+  modes.className = 'fluid-regime-modes';
+  modes.setAttribute('role', 'radiogroup');
+  modes.setAttribute('aria-label', 'Hill fluid regime');
+  axis.className = 'fluid-regime-axis';
+  axisInput.type = 'number';
+  axisInput.step = '0.05';
+  status.className = 'fluid-regime-status';
+
+  const apply = (delayMs = 0): void => {
+    if (applyTimer !== undefined) window.clearTimeout(applyTimer);
+    applyTimer = window.setTimeout(() => {
+      applyTimer = undefined;
+      void mountHillKaminosRuntime(createCurrentHillFluidRegimeRequest());
+    }, delayMs);
+  };
+
+  for (const mode of [
+    ['impulse', 'Impulse'],
+    ['sustained', 'Sustained'],
+    ['waterline', 'Waterline']
+  ] as const) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    const text = document.createElement('span');
+    input.type = 'radio';
+    input.name = 'hill-fluid-regime';
+    input.value = mode[0];
+    input.checked = hillFluidControlState.mode === mode[0];
+    input.addEventListener('input', () => {
+      if (!input.checked) return;
+      hillFluidControlState = {
+        ...hillFluidControlState,
+        mode: mode[0]
+      };
+      syncAxis();
+      apply();
+    });
+    text.textContent = mode[1];
+    label.append(input, text);
+    modes.append(label);
+  }
+
+  axisInput.addEventListener('input', () => {
+    const value = Number(axisInput.value);
+    if (!Number.isFinite(value)) return;
+    if (hillFluidControlState.mode === 'sustained' && value > 0) {
+      hillFluidControlState = {
+        ...hillFluidControlState,
+        sustainedFlowLitersPerSecond: value
+      };
+      apply(180);
+    }
+    if (hillFluidControlState.mode === 'waterline') {
+      hillFluidControlState = {
+        ...hillFluidControlState,
+        waterlineMeters: value
+      };
+      apply(180);
+    }
+  });
+
+  function syncAxis(): void {
+    const mode = hillFluidControlState.mode;
+    axis.hidden = mode === 'impulse';
+    axisInput.disabled = mode === 'impulse';
+    if (mode === 'sustained') {
+      axisLabel.textContent = 'Flow L/s';
+      axisInput.step = '1';
+      axisInput.min = '0.01';
+      axisInput.removeAttribute('max');
+      axisInput.value = String(hillFluidControlState.sustainedFlowLitersPerSecond);
+    }
+    if (mode === 'waterline') {
+      axisLabel.textContent = 'Waterline m';
+      axisInput.step = '0.05';
+      axisInput.removeAttribute('min');
+      axisInput.removeAttribute('max');
+      axisInput.value = hillFluidControlState.waterlineMeters.toFixed(2);
+    }
+  }
+
+  syncAxis();
+  axis.append(axisLabel, axisInput);
+  element.append(modes, axis, status);
+
+  return {
+    element,
+    refresh(witness, runtimeStatus): void {
+      if (!witness) {
+        status.value = runtimeStatus;
+        status.textContent = runtimeStatus;
+        return;
+      }
+      const inventory = witness.inventory;
+      const requested = witness.request.requested;
+      const effective = witness.request.effective;
+      const requestedAxis = requested.mode === 'sustained'
+        ? ` ${requested.sustainedFlowLitersPerSecond.toFixed(2)} L/s`
+        : requested.mode === 'waterline'
+          ? ` ${requested.waterlineMeters?.toFixed(2)} m`
+          : '';
+      const effectiveAxis = effective.mode === 'sustained'
+        ? ` ${effective.sustainedFlowLitersPerSecond.toFixed(2)} L/s`
+        : effective.mode === 'waterline'
+          ? ` ${effective.waterlineMeters?.toFixed(2)} m`
+          : '';
+      const text = [
+        `req ${requested.mode}${requestedAxis}`,
+        `eff ${effective.mode}${effectiveAxis}`,
+        `${inventory.currentConservedLiters.toFixed(1)} L`,
+        `wet ${inventory.wetCellCount}`,
+        ...(witness.basin.initializedConnectedCellCount === null
+          ? []
+          : [`basin ${witness.basin.initializedConnectedCellCount}`]),
+        `max ${inventory.maximumDepthMeters.toFixed(3)} m`,
+        `sim ${witness.runtime.simulationSeconds.toFixed(2)} s`,
+        `wall ${witness.runtime.wallSeconds.toFixed(2)} s`
+      ].join(' · ');
+      status.value = text;
+      status.textContent = text;
+    }
+  };
 }
 
 function createPreviewDebugControls(): { element: HTMLElement; refresh: () => void } {
