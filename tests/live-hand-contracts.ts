@@ -693,6 +693,11 @@ const hybridState = {
   ...state,
   frame: {
     ...state.frame,
+    frame: {
+      ...state.frame.frame,
+      frameId: 'fast:run-8-1099-4',
+      captureTimestampMs: 1_099,
+    },
     source: {
       ...state.frame.source,
       effectiveRoute: LIVE_HAND_HYBRID_ROUTE,
@@ -733,6 +738,18 @@ const hybridState = {
       adaptiveStepQuality: 1 / 3,
       idealFitResidualMean: 0.018,
       idealFitImprovementRatio: 0.4375,
+      anchorReplay: {
+        mode: 'capture_time_fast_observation_replay_v1',
+        anchorCaptureTimestampMs: 1_000,
+        observationCount: 2,
+        acceptedCount: 2,
+        lastAcceptedCaptureTimestampMs: 1_066,
+        failure: null,
+      },
+      fingerExtension: {
+        target: { thumb: 0.72, index: 1, middle: 0.93, ring: 0.88, pinky: 0.81 },
+        output: { thumb: 0.68, index: 0.97, middle: 0.9, ring: 0.85, pinky: 0.79 },
+      },
     },
     timing: {
       ...state.frame.timing,
@@ -768,6 +785,34 @@ assert(hybrid.jointStepBaseLimitRad === 0.04, 'preserves the fixed-speed counter
 assert(hybrid.adaptiveStepQuality === 1 / 3, 'preserves the adaptive trust score');
 assert(hybrid.idealFitResidualMean === 0.018, 'preserves the trust-bounded ideal fit residual');
 assert(hybrid.idealFitImprovementRatio === 0.4375, 'preserves ideal improvement over the anchor');
+assert(
+  hybrid.anchorReplay?.mode === 'capture_time_fast_observation_replay_v1'
+    && hybrid.anchorReplay.observationCount === 2
+    && hybrid.anchorReplay.acceptedCount === 2
+    && hybrid.anchorReplay.lastAcceptedCaptureTimestampMs === 1_066,
+  'preserves delayed-anchor replay identity and chronological accounting',
+);
+assert(
+  hybrid.fingerExtension?.target.index === 1
+    && hybrid.fingerExtension.output.index === 0.97,
+  'preserves target-versus-output finger extension without hiding index loss',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        anchorReplay: {
+          ...hybridState.frame.diagnostics.anchorReplay,
+          lastAcceptedCaptureTimestampMs: 1_100,
+        },
+      },
+    },
+  }),
+  'anchor replay chronology exceeds visible frame capture',
+);
 assert(hybrid.anchorSource === LIVE_HAND_ROUTE, 'preserves the WiLoR MANO anchor source');
 assert(hybrid.fastPathSource === 'browser_mediapipe_hand_landmarker_live', 'preserves the browser fast-path source');
 assert(hybrid.pendingAnchorState === 'none', 'preserves the absence of a staged successor anchor');

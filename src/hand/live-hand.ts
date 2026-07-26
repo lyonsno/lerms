@@ -352,6 +352,8 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   adaptiveStepQuality: number | null;
   idealFitResidualMean: number | null;
   idealFitImprovementRatio: number | null;
+  anchorReplay: NormalizedManoFrame['anchorReplay'];
+  fingerExtension: NormalizedManoFrame['fingerExtension'];
   fallbackState: null;
   viewerReceiveToWebglRenderReturnMs?: number;
   handRenderCpuMs?: number;
@@ -1377,6 +1379,8 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     adaptiveStepQuality: frame.adaptiveStepQuality,
     idealFitResidualMean: frame.idealFitResidualMean,
     idealFitImprovementRatio: frame.idealFitImprovementRatio,
+    anchorReplay: frame.anchorReplay,
+    fingerExtension: frame.fingerExtension,
     fallbackState: null,
     captureToWebglRenderReturnMs: -1,
     captureToRenderCompleteMs: -1,

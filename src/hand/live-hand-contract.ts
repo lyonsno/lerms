@@ -43,6 +43,19 @@ export interface RuntimeSidecarStatusTruth {
   stopReason: string | null;
 }
 
+export type LiveHandFinger = 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
+
+export type FingerExtensionTruth = Record<LiveHandFinger, number>;
+
+export interface AnchorReplayTruth {
+  mode: 'capture_time_fast_observation_replay_v1';
+  anchorCaptureTimestampMs: number;
+  observationCount: number;
+  acceptedCount: number;
+  lastAcceptedCaptureTimestampMs: number;
+  failure: null;
+}
+
 export interface NormalizedManoFrame extends RuntimeRouteTruth {
   eventSequence: number;
   frameId: string;
@@ -93,6 +106,11 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   adaptiveStepQuality: number | null;
   idealFitResidualMean: number | null;
   idealFitImprovementRatio: number | null;
+  anchorReplay: AnchorReplayTruth | null;
+  fingerExtension: {
+    target: FingerExtensionTruth;
+    output: FingerExtensionTruth;
+  } | null;
 }
 
 export interface ManoDisplayTransform {
@@ -376,6 +394,71 @@ export function assertLiveRuntimeSidecarStatus(value: unknown): RuntimeSidecarSt
   };
 }
 
+const LIVE_HAND_FINGERS = ['thumb', 'index', 'middle', 'ring', 'pinky'] as const;
+
+function normalizeFingerExtensions(value: unknown, label: string): FingerExtensionTruth {
+  const extensions = record(value, label);
+  return Object.fromEntries(
+    LIVE_HAND_FINGERS.map(finger => {
+      const extension = finiteNonNegative(extensions[finger], `${label}.${finger}`);
+      if (extension > 1) throw new Error(`${label}.${finger} must be in [0, 1]`);
+      return [finger, extension];
+    }),
+  ) as unknown as FingerExtensionTruth;
+}
+
+function normalizeAnchorReplay(
+  value: unknown,
+  frameCaptureTimestampMs: number,
+): AnchorReplayTruth {
+  const replay = record(value, 'anchorReplay');
+  if (replay.mode !== 'capture_time_fast_observation_replay_v1') {
+    throw new Error('hybrid frame must expose capture-time fast-observation replay');
+  }
+  const anchorCaptureTimestampMs = finiteNonNegative(
+    replay.anchorCaptureTimestampMs,
+    'anchorReplay.anchorCaptureTimestampMs',
+  );
+  const observationCount = finiteNonNegative(
+    replay.observationCount,
+    'anchorReplay.observationCount',
+  );
+  const acceptedCount = finiteNonNegative(
+    replay.acceptedCount,
+    'anchorReplay.acceptedCount',
+  );
+  const lastAcceptedCaptureTimestampMs = finiteNonNegative(
+    replay.lastAcceptedCaptureTimestampMs,
+    'anchorReplay.lastAcceptedCaptureTimestampMs',
+  );
+  if (!Number.isSafeInteger(observationCount) || !Number.isSafeInteger(acceptedCount)) {
+    throw new Error('anchor replay counts must be safe integers');
+  }
+  if (acceptedCount > observationCount) {
+    throw new Error('anchor replay accepted count exceeds its observation count');
+  }
+  if (lastAcceptedCaptureTimestampMs < anchorCaptureTimestampMs) {
+    throw new Error('anchor replay chronology precedes the anchor capture');
+  }
+  if (
+    anchorCaptureTimestampMs > frameCaptureTimestampMs
+    || lastAcceptedCaptureTimestampMs > frameCaptureTimestampMs
+  ) {
+    throw new Error('anchor replay chronology exceeds visible frame capture');
+  }
+  if (replay.failure !== null) {
+    throw new Error('fresh hybrid frame cannot carry a failed anchor replay');
+  }
+  return {
+    mode: 'capture_time_fast_observation_replay_v1',
+    anchorCaptureTimestampMs,
+    observationCount,
+    acceptedCount,
+    lastAcceptedCaptureTimestampMs,
+    failure: null,
+  };
+}
+
 export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   const state = record(value, 'runtime state');
   if (state.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER) throw new Error(`runtime owner must be ${LIVE_HAND_RUNTIME_OWNER}`);
@@ -393,6 +476,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   const surface = normalizeManoSurface(mano);
   const diagnostics = record(frame.diagnostics, 'frame diagnostics');
   const frameIdentity = record(frame.frame, 'frame identity');
+  const captureTimestampMs = finiteNonNegative(
+    frameIdentity.captureTimestampMs,
+    'captureTimestampMs',
+  );
   const timing = record(frame.timing, 'frame timing');
   const hand = record(frame.hand, 'hand state');
   const keypoints = hand.keypoints3d;
@@ -429,6 +516,8 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let adaptiveStepQuality: number | null = null;
   let idealFitResidualMean: number | null = null;
   let idealFitImprovementRatio: number | null = null;
+  let anchorReplay: AnchorReplayTruth | null = null;
+  let fingerExtension: NormalizedManoFrame['fingerExtension'] = null;
   if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
     if (source.rawSchema !== LIVE_HAND_FAST_LANDMARK_SCHEMA) {
       throw new Error(`hybrid frame must expose ${LIVE_HAND_FAST_LANDMARK_SCHEMA}`);
@@ -498,6 +587,21 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       diagnostics.idealFitImprovementRatio,
       'idealFitImprovementRatio',
     );
+    anchorReplay = normalizeAnchorReplay(
+      diagnostics.anchorReplay,
+      captureTimestampMs,
+    );
+    const rawFingerExtension = record(diagnostics.fingerExtension, 'fingerExtension');
+    fingerExtension = {
+      target: normalizeFingerExtensions(
+        rawFingerExtension.target,
+        'fingerExtension.target',
+      ),
+      output: normalizeFingerExtensions(
+        rawFingerExtension.output,
+        'fingerExtension.output',
+      ),
+    };
     if (maxJointStepAppliedRad > jointStepLimitRad + 1e-8) {
       throw new Error('visible joint correction exceeds the cadence-scaled correction limit');
     }
@@ -529,7 +633,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     chunkYieldMs: finiteNonNegative(diagnostics.chunkYieldMs, 'chunkYieldMs'),
     eventSequence: finiteNonNegative(state.eventSequence, 'eventSequence'),
     frameId: text(frameIdentity.frameId, 'frameId'),
-    captureTimestampMs: finiteNonNegative(frameIdentity.captureTimestampMs, 'captureTimestampMs'),
+    captureTimestampMs,
     requestedRoute: text(source.requestedRoute, 'requested route'),
     effectiveRoute,
     model: text(source.model, 'model'),
@@ -571,6 +675,8 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     adaptiveStepQuality,
     idealFitResidualMean,
     idealFitImprovementRatio,
+    anchorReplay,
+    fingerExtension,
   };
 }
 
