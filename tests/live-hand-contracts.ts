@@ -1,11 +1,14 @@
 import {
   LIVE_HAND_HYBRID_ROUTE,
+  LIVE_HAND_HYBRID_FALLBACK_ROUTE,
   LIVE_HAND_ROUTE,
   assertLiveRuntimeHealth,
   assertLiveRuntimeSidecarStatus,
+  decideHeldHandSurface,
   normalizeLiveManoFrame,
   normalizeManoSurface,
   summarizeLiveHandLatency,
+  transientHybridFallbackReason,
 } from '../src/hand/live-hand-contract.js';
 import {
   LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
@@ -661,7 +664,7 @@ const hybridState = {
       jointStepIntervalMs: 16.667,
       jointStepLimitRad: 0.08,
       maxJointStepAppliedRad: 0.073,
-      jointStepPolicy: 'adaptive_confidence_residual_anchor_v1',
+      jointStepPolicy: 'adaptive_confidence_residual_anchor_v2',
       jointStepSpeedRadS: 4.8,
       jointStepBaseLimitRad: 0.04,
       adaptiveStepQuality: 1 / 3,
@@ -694,7 +697,7 @@ assert(hybrid.jointStepIntervalMs === 16.667, 'preserves the observed fast-path 
 assert(hybrid.jointStepLimitRad === 0.08, 'preserves the cadence-scaled correction limit');
 assert(hybrid.maxJointStepAppliedRad === 0.073, 'preserves the correction actually applied to the visible mesh');
 assert(
-  hybrid.jointStepPolicy === 'adaptive_confidence_residual_anchor_v1',
+  hybrid.jointStepPolicy === 'adaptive_confidence_residual_anchor_v2',
   'preserves the effective articulated debt policy',
 );
 assert(hybrid.jointStepSpeedRadS === 4.8, 'preserves the effective adaptive correction speed');
@@ -704,6 +707,91 @@ assert(hybrid.idealFitResidualMean === 0.018, 'preserves the trust-bounded ideal
 assert(hybrid.idealFitImprovementRatio === 0.4375, 'preserves ideal improvement over the anchor');
 assert(hybrid.anchorSource === LIVE_HAND_ROUTE, 'preserves the WiLoR MANO anchor source');
 assert(hybrid.fastPathSource === 'browser_mediapipe_hand_landmarker_live', 'preserves the browser fast-path source');
+
+const transientFallbackState = {
+  ...hybridState,
+  status: 'fallback',
+  frame: {
+    ...hybridState.frame,
+    source: {
+      ...hybridState.frame.source,
+      effectiveRoute: LIVE_HAND_HYBRID_FALLBACK_ROUTE,
+      backend: 'hybrid',
+    },
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      fallbackState: 'reanchor_step_trust_conflict',
+    },
+  },
+};
+assert(
+  transientHybridFallbackReason(transientFallbackState) === 'reanchor_step_trust_conflict',
+  'admits a source-identifiable transient hybrid fallback for stale-surface presentation',
+);
+assert(
+  transientHybridFallbackReason({
+    ...transientFallbackState,
+    frame: {
+      ...transientFallbackState.frame,
+      diagnostics: {
+        ...transientFallbackState.frame.diagnostics,
+        fallbackState: 'stale_wilor_anchor',
+      },
+    },
+  }) === null,
+  'stale WiLoR authority cannot preserve prior presentation',
+);
+assert(
+  transientHybridFallbackReason({
+    ...transientFallbackState,
+    frame: {
+      ...transientFallbackState.frame,
+      diagnostics: {
+        ...transientFallbackState.frame.diagnostics,
+        fallbackState: 'handedness_discontinuity',
+      },
+    },
+  }) === null,
+  'handedness discontinuity invalidates identity and cannot preserve the prior surface',
+);
+assert(
+  transientHybridFallbackReason({
+    ...transientFallbackState,
+    frame: {
+      ...transientFallbackState.frame,
+      source: {
+        ...transientFallbackState.frame.source,
+        effectiveRoute: 'browser_mediapipe_fallback',
+      },
+    },
+  }) === null,
+  'a fallback without exact hybrid route identity cannot preserve prior presentation',
+);
+const heldSurface = decideHeldHandSurface({
+  hasVisibleSurface: true,
+  lastTrustworthyAtMs: 500,
+  nowMs: 1000,
+  maxAgeMs: 750,
+});
+assert(heldSurface.hold && heldSurface.ageMs === 500, 'holds a visible trustworthy surface inside its freshness horizon');
+assert(
+  !decideHeldHandSurface({
+    hasVisibleSurface: true,
+    lastTrustworthyAtMs: 500,
+    nowMs: 1251,
+    maxAgeMs: 750,
+  }).hold,
+  'expires held geometry immediately beyond the existing freshness horizon',
+);
+assert(
+  !decideHeldHandSurface({
+    hasVisibleSurface: false,
+    lastTrustworthyAtMs: 500,
+    nowMs: 600,
+    maxAgeMs: 750,
+  }).hold,
+  'never invents a stale surface when no trustworthy surface is visible',
+);
 
 assertThrows(
   () => normalizeLiveManoFrame({

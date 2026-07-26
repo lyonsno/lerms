@@ -139,8 +139,23 @@ assert.match(
 );
 assert.match(
   liveHandSource,
-  /function deactivateFluidInlets[\s\S]*handMesh\.visible = false[\s\S]*handPresentationPending = false/,
-  'invalid live authority immediately removes the previously visible hand',
+  /function deactivateFluidInlets\(reason: string, preserveSurface = false\)[\s\S]*if \(!preserveSurface\) \{[\s\S]*handMesh\.visible = false[\s\S]*handPresentationPending = false/,
+  'invalid live authority removes the hand unless an explicit transient hold owns presentation',
+);
+assert.match(
+  liveHandSource,
+  /function holdLastTrustworthySurface\(reason: string\)[\s\S]*decideHeldHandSurface\([\s\S]*lastTrustworthyAtMs: lastLiveAt[\s\S]*maxAgeMs: maxFrameAgeMs[\s\S]*deactivateFluidInlets\(reason, true\)/,
+  'a transient fallback may hold only the last trustworthy surface inside the existing freshness horizon',
+);
+assert.match(
+  liveHandSource,
+  /heldSurfaceReason[\s\S]*held stale surface[\s\S]*maxFrameAgeMs/,
+  'held geometry is visibly identified as stale and expires through the same presentation-age contract',
+);
+assert.match(
+  liveHandSource,
+  /browser_fast_path_no_complete_hand'\)\) \{[\s\S]*deactivateFluidInlets\('browser_fast_path_no_complete_hand'\)/,
+  'a transient MediaPipe miss holds a recent trustworthy surface but hard-hides when no hold is lawful',
 );
 assert.match(
   liveHandSource,
@@ -149,8 +164,8 @@ assert.match(
 );
 assert.match(
   liveHandSource,
-  /catch \(error\) \{[\s\S]*deactivateFluidInlets\('invalid_or_stale_hand_state'\)[\s\S]*setStatus/,
-  'every normalization or hybrid contract failure immediately invalidates prior presentation state',
+  /catch \(error\) \{[\s\S]*sourceMode === 'hybrid_mano'[\s\S]*transientHybridFallbackReason\(state\)[\s\S]*holdLastTrustworthySurface[\s\S]*deactivateFluidInlets\('invalid_or_stale_hand_state'\)/,
+  'only explicit transient hybrid fallback states can hold prior presentation',
 );
 assert.doesNotMatch(
   liveHandSource,

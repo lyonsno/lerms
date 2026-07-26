@@ -10,9 +10,11 @@ import {
   LIVE_HAND_ROUTE,
   MANO_DISPLAY_ORIENTATION,
   assertLiveRuntimeHealth,
+  decideHeldHandSurface,
   normalizeLiveManoFrame,
   normalizeManoSurface,
   summarizeLiveHandLatency,
+  transientHybridFallbackReason,
   type LiveHandLatencySample,
   type NormalizedManoFrame,
   type NormalizedManoSurface,
@@ -203,6 +205,7 @@ let lastAppliedStateSequence = 0;
 let frameSequence = 0;
 let lastAnchorCaptureAtMs: number | null = null;
 let lastLiveAt = 0;
+let heldSurfaceReason: string | null = null;
 let runtimeRoute: RuntimeHealthTruth | null = null;
 let sidecarStatusTruth: RuntimeSidecarStatusTruth | null = null;
 let targetPositions: Float32Array | null = null;
@@ -333,7 +336,7 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   jointStepIntervalMs: number | null;
   jointStepLimitRad: number | null;
   maxJointStepAppliedRad: number | null;
-  jointStepPolicy: 'fixed_speed' | 'adaptive_confidence_residual_anchor_v1' | null;
+  jointStepPolicy: 'fixed_speed' | 'adaptive_confidence_residual_anchor_v2' | null;
   jointStepSpeedRadS: number | null;
   jointStepBaseLimitRad: number | null;
   adaptiveStepQuality: number | null;
@@ -470,7 +473,10 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
     ? ` | fast ${landmarkerWorkerReady ? LIVE_HAND_LANDMARKER_WORKER_ROUTE : landmarkerWorkerError ? 'failed' : 'initializing'} | submitted ${landmarkerFramesSubmitted} dropped ${landmarkerFramesDropped} stopped ${landmarkerFramesStopped} busy ${landmarkerFramesSuppressed} delivered ${delivery.completedCount} superseded ${delivery.supersededBeforePostCount} pending ${delivery.pendingCaptureId ? 1 : 0}`
     : '';
   const sidecar = sidecarStatusTruth ? ` | WiLoR ${sidecarStatusTruth.modelReadiness}` : ' | WiLoR unverified';
-  routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${sidecar}${fast}${fluid}`;
+  const held = heldSurfaceReason
+    ? ` | held stale surface ${Math.max(0, performance.now() - lastLiveAt).toFixed(0)}ms / ${maxFrameAgeMs}ms | reason ${heldSurfaceReason} | fluid authority disabled`
+    : '';
+  routeTruth.textContent = `requested ${requested} | effective ${route} | ${runtimeRoute.burstMode} ${runtimeRoute.chunkSegments || 0}x @ ${runtimeRoute.chunkYieldMs}ms | ${topology}${sidecar}${fast}${fluid}${held}`;
 }
 
 async function runtimeFetch(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
@@ -523,6 +529,7 @@ function updateSurface(surface: NormalizedManoSurface): void {
   }
   handMesh.visible = true;
   lastLiveAt = performance.now();
+  heldSurfaceReason = null;
 }
 
 function publishFluidPacketForFrame(frame: NormalizedManoFrame): void {
@@ -599,8 +606,11 @@ function updateHandSurface(frame: NormalizedManoFrame): void {
   setRouteTruth(frame);
 }
 
-function deactivateFluidInlets(reason: string): void {
-  handMesh.visible = false;
+function deactivateFluidInlets(reason: string, preserveSurface = false): void {
+  if (!preserveSurface) {
+    handMesh.visible = false;
+    heldSurfaceReason = null;
+  }
   handPresentationPending = false;
   latestFluidPacket = null;
   latestFluidFrame = null;
@@ -615,6 +625,19 @@ function deactivateFluidInlets(reason: string): void {
     emitters: [],
   }) ?? null;
   setRouteTruth();
+}
+
+function holdLastTrustworthySurface(reason: string): boolean {
+  const decision = decideHeldHandSurface({
+    hasVisibleSurface: handMesh.visible,
+    lastTrustworthyAtMs: lastLiveAt,
+    nowMs: performance.now(),
+    maxAgeMs: maxFrameAgeMs,
+  });
+  if (!decision.hold) return false;
+  heldSurfaceReason = reason;
+  deactivateFluidInlets(reason, true);
+  return true;
 }
 
 async function ensureFluidSolver(): Promise<FingerFluidSolver> {
@@ -985,8 +1008,14 @@ function ensureLandmarkerWorker(): Promise<void> {
         landmarkerInFlightCaptureId = null;
         landmarkerFramesDropped += 1;
         latestLandmarkerFailure = value;
-        deactivateFluidInlets('browser_fast_path_no_complete_hand');
-        setStatus('hybrid fallback | browser fast path found no complete hand');
+        if (!holdLastTrustworthySurface('browser_fast_path_no_complete_hand')) {
+          deactivateFluidInlets('browser_fast_path_no_complete_hand');
+        }
+        setStatus(
+          heldSurfaceReason
+            ? 'hybrid fallback | held stale surface | browser fast path found no complete hand'
+            : 'hybrid fallback | browser fast path found no complete hand',
+        );
         setRouteTruth();
         return;
       }
@@ -1371,8 +1400,19 @@ function applyState(state: Record<string, unknown>): void {
     setStatus(`live MANO | model ${frame.modelLatencyMs.toFixed(0)}ms${receipt}`, 'live');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    deactivateFluidInlets('invalid_or_stale_hand_state');
-    setStatus(`waiting for live MANO | ${message}`, 'error');
+    const transientReason = sourceMode === 'hybrid_mano'
+      ? transientHybridFallbackReason(state)
+      : null;
+    const held = transientReason
+      ? holdLastTrustworthySurface(transientReason)
+      : false;
+    if (!held) deactivateFluidInlets('invalid_or_stale_hand_state');
+    setStatus(
+      held
+        ? `hybrid fallback | held stale surface | ${transientReason}`
+        : `waiting for live MANO | ${message}`,
+      held ? 'idle' : 'error',
+    );
   }
 }
 
@@ -1617,6 +1657,19 @@ function animate(now: number): void {
   }
   fluidFrameDecisionCounts[frameDecision.reason] += 1;
   const interpolationUnsettled = updateInterpolatedSurface();
+  if (
+    heldSurfaceReason
+    && !decideHeldHandSurface({
+      hasVisibleSurface: handMesh.visible,
+      lastTrustworthyAtMs: lastLiveAt,
+      nowMs: now,
+      maxAgeMs: maxFrameAgeMs,
+    }).hold
+  ) {
+    const expiredReason = heldSurfaceReason;
+    deactivateFluidInlets('held_surface_expired');
+    setStatus(`waiting for live MANO | held surface expired after ${maxFrameAgeMs}ms | ${expiredReason}`);
+  }
   if (handMesh.visible && now - lastLiveAt > 1200 && running) handMaterial.emissive.setHex(0x101c1c);
   else handMaterial.emissive.setHex(0x000000);
   const handRenderStartedAt = performance.now();
@@ -1757,6 +1810,12 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     fluidEvidenceMode: fluidAssayMode ? LIVE_FLUID_ENVELOPE_ASSAY_ROUTE : 'live_hand',
     running,
     meshVisible: handMesh.visible,
+    heldSurface: heldSurfaceReason ? {
+      reason: heldSurfaceReason,
+      ageMs: Math.max(0, performance.now() - lastLiveAt),
+      maxAgeMs: maxFrameAgeMs,
+      fluidAuthority: 'disabled',
+    } : null,
     requestedHandRoute: sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE,
     vertexCount: handGeometry.getAttribute('position')?.count || 0,
     faceCount: handGeometry.index ? handGeometry.index.count / 3 : 0,

@@ -1,5 +1,6 @@
 export const LIVE_HAND_ROUTE = 'native_wilor_mini_mlx_detector_sidecar_live' as const;
 export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v2' as const;
+export const LIVE_HAND_HYBRID_FALLBACK_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano/fallback' as const;
 export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_live' as const;
 export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_pose' as const;
 export const LIVE_HAND_HYBRID_GEOMETRY_MODE = 'native_mano_regeneration' as const;
@@ -82,7 +83,7 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   jointStepIntervalMs: number | null;
   jointStepLimitRad: number | null;
   maxJointStepAppliedRad: number | null;
-  jointStepPolicy: 'fixed_speed' | 'adaptive_confidence_residual_anchor_v1' | null;
+  jointStepPolicy: 'fixed_speed' | 'adaptive_confidence_residual_anchor_v2' | null;
   jointStepSpeedRadS: number | null;
   jointStepBaseLimitRad: number | null;
   adaptiveStepQuality: number | null;
@@ -140,6 +141,64 @@ export interface LiveHandLatencySummary {
 export type LiveHandEffectiveRoute = typeof LIVE_HAND_ROUTE | typeof LIVE_HAND_HYBRID_ROUTE;
 
 type RecordLike = Record<string, unknown>;
+
+const TRANSIENT_HYBRID_FALLBACK_REASONS = new Set([
+  'stale_fast_landmarks',
+  'low_fast_path_confidence',
+  'reanchor_step_trust_conflict',
+  'articulated_pose_fit_failed',
+  'articulated_fit_residual_too_large',
+]);
+
+export interface HeldHandSurfaceDecision {
+  hold: boolean;
+  ageMs: number;
+}
+
+export function transientHybridFallbackReason(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const state = value as RecordLike;
+  if (state.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER || state.status !== 'fallback') return null;
+  if (!state.frame || typeof state.frame !== 'object' || Array.isArray(state.frame)) return null;
+  const frame = state.frame as RecordLike;
+  if (!frame.source || typeof frame.source !== 'object' || Array.isArray(frame.source)) return null;
+  const source = frame.source as RecordLike;
+  if (
+    source.effectiveRoute !== LIVE_HAND_HYBRID_FALLBACK_ROUTE
+    || source.backend !== 'hybrid'
+    || source.rawSchema !== LIVE_HAND_FAST_LANDMARK_SCHEMA
+  ) {
+    return null;
+  }
+  if (!frame.diagnostics || typeof frame.diagnostics !== 'object' || Array.isArray(frame.diagnostics)) {
+    return null;
+  }
+  const diagnostics = frame.diagnostics as RecordLike;
+  if (diagnostics.fusionMode !== LIVE_HAND_HYBRID_FUSION_MODE) return null;
+  const reason = optionalText(diagnostics.fallbackState);
+  return reason && TRANSIENT_HYBRID_FALLBACK_REASONS.has(reason) ? reason : null;
+}
+
+export function decideHeldHandSurface(input: {
+  hasVisibleSurface: boolean;
+  lastTrustworthyAtMs: number;
+  nowMs: number;
+  maxAgeMs: number;
+}): HeldHandSurfaceDecision {
+  const ageMs = Math.max(0, input.nowMs - input.lastTrustworthyAtMs);
+  return {
+    hold: (
+      input.hasVisibleSurface
+      && Number.isFinite(input.lastTrustworthyAtMs)
+      && input.lastTrustworthyAtMs > 0
+      && Number.isFinite(input.nowMs)
+      && Number.isFinite(input.maxAgeMs)
+      && input.maxAgeMs >= 0
+      && ageMs <= input.maxAgeMs
+    ),
+    ageMs,
+  };
+}
 
 function record(value: unknown, label: string): RecordLike {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} is missing`);
@@ -354,7 +413,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     const rawJointStepPolicy = text(diagnostics.jointStepPolicy, 'jointStepPolicy');
     if (
       rawJointStepPolicy !== 'fixed_speed'
-      && rawJointStepPolicy !== 'adaptive_confidence_residual_anchor_v1'
+      && rawJointStepPolicy !== 'adaptive_confidence_residual_anchor_v2'
     ) {
       throw new Error(`unsupported jointStepPolicy: ${rawJointStepPolicy}`);
     }
