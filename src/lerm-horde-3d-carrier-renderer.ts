@@ -131,6 +131,37 @@ export interface ExactCarrierRenderer {
   effectiveRailId: typeof EXACT_3D_CARRIER_RAIL_ID;
 }
 
+export interface ExactCarrierLiveSource {
+  readonly state: LermHordeLiveRuntimeState;
+  readonly durationMs: number;
+  readonly completionElapsedMs: number;
+  readonly bodyVertexCount: number;
+  readonly bodySha256: typeof EXACT_3D_CARRIER_BODY_SHA256;
+  readonly registrationSha256:
+    typeof EXACT_3D_CARRIER_REGISTRATION_SHA256;
+  readonly railModuleSha256:
+    typeof EXACT_3D_CARRIER_RAIL_MODULE_SHA256;
+  readonly railHistorySha256:
+    typeof EXACT_3D_CARRIER_RAIL_HISTORY_SHA256;
+  readonly effectiveRailId: typeof EXACT_3D_CARRIER_RAIL_ID;
+  advanceTo(elapsedMs: number): LermHordeLiveRuntimeState;
+  reset(): LermHordeLiveRuntimeState;
+  currentActorFrame(): ReturnType<
+    typeof createLermHordePrimaryViewerActorFrame
+  >;
+  evaluateBodyPositions(
+    actorFrame: ReturnType<
+      typeof createLermHordePrimaryViewerActorFrame
+    >,
+  ): Float32Array | null;
+  createRuntimeReceipt(): LermHordeLiveRuntimeReceipt;
+}
+
+interface ExactCarrierLiveSourceInternal
+  extends ExactCarrierLiveSource {
+  geometry: THREE.BufferGeometry;
+}
+
 export interface ExactCarrierLiveRuntimeReceipt {
   schema: 'lerms.horde-live-runtime-renderer.v0';
   status: {
@@ -168,9 +199,257 @@ export interface ExactCarrierLiveRuntimeReceipt {
   runtime: LermHordeLiveRuntimeReceipt;
 }
 
+export async function createExactCarrierLiveSource(): Promise<ExactCarrierLiveSource> {
+  return loadExactCarrierLiveSource();
+}
+
 export async function createExactCarrierRenderer(
   stage: HTMLElement,
 ): Promise<ExactCarrierRenderer> {
+  const source = await loadExactCarrierLiveSource();
+  const {
+    geometry,
+    bodySha256,
+    registrationSha256,
+    railModuleSha256,
+    railHistorySha256,
+  } = source;
+  const firstTerrain = source.state.terrainBuffer;
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'stage__renderer';
+  canvas.dataset.exactCarrier = '719024';
+  canvas.dataset.rendererId = FULL_HILL_RENDERER_ID;
+  canvas.dataset.fullHill = 'true';
+  canvas.setAttribute(
+    'aria-label',
+    'Full Hill of Hills and exact 719024 carrier in one 3D renderer',
+  );
+  stage.prepend(canvas);
+
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    alpha: false,
+    antialias: true,
+    preserveDrawingBuffer: true,
+  });
+  renderer.setClearColor(0x06100d, 1);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x06100d);
+  scene.fog = new THREE.Fog(0x06100d, 20, 34);
+  const camera = new THREE.OrthographicCamera(
+    -VIEW_EXTENT,
+    VIEW_EXTENT,
+    VIEW_EXTENT,
+    -VIEW_EXTENT,
+    0.1,
+    80,
+  );
+  camera.position.set(12, 10, -15);
+  camera.lookAt(0, 0.4, 0);
+
+  const terrainGeometry = createHillTerrainGeometry(firstTerrain);
+  const terrainMaterial = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.82,
+    metalness: 0,
+    side: THREE.DoubleSide,
+    depthTest: true,
+    depthWrite: true,
+  });
+  const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
+  terrainMesh.name = 'full-hill-terrain';
+  terrainMesh.frustumCulled = false;
+  terrainMesh.renderOrder = 0;
+  scene.add(terrainMesh);
+
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0xd82938,
+    roughness: 0.62,
+    metalness: 0.02,
+    side: THREE.DoubleSide,
+    depthTest: true,
+    depthWrite: true,
+  });
+  const bodyMesh = new THREE.Mesh(geometry, bodyMaterial);
+  bodyMesh.name = 'exact-719024-carrier';
+  bodyMesh.frustumCulled = false;
+  bodyMesh.renderOrder = 1;
+  scene.add(bodyMesh);
+  scene.add(new THREE.HemisphereLight(0xfff0c2, 0x183228, 2.1));
+  const key = new THREE.DirectionalLight(0xffd88e, 3.2);
+  key.position.set(-4, 8, 14);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x78b7ff, 2.1);
+  rim.position.set(8, -2, 8);
+  scene.add(rim);
+
+  let lastTickCount = -1;
+  const renderState = (state: LermHordeLiveRuntimeState): void => {
+    const terrainBuffer = state.terrainBuffer;
+    const actorFrame = source.currentActorFrame();
+    updateHillTerrainGeometry(terrainGeometry, terrainBuffer);
+    const positions = source.evaluateBodyPositions(actorFrame);
+    if (positions) {
+      const attribute = geometry.getAttribute('position') as THREE.BufferAttribute;
+      attribute.copyArray(positions);
+      attribute.needsUpdate = true;
+      if (lastTickCount !== state.tickCount) {
+        geometry.computeVertexNormals();
+      }
+      bodyMesh.visible = true;
+    } else {
+      bodyMesh.visible = false;
+    }
+    canvas.dataset.elapsedMs = state.elapsedMs.toFixed(3);
+    canvas.dataset.frameIndex = String(state.tickCount);
+    canvas.dataset.frameKind = state.phase;
+    canvas.dataset.runtimeRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
+    canvas.dataset.actorFrameRoute =
+      actorFrame.route.effective;
+    canvas.dataset.admittedIntervalCount = String(
+      state.admittedIntervalCount,
+    );
+    canvas.dataset.sourceDistance =
+      state.body?.sourceDistance.toFixed(9) ?? '';
+    canvas.dataset.progress = state.body?.progress.toFixed(9) ?? '1';
+    canvas.dataset.terrainSampleChecksum = terrainBuffer.sampleChecksum;
+    canvas.dataset.terrainTopologyChecksum = terrainBuffer.topologyChecksum;
+    canvas.dataset.trafficChecksum =
+      terrainBuffer.witness.producerTrafficFieldChecksum;
+    renderer.render(scene, camera);
+    lastTickCount = state.tickCount;
+  };
+
+  const resize = (): void => {
+    const width = Math.max(1, Math.round(stage.clientWidth));
+    const height = Math.max(1, Math.round(stage.clientHeight));
+    renderer.setSize(width, height, false);
+    const aspect = width / height;
+    if (aspect >= 1) {
+      camera.left = -VIEW_EXTENT * aspect;
+      camera.right = VIEW_EXTENT * aspect;
+      camera.top = VIEW_EXTENT;
+      camera.bottom = -VIEW_EXTENT;
+    } else {
+      camera.left = -VIEW_EXTENT;
+      camera.right = VIEW_EXTENT;
+      camera.top = VIEW_EXTENT / aspect;
+      camera.bottom = -VIEW_EXTENT / aspect;
+    }
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+  };
+  resize();
+  new ResizeObserver(resize).observe(stage);
+  const depthBits = renderer
+    .getContext()
+    .getParameter(renderer.getContext().DEPTH_BITS) as number;
+  const terrainTriangleCount =
+    (firstTerrain.gridResolution.x - 1) *
+    (firstTerrain.gridResolution.z - 1) *
+    2;
+
+  const createReceipt = (
+    operatorPlayCount: number,
+  ): ExactCarrierLiveRuntimeReceipt => {
+    const canvasCount = stage.querySelectorAll('canvas').length;
+    const visibleSvgCount = [...stage.querySelectorAll('svg')].filter(
+      (svg) =>
+        !svg.hasAttribute('hidden') && getComputedStyle(svg).display !== 'none',
+    ).length;
+    if (
+      canvasCount !== 1 ||
+      visibleSvgCount !== 0 ||
+      operatorPlayCount !== 1 ||
+      source.state.phase !== 'departed'
+    ) {
+      throw new Error(
+        'live runtime completion cannot close with split presentation, autoplay, or a visible body',
+      );
+    }
+    return {
+      schema: 'lerms.horde-live-runtime-renderer.v0',
+      status: {
+        ok: true,
+        phase: 'complete',
+        fallbackStatus: 'none',
+        staleStatus: 'fresh',
+        failurePhase: null,
+      },
+      renderer: {
+        requested: FULL_HILL_RENDERER_ID,
+        effective: FULL_HILL_RENDERER_ID,
+        canvasCount,
+        sceneCount: 1,
+        cameraCount: 1,
+        depthBufferCount: 1,
+        depthBits,
+        visibleSvgCount,
+        terrainTextureSubstitution: false,
+      },
+      carrier: {
+        identity: '719024',
+        bodySha256: EXACT_3D_CARRIER_BODY_SHA256,
+        railRevision: EXACT_3D_CARRIER_RAIL_REVISION,
+        railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
+        railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
+        railId: EXACT_3D_CARRIER_RAIL_ID,
+        departed: true,
+      },
+      playback: {
+        initialState: 'paused',
+        operatorPlayCount,
+        autoplayObserved: false,
+      },
+      runtime: source.createRuntimeReceipt(),
+    };
+  };
+
+  stage.dataset.carrierAssetSha256 = bodySha256;
+  stage.dataset.carrierRegistrationSha256 = registrationSha256;
+  stage.dataset.railModuleSha256 = railModuleSha256;
+  stage.dataset.railHistorySha256 = railHistorySha256;
+  stage.dataset.effectiveRailId = EXACT_3D_CARRIER_RAIL_ID;
+  stage.dataset.terrainSampleCount = String(firstTerrain.sampleCount);
+  stage.dataset.terrainTriangleCount = String(terrainTriangleCount);
+
+  renderState(source.state);
+  return {
+    get state() {
+      return source.state;
+    },
+    durationMs: source.durationMs,
+    completionElapsedMs: source.completionElapsedMs,
+    advanceTo(elapsedMs) {
+      const state = source.advanceTo(elapsedMs);
+      renderState(state);
+      return state;
+    },
+    reset() {
+      const state = source.reset();
+      lastTickCount = -1;
+      renderState(state);
+      return state;
+    },
+    resize,
+    createReceipt,
+    bodyVertexCount: source.bodyVertexCount,
+    terrainSampleCount: firstTerrain.sampleCount,
+    terrainTriangleCount,
+    depthBits,
+    rendererId: FULL_HILL_RENDERER_ID,
+    effectiveEvaluatorRoute: EXACT_3D_CARRIER_EVALUATOR_ROUTE,
+    railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
+    railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
+    effectiveRailId: EXACT_3D_CARRIER_RAIL_ID,
+  };
+}
+
+async function loadExactCarrierLiveSource(): Promise<ExactCarrierLiveSourceInternal> {
   const [
     bodyResponse,
     registrationResponse,
@@ -282,216 +561,6 @@ export async function createExactCarrierRenderer(
       hillRevision: LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
     });
   let runtime = createRuntime();
-  const firstTerrain = runtime.state.terrainBuffer;
-
-  const canvas = document.createElement('canvas');
-  canvas.className = 'stage__renderer';
-  canvas.dataset.exactCarrier = '719024';
-  canvas.dataset.rendererId = FULL_HILL_RENDERER_ID;
-  canvas.dataset.fullHill = 'true';
-  canvas.setAttribute(
-    'aria-label',
-    'Full Hill of Hills and exact 719024 carrier in one 3D renderer',
-  );
-  stage.prepend(canvas);
-
-  const renderer = new THREE.WebGLRenderer({
-    canvas,
-    alpha: false,
-    antialias: true,
-    preserveDrawingBuffer: true,
-  });
-  renderer.setClearColor(0x06100d, 1);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x06100d);
-  scene.fog = new THREE.Fog(0x06100d, 20, 34);
-  const camera = new THREE.OrthographicCamera(
-    -VIEW_EXTENT,
-    VIEW_EXTENT,
-    VIEW_EXTENT,
-    -VIEW_EXTENT,
-    0.1,
-    80,
-  );
-  camera.position.set(12, 10, -15);
-  camera.lookAt(0, 0.4, 0);
-
-  const terrainGeometry = createHillTerrainGeometry(firstTerrain);
-  const terrainMaterial = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.82,
-    metalness: 0,
-    side: THREE.DoubleSide,
-    depthTest: true,
-    depthWrite: true,
-  });
-  const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
-  terrainMesh.name = 'full-hill-terrain';
-  terrainMesh.frustumCulled = false;
-  terrainMesh.renderOrder = 0;
-  scene.add(terrainMesh);
-
-  const bodyMaterial = new THREE.MeshStandardMaterial({
-    color: 0xd82938,
-    roughness: 0.62,
-    metalness: 0.02,
-    side: THREE.DoubleSide,
-    depthTest: true,
-    depthWrite: true,
-  });
-  const bodyMesh = new THREE.Mesh(geometry, bodyMaterial);
-  bodyMesh.name = 'exact-719024-carrier';
-  bodyMesh.frustumCulled = false;
-  bodyMesh.renderOrder = 1;
-  scene.add(bodyMesh);
-  scene.add(new THREE.HemisphereLight(0xfff0c2, 0x183228, 2.1));
-  const key = new THREE.DirectionalLight(0xffd88e, 3.2);
-  key.position.set(-4, 8, 14);
-  scene.add(key);
-  const rim = new THREE.DirectionalLight(0x78b7ff, 2.1);
-  rim.position.set(8, -2, 8);
-  scene.add(rim);
-
-  let lastTickCount = -1;
-  const renderState = (state: LermHordeLiveRuntimeState): void => {
-    const terrainBuffer = state.terrainBuffer;
-    const actorFrame =
-      createLermHordePrimaryViewerActorFrame(state);
-    updateHillTerrainGeometry(terrainGeometry, terrainBuffer);
-    if (actorFrame.pose) {
-      const positions = evaluateSmoothFittedPhase(
-        binding,
-        actorFrame.pose.motionPhase,
-        actorFrame.pose.rootFrame,
-        actorFrame.identity.fittedMotion.amplitude,
-      );
-      const attribute = geometry.getAttribute('position') as THREE.BufferAttribute;
-      attribute.copyArray(positions);
-      attribute.needsUpdate = true;
-      if (lastTickCount !== state.tickCount) {
-        geometry.computeVertexNormals();
-      }
-      bodyMesh.visible = true;
-    } else {
-      bodyMesh.visible = false;
-    }
-    canvas.dataset.elapsedMs = state.elapsedMs.toFixed(3);
-    canvas.dataset.frameIndex = String(state.tickCount);
-    canvas.dataset.frameKind = state.phase;
-    canvas.dataset.runtimeRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
-    canvas.dataset.actorFrameRoute =
-      actorFrame.route.effective;
-    canvas.dataset.admittedIntervalCount = String(
-      state.admittedIntervalCount,
-    );
-    canvas.dataset.sourceDistance =
-      state.body?.sourceDistance.toFixed(9) ?? '';
-    canvas.dataset.progress = state.body?.progress.toFixed(9) ?? '1';
-    canvas.dataset.terrainSampleChecksum = terrainBuffer.sampleChecksum;
-    canvas.dataset.terrainTopologyChecksum = terrainBuffer.topologyChecksum;
-    canvas.dataset.trafficChecksum =
-      terrainBuffer.witness.producerTrafficFieldChecksum;
-    renderer.render(scene, camera);
-    lastTickCount = state.tickCount;
-  };
-
-  const resize = (): void => {
-    const width = Math.max(1, Math.round(stage.clientWidth));
-    const height = Math.max(1, Math.round(stage.clientHeight));
-    renderer.setSize(width, height, false);
-    const aspect = width / height;
-    if (aspect >= 1) {
-      camera.left = -VIEW_EXTENT * aspect;
-      camera.right = VIEW_EXTENT * aspect;
-      camera.top = VIEW_EXTENT;
-      camera.bottom = -VIEW_EXTENT;
-    } else {
-      camera.left = -VIEW_EXTENT;
-      camera.right = VIEW_EXTENT;
-      camera.top = VIEW_EXTENT / aspect;
-      camera.bottom = -VIEW_EXTENT / aspect;
-    }
-    camera.updateProjectionMatrix();
-    renderer.render(scene, camera);
-  };
-  resize();
-  new ResizeObserver(resize).observe(stage);
-  const depthBits = renderer
-    .getContext()
-    .getParameter(renderer.getContext().DEPTH_BITS) as number;
-  const terrainTriangleCount =
-    (firstTerrain.gridResolution.x - 1) *
-    (firstTerrain.gridResolution.z - 1) *
-    2;
-
-  const createReceipt = (
-    operatorPlayCount: number,
-  ): ExactCarrierLiveRuntimeReceipt => {
-    const canvasCount = stage.querySelectorAll('canvas').length;
-    const visibleSvgCount = [...stage.querySelectorAll('svg')].filter(
-      (svg) =>
-        !svg.hasAttribute('hidden') && getComputedStyle(svg).display !== 'none',
-    ).length;
-    if (
-      canvasCount !== 1 ||
-      visibleSvgCount !== 0 ||
-      operatorPlayCount !== 1 ||
-      runtime.state.phase !== 'departed'
-    ) {
-      throw new Error(
-        'live runtime completion cannot close with split presentation, autoplay, or a visible body',
-      );
-    }
-    return {
-      schema: 'lerms.horde-live-runtime-renderer.v0',
-      status: {
-        ok: true,
-        phase: 'complete',
-        fallbackStatus: 'none',
-        staleStatus: 'fresh',
-        failurePhase: null,
-      },
-      renderer: {
-        requested: FULL_HILL_RENDERER_ID,
-        effective: FULL_HILL_RENDERER_ID,
-        canvasCount,
-        sceneCount: 1,
-        cameraCount: 1,
-        depthBufferCount: 1,
-        depthBits,
-        visibleSvgCount,
-        terrainTextureSubstitution: false,
-      },
-      carrier: {
-        identity: '719024',
-        bodySha256: EXACT_3D_CARRIER_BODY_SHA256,
-        railRevision: EXACT_3D_CARRIER_RAIL_REVISION,
-        railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
-        railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
-        railId: EXACT_3D_CARRIER_RAIL_ID,
-        departed: true,
-      },
-      playback: {
-        initialState: 'paused',
-        operatorPlayCount,
-        autoplayObserved: false,
-      },
-      runtime: runtime.createReceipt(),
-    };
-  };
-
-  stage.dataset.carrierAssetSha256 = bodySha256;
-  stage.dataset.carrierRegistrationSha256 = registrationSha256;
-  stage.dataset.railModuleSha256 = railModuleSha256;
-  stage.dataset.railHistorySha256 = railHistorySha256;
-  stage.dataset.effectiveRailId = EXACT_3D_CARRIER_RAIL_ID;
-  stage.dataset.terrainSampleCount = String(firstTerrain.sampleCount);
-  stage.dataset.terrainTriangleCount = String(terrainTriangleCount);
-
-  renderState(runtime.state);
   const durationMs = producerReceipt.historySummary.lastTimestampMs;
   const completionElapsedMs = durationMs + 900;
   return {
@@ -501,27 +570,51 @@ export async function createExactCarrierRenderer(
     durationMs,
     completionElapsedMs,
     advanceTo(elapsedMs) {
-      const state = runtime.advanceTo(elapsedMs);
-      renderState(state);
-      return state;
+      return runtime.advanceTo(elapsedMs);
     },
     reset() {
       runtime = createRuntime();
-      lastTickCount = -1;
-      renderState(runtime.state);
       return runtime.state;
     },
-    resize,
-    createReceipt,
+    currentActorFrame() {
+      return createLermHordePrimaryViewerActorFrame(runtime.state);
+    },
+    evaluateBodyPositions(actorFrame) {
+      const current =
+        createLermHordePrimaryViewerActorFrame(runtime.state);
+      if (
+        actorFrame.lifecycle.tickCount !==
+          current.lifecycle.tickCount ||
+        actorFrame.lifecycle.elapsedMs !==
+          current.lifecycle.elapsedMs ||
+        actorFrame.terrain.frameId !== current.terrain.frameId ||
+        actorFrame.terrain.sampleChecksum !==
+          current.terrain.sampleChecksum ||
+        actorFrame.terrain.topologyChecksum !==
+          current.terrain.topologyChecksum
+      ) {
+        throw new Error(
+          'exact carrier evaluator received a stale primary-viewer actor frame',
+        );
+      }
+      if (!actorFrame.pose) return null;
+      return evaluateSmoothFittedPhase(
+        binding,
+        actorFrame.pose.motionPhase,
+        actorFrame.pose.rootFrame,
+        actorFrame.identity.fittedMotion.amplitude,
+      );
+    },
+    createRuntimeReceipt() {
+      return runtime.createReceipt();
+    },
     bodyVertexCount: binding.vertexCount,
-    terrainSampleCount: firstTerrain.sampleCount,
-    terrainTriangleCount,
-    depthBits,
-    rendererId: FULL_HILL_RENDERER_ID,
-    effectiveEvaluatorRoute: EXACT_3D_CARRIER_EVALUATOR_ROUTE,
+    bodySha256: EXACT_3D_CARRIER_BODY_SHA256,
+    registrationSha256: EXACT_3D_CARRIER_REGISTRATION_SHA256,
     railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
     railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
     effectiveRailId: EXACT_3D_CARRIER_RAIL_ID,
+    geometry,
   };
 }
 

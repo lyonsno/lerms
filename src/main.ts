@@ -110,6 +110,14 @@ import {
   type HillPrimaryViewerActorFrameTarget,
   type HillPrimaryViewerActorHostReceipt
 } from './terrain/hill-primary-viewer-actor-host.js';
+import {
+  LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
+  LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE,
+  isLermHordePrimaryViewerRequested,
+  loadLermHordePrimaryViewerLiveComposition,
+  type LermHordePrimaryViewerLiveComposition,
+  type LermHordePrimaryViewerLiveCompositionReceipt
+} from './lerm-horde-primary-viewer-live-composition.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -261,40 +269,72 @@ let latestWorkerDurationMs = 0;
 let latestWorkerError = 'none';
 let latestGrowthPlacementSummary = 'placement none';
 let latestActorHostReceipt: HillPrimaryViewerActorHostReceipt | undefined;
+let latestLermHordeCompositionReceipt:
+  | LermHordePrimaryViewerLiveCompositionReceipt
+  | undefined;
+const lermHordePrimaryViewerRequested =
+  isLermHordePrimaryViewerRequested(window.location.search);
+let lermHordePrimaryViewerComposition:
+  | LermHordePrimaryViewerLiveComposition
+  | undefined;
+let lermHordePrimaryViewerStatus = lermHordePrimaryViewerRequested
+  ? 'loading'
+  : 'not-requested';
+let lermHordePrimaryViewerError = 'none';
 
-try {
-  workerTerrain = new Worker(new URL('./terrain/hill-of-hills.worker.ts', import.meta.url), { type: 'module' });
-  workerStatus = 'worker-started';
-  workerTerrain.onmessage = (event: MessageEvent<HillTerrainWorkerResponse>) => {
-    const response = event.data;
-    if (response.requestId !== latestTerrainRequestId) {
-      workerStatus = `stale-response-${response.requestId}`;
-      latestWorkerError = 'stale-response';
-      return;
-    }
-    if (!response.ok) {
-      workerStatus = 'worker-failed-sync-fallback';
-      latestWorkerError = response.error.message;
+if (lermHordePrimaryViewerRequested) {
+  workerStatus = 'horde-live-source-loading';
+  void loadLermHordePrimaryViewerLiveComposition()
+    .then((composition) => {
+      hillPrimaryViewerActorHost.register(composition.layer);
+      lermHordePrimaryViewerComposition = composition;
+      terrainBuffer = composition.state.terrainBuffer;
+      lermHordePrimaryViewerStatus = 'live';
+      workerStatus = 'horde-live-source';
+    })
+    .catch((error) => {
+      lermHordePrimaryViewerStatus = 'failed';
+      lermHordePrimaryViewerError =
+        error instanceof Error ? error.message : String(error);
+      latestWorkerError = lermHordePrimaryViewerError;
+      workerStatus = 'horde-live-source-failed';
+      console.error('primary-viewer Lerm Horde composition failed', error);
+    });
+} else {
+  try {
+    workerTerrain = new Worker(new URL('./terrain/hill-of-hills.worker.ts', import.meta.url), { type: 'module' });
+    workerStatus = 'worker-started';
+    workerTerrain.onmessage = (event: MessageEvent<HillTerrainWorkerResponse>) => {
+      const response = event.data;
+      if (response.requestId !== latestTerrainRequestId) {
+        workerStatus = `stale-response-${response.requestId}`;
+        latestWorkerError = 'stale-response';
+        return;
+      }
+      if (!response.ok) {
+        workerStatus = 'worker-failed-sync-fallback';
+        latestWorkerError = response.error.message;
+        pendingTerrainRequestId = 0;
+        workerTerrain = undefined;
+        return;
+      }
+      terrainBuffer = response.terrainBuffer;
+      latestWorkerDurationMs = response.durationMs;
+      latestWorkerError = 'none';
       pendingTerrainRequestId = 0;
+      workerStatus = 'worker-live';
+      flushQueuedTerrainRequest();
+    };
+    workerTerrain.onerror = (event) => {
+      workerStatus = 'worker-error-sync-fallback';
+      latestWorkerError = event.message || 'worker error';
       workerTerrain = undefined;
-      return;
-    }
-    terrainBuffer = response.terrainBuffer;
-    latestWorkerDurationMs = response.durationMs;
-    latestWorkerError = 'none';
-    pendingTerrainRequestId = 0;
-    workerStatus = 'worker-live';
-    flushQueuedTerrainRequest();
-  };
-  workerTerrain.onerror = (event) => {
-    workerStatus = 'worker-error-sync-fallback';
-    latestWorkerError = event.message || 'worker error';
+    };
+  } catch (error) {
+    workerStatus = 'worker-unavailable-sync-fallback';
+    latestWorkerError = error instanceof Error ? error.message : String(error);
     workerTerrain = undefined;
-  };
-} catch (error) {
-  workerStatus = 'worker-unavailable-sync-fallback';
-  latestWorkerError = error instanceof Error ? error.message : String(error);
-  workerTerrain = undefined;
+  }
 }
 
 interface ViewState {
@@ -491,12 +531,17 @@ function render(timestampMs: number): void {
     params.topologyPhaseIntensity > 0
       ? params.topologyPhaseTimeMs + motionTimestampMs * 0.3
       : params.topologyPhaseTimeMs;
-  requestTerrain({
-    ...params,
-    ditchPhaseTimeMs,
-    trailPhaseTimeMs,
-    topologyPhaseTimeMs
-  });
+  if (lermHordePrimaryViewerComposition) {
+    terrainBuffer =
+      lermHordePrimaryViewerComposition.advance(timestampMs).terrainBuffer;
+  } else if (!lermHordePrimaryViewerRequested) {
+    requestTerrain({
+      ...params,
+      ditchPhaseTimeMs,
+      trailPhaseTimeMs,
+      topologyPhaseTimeMs
+    });
+  }
 
   ctx.fillStyle = '#06100d';
   ctx.fillRect(0, 0, width, height);
@@ -531,6 +576,9 @@ function render(timestampMs: number): void {
         height
       )
   });
+  latestLermHordeCompositionReceipt =
+    lermHordePrimaryViewerComposition?.receipt();
+  publishLermHordePrimaryViewerState();
   if (previewSettings.mode !== 'neutral_geometry' && previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
@@ -2066,9 +2114,117 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `pressure: ${pressureFieldWitnessSummary(witness)}`,
     `actor host: ${latestActorHostReceipt?.route.effective ?? HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE} layers ${latestActorHostReceipt?.drawnLayerCount ?? 0}/${latestActorHostReceipt?.registeredLayerCount ?? 0}`,
     `actor routes: ${latestActorHostReceipt?.effectiveActorRoutes.join(',') || 'none'}`,
+    `Horde composition: ${lermHordePrimaryViewerStatus} ${latestLermHordeCompositionReceipt?.route.effective ?? 'none'}`,
+    `Horde actor: ${latestLermHordeCompositionReceipt?.route.actor ?? 'none'} ${latestLermHordeCompositionReceipt?.lifecycle.phase ?? 'absent'}`,
+    `Horde error: ${lermHordePrimaryViewerError}`,
     latestGrowthPlacementSummary,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
+}
+
+interface LermHordePrimaryViewerWindowState {
+  requested: {
+    queryValue: typeof LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE;
+    compositionRoute: typeof LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE;
+  } | null;
+  status: string;
+  error: string;
+  effective: {
+    composition: string;
+    viewer: string;
+    actor: string;
+    fallbackStatus: string;
+    staleStatus: string;
+  } | null;
+  lifecycle: {
+    phase: string;
+    visible: boolean;
+    elapsedMs: number;
+    completionElapsedMs: number;
+    settledAfterDeparture: boolean;
+  } | null;
+  terrain: {
+    frameId: string;
+    sampleChecksum: string;
+    topologyChecksum: string;
+    trafficChecksum: string;
+  } | null;
+  host: HillPrimaryViewerActorHostReceipt | null;
+  view: {
+    yaw: number;
+    tilt: number;
+    zoom: number;
+    panX: number;
+    panY: number;
+  };
+}
+
+function publishLermHordePrimaryViewerState(): void {
+  const receipt = latestLermHordeCompositionReceipt;
+  const state: LermHordePrimaryViewerWindowState = {
+    requested: lermHordePrimaryViewerRequested
+      ? {
+          queryValue: LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE,
+          compositionRoute:
+            LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE
+        }
+      : null,
+    status: lermHordePrimaryViewerStatus,
+    error: lermHordePrimaryViewerError,
+    effective: receipt
+      ? {
+          composition: receipt.route.effective,
+          viewer: receipt.route.viewer,
+          actor: receipt.route.actor,
+          fallbackStatus: receipt.route.fallbackStatus,
+          staleStatus: receipt.route.staleStatus
+        }
+      : null,
+    lifecycle: receipt
+      ? {
+          phase: receipt.lifecycle.phase,
+          visible: receipt.lifecycle.visible,
+          elapsedMs: receipt.clock.elapsedMs,
+          completionElapsedMs: receipt.clock.completionElapsedMs,
+          settledAfterDeparture: receipt.clock.settledAfterDeparture
+        }
+      : null,
+    terrain: receipt ? { ...receipt.terrain } : null,
+    host: latestActorHostReceipt
+      ? {
+          ...latestActorHostReceipt,
+          route: { ...latestActorHostReceipt.route },
+          terrain: { ...latestActorHostReceipt.terrain },
+          effectiveActorRoutes: [
+            ...latestActorHostReceipt.effectiveActorRoutes
+          ]
+        }
+      : null,
+    view: {
+      yaw: viewState.yaw,
+      tilt: viewState.tilt,
+      zoom: viewState.zoom,
+      panX: viewState.panX,
+      panY: viewState.panY
+    }
+  };
+  (
+    window as Window & {
+      __lermHordePrimaryViewer?: LermHordePrimaryViewerWindowState;
+    }
+  ).__lermHordePrimaryViewer = state;
+  appCanvas.dataset.primaryViewerRoute =
+    HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE;
+  appCanvas.dataset.lermHordeCompositionStatus =
+    lermHordePrimaryViewerStatus;
+  appCanvas.dataset.lermHordeCompositionRoute =
+    receipt?.route.effective ?? '';
+  appCanvas.dataset.lermHordeActorRoute =
+    receipt?.route.actor ?? '';
+  appCanvas.dataset.lermHordeActorPhase =
+    receipt?.lifecycle.phase ?? '';
+  appCanvas.dataset.lermHordeTerrainFrame =
+    receipt?.terrain.frameId ?? '';
 }
 
 function pressureFieldWitnessSummary(witness: HillOfHillsTerrainBuffer['witness']): string {
