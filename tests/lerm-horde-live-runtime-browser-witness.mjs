@@ -15,6 +15,8 @@ import { resolve } from 'node:path';
 
 const EXPECTED_ROUTE =
   'lerms/lerm-horde/live-runtime-composition-v0';
+const EXPECTED_ACTOR_FRAME_ROUTE =
+  'lerms/lerm-horde/primary-viewer-actor-frame-v0';
 const EXPECTED_RENDERER = 'three-webgl-full-hill-v0';
 const EXPECTED_RENDERER_RECEIPT =
   'lerms.horde-live-runtime-renderer.v0';
@@ -137,6 +139,9 @@ async function runWitness() {
         requestedRenderer: data.requestedRenderer ?? null,
         effectiveRenderer: data.effectiveRenderer ?? null,
         sourceStatus: data.sourceStatus ?? null,
+        actorFrameRoute:
+          document.querySelector('canvas[data-exact-carrier]')
+            ?.dataset.actorFrameRoute ?? null,
         runtimeSchema: data.liveRuntimeSchema ?? null,
         terrainSchema: data.terrainBufferSchema ?? null,
         terrainSampleCount: Number(data.terrainSampleCount),
@@ -162,6 +167,11 @@ async function runWitness() {
     );
     assert.equal(identity.requestedRoute, EXPECTED_ROUTE);
     assert.equal(identity.effectiveRoute, EXPECTED_ROUTE);
+    assert.equal(
+      identity.actorFrameRoute,
+      EXPECTED_ACTOR_FRAME_ROUTE,
+      'effective primary-viewer actor frame was missing or substituted',
+    );
     assert.equal(identity.requestedPresentation, options.mode);
     assert.equal(identity.effectivePresentation, options.mode);
     assert.equal(identity.requestedRenderer, EXPECTED_RENDERER);

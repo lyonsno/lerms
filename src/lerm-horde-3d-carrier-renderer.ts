@@ -29,6 +29,9 @@ import {
   LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
 } from './lerm-horde-live-body-motion.js';
 import {
+  createLermHordePrimaryViewerActorFrame,
+} from './lerm-horde-primary-viewer-actor-frame.js';
+import {
   LERM_HORDE_LIVE_RUNTIME_ROUTE,
   createLermHordeLiveRuntime,
   type LermHordeLiveRailSample,
@@ -355,14 +358,15 @@ export async function createExactCarrierRenderer(
   let lastTickCount = -1;
   const renderState = (state: LermHordeLiveRuntimeState): void => {
     const terrainBuffer = state.terrainBuffer;
+    const actorFrame =
+      createLermHordePrimaryViewerActorFrame(state);
     updateHillTerrainGeometry(terrainGeometry, terrainBuffer);
-    if (state.body) {
-      const rootFrame = liveBodyRootFrame(state.body);
+    if (actorFrame.pose) {
       const positions = evaluateSmoothFittedPhase(
         binding,
-        state.body.progress,
-        rootFrame,
-        0.18,
+        actorFrame.pose.motionPhase,
+        actorFrame.pose.rootFrame,
+        actorFrame.identity.fittedMotion.amplitude,
       );
       const attribute = geometry.getAttribute('position') as THREE.BufferAttribute;
       attribute.copyArray(positions);
@@ -378,6 +382,8 @@ export async function createExactCarrierRenderer(
     canvas.dataset.frameIndex = String(state.tickCount);
     canvas.dataset.frameKind = state.phase;
     canvas.dataset.runtimeRoute = LERM_HORDE_LIVE_RUNTIME_ROUTE;
+    canvas.dataset.actorFrameRoute =
+      actorFrame.route.effective;
     canvas.dataset.admittedIntervalCount = String(
       state.admittedIntervalCount,
     );
@@ -516,27 +522,6 @@ export async function createExactCarrierRenderer(
     railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
     railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
     effectiveRailId: EXACT_3D_CARRIER_RAIL_ID,
-  };
-}
-
-function liveBodyRootFrame(
-  body: LermHordeLiveRuntimeState['body'] & {},
-): CreatureRootFrame {
-  const [originX, originY, originZ] = body.rootWorld;
-  const [rightX, rightY, rightZ] = body.locomotionFrame.right;
-  const [upX, upY, upZ] = body.locomotionFrame.up;
-  const [forwardX, forwardY, forwardZ] =
-    body.locomotionFrame.forward;
-  return {
-    schema: 'kaminos.creature-root-frame.v0',
-    origin: { x: originX, y: originY, z: originZ },
-    lateral: { x: rightX, y: rightY, z: rightZ },
-    normal: { x: upX, y: upY, z: upZ },
-    tangent: {
-      x: -forwardX,
-      y: -forwardY,
-      z: -forwardZ,
-    },
   };
 }
 

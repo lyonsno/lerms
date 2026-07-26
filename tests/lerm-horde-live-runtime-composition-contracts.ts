@@ -5,6 +5,11 @@ import { pathToFileURL } from 'node:url';
 
 import type { LermHordeProducerHistoryCompositionReceipt } from '../src/lerm-horde-producer-history-composition.js';
 import {
+  LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
+  LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA,
+  createLermHordePrimaryViewerActorFrame,
+} from '../src/lerm-horde-primary-viewer-actor-frame.js';
+import {
   HILL_OF_HILLS_TERRAIN_BUFFER_SCHEMA,
 } from '../src/terrain/hill-of-hills.js';
 import {
@@ -39,6 +44,45 @@ assert.equal(initial.terrainBuffer.sampleCount, 2_880);
 assert.equal(initial.body?.sourceDistance, 0);
 assert.equal(initial.body?.progress, 0);
 assert.equal(initial.body?.support.provenance.hillSourceId, initial.terrain.source.frameId);
+const initialActorFrame = createLermHordePrimaryViewerActorFrame(initial);
+assert.equal(
+  initialActorFrame.schema,
+  LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA,
+);
+assert.equal(
+  initialActorFrame.route.requested,
+  LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
+);
+assert.equal(
+  initialActorFrame.route.effective,
+  LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
+);
+assert.equal(initialActorFrame.route.fallbackStatus, 'none');
+assert.equal(initialActorFrame.route.staleStatus, 'fresh');
+assert.equal(initialActorFrame.identity.carrierId, '719024');
+assert.equal(
+  initialActorFrame.identity.speciesAuthority,
+  'non-lerm-engineering-carrier',
+);
+assert.equal(initialActorFrame.lifecycle.visible, true);
+assert.equal(initialActorFrame.lifecycle.phase, 'traversing');
+assert.equal(initialActorFrame.pose?.motionPhase, 0);
+assert.deepEqual(initialActorFrame.pose?.rootFrame.origin, {
+  x: initial.body?.rootWorld[0],
+  y: initial.body?.rootWorld[1],
+  z: initial.body?.rootWorld[2],
+});
+assert.equal(
+  initialActorFrame.terrain.frameId,
+  initial.terrainBuffer.source.frameId,
+);
+assert.equal(
+  initialActorFrame.terrain.sampleChecksum,
+  initial.terrainBuffer.sampleChecksum,
+);
+assert.equal('camera' in initialActorFrame, false);
+assert.equal('renderer' in initialActorFrame, false);
+assert.equal('view' in initialActorFrame, false);
 
 const first = runtime.advanceTo(40);
 assert.equal(first.phase, 'traversing');
@@ -87,6 +131,19 @@ assert.equal(
   middle.admittedEpisodeIds.length,
   middle.admittedIntervalCount,
 );
+const middleActorFrame = createLermHordePrimaryViewerActorFrame(middle);
+assert.equal(middleActorFrame.lifecycle.visible, true);
+assert.equal(middleActorFrame.lifecycle.elapsedMs, middle.elapsedMs);
+assert.equal(middleActorFrame.lifecycle.tickCount, middle.tickCount);
+assert.equal(middleActorFrame.pose?.motionPhase, middle.body.progress);
+assert.equal(
+  middleActorFrame.pose?.support.renderedHillSourceId,
+  middle.terrainBuffer.source.frameId,
+);
+assert.notDeepEqual(
+  middleActorFrame.pose?.rootFrame.origin,
+  initialActorFrame.pose?.rootFrame.origin,
+);
 
 const atEnd = runtime.advanceTo(receipt.historySummary.lastTimestampMs);
 assert.equal(atEnd.phase, 'traversing');
@@ -120,6 +177,15 @@ assert.notEqual(
   atEnd.terrain.witness.sampleChecksum,
   'the persistent Hill must continue evolving after the body departs',
 );
+const departedActorFrame =
+  createLermHordePrimaryViewerActorFrame(departed);
+assert.equal(departedActorFrame.lifecycle.visible, false);
+assert.equal(departedActorFrame.lifecycle.phase, 'departed');
+assert.equal(departedActorFrame.pose, null);
+assert.equal(
+  departedActorFrame.terrain.frameId,
+  departed.terrainBuffer.source.frameId,
+);
 assert.equal(
   departed.terrain.witness.supportFrame.shockClassCounts.shock_reset ?? 0,
   0,
@@ -148,6 +214,37 @@ assert.equal(runtimeReceipt.admission.trafficRetainedAfterDeparture, true);
 assert.equal(runtimeReceipt.claimBoundary.liveCurrentHillTruth, true);
 assert.equal(runtimeReceipt.claimBoundary.liveRootExposureTruth, true);
 assert.equal(runtimeReceipt.claimBoundary.liveContactTruth, false);
+
+assert.throws(
+  () =>
+    createLermHordePrimaryViewerActorFrame({
+      ...middle,
+      route: 'lerms/fallback/replay',
+    } as never),
+  /runtime route/i,
+);
+assert.throws(
+  () =>
+    createLermHordePrimaryViewerActorFrame({
+      ...middle,
+      body: {
+        ...middle.body!,
+        support: {
+          ...middle.body!.support,
+          renderedHillSourceId: 'stale-hill-frame',
+        },
+      },
+    } as never),
+  /rendered Hill/i,
+);
+assert.throws(
+  () =>
+    createLermHordePrimaryViewerActorFrame({
+      ...middle,
+      body: null,
+    }),
+  /traversing state requires a visible actor/i,
+);
 
 const reviewedVendorRailSampler =
   await createReviewedVendorRailSampler(receipt);
