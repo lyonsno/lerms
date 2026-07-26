@@ -39,6 +39,7 @@ import {
   planLiveFluidSimulationCatchUp,
   shouldKeepHandPresentationPriority,
 } from '../src/hand/live-hand-frame-budget.js';
+import { LiveHandSidecarReadinessCoordinator } from '../src/hand/live-hand-sidecar-readiness.js';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -53,6 +54,17 @@ function assertThrows(fn: () => void, expectedMessage: string): void {
     return;
   }
   throw new Error(`expected function to throw "${expectedMessage}"`);
+}
+
+async function assertRejects(fn: () => Promise<void>, expectedMessage: string): Promise<void> {
+  try {
+    await fn();
+  } catch (error) {
+    assert(error instanceof Error, 'expected an Error');
+    assert(error.message.includes(expectedMessage), `expected "${error.message}" to include "${expectedMessage}"`);
+    return;
+  }
+  throw new Error(`expected promise to reject with "${expectedMessage}"`);
 }
 
 const vertices = Array.from({ length: 778 }, (_, index) => [
@@ -148,6 +160,109 @@ assertThrows(
     stopReason: null,
   }),
   'readiness timing',
+);
+
+const stoppedSidecar = {
+  runtimeOwner: 'hand-state-runtime',
+  running: false,
+  modelReady: false,
+  modelReadiness: 'stopped',
+  modelReadyAtMs: null,
+  modelStartupMs: null,
+  stopReason: 'already_stopped',
+};
+const failedSidecar = {
+  ...stoppedSidecar,
+  modelReadiness: 'failed_before_ready',
+  stopReason: null,
+};
+const readySidecarStatus = {
+  runtimeOwner: 'hand-state-runtime',
+  running: true,
+  modelReady: true,
+  modelReadiness: 'ready',
+  modelReadyAtMs: 1250,
+  modelStartupMs: 250,
+  stopReason: null,
+};
+
+function scriptedSidecarReadiness({
+  statuses,
+  starts,
+  events,
+}: {
+  statuses: unknown[];
+  starts: unknown[];
+  events: string[];
+}): LiveHandSidecarReadinessCoordinator {
+  return new LiveHandSidecarReadinessCoordinator({
+    status: async () => {
+      events.push('status');
+      const value = statuses.shift();
+      assert(value, 'scripted sidecar status exhausted');
+      return value;
+    },
+    start: async () => {
+      events.push('start');
+      const value = starts.shift();
+      assert(value, 'scripted sidecar start exhausted');
+      return value;
+    },
+    wait: async () => {
+      events.push('wait');
+    },
+  });
+}
+
+const staleEvents: string[] = [];
+const staleCoordinator = scriptedSidecarReadiness({
+  statuses: [
+    stoppedSidecar,
+    readySidecarStatus,
+    stoppedSidecar,
+    stoppedSidecar,
+    readySidecarStatus,
+    readySidecarStatus,
+  ],
+  starts: [readySidecarStatus, readySidecarStatus],
+  events: staleEvents,
+});
+await staleCoordinator.ensureCurrentReady();
+await Promise.all([
+  staleCoordinator.ensureCurrentReady(),
+  staleCoordinator.ensureCurrentReady(),
+]);
+assert(
+  staleEvents.filter(event => event === 'start').length === 2,
+  'resolved prewarm is not durable authority and concurrent stale callers share one replacement start',
+);
+
+let rejectedCameraCalls = 0;
+const rejectedCoordinator = scriptedSidecarReadiness({
+  statuses: [stoppedSidecar, failedSidecar],
+  starts: [readySidecarStatus],
+  events: [],
+});
+await assertRejects(async () => {
+  await rejectedCoordinator.ensureCurrentReady();
+  rejectedCameraCalls += 1;
+}, 'not currently model-ready');
+assert(rejectedCameraCalls === 0, 'second non-ready status rejects before camera admission');
+
+const admittedEvents: string[] = [];
+let admittedCameraCalls = 0;
+const admittedCoordinator = scriptedSidecarReadiness({
+  statuses: [stoppedSidecar, readySidecarStatus, readySidecarStatus],
+  starts: [warmingSidecar],
+  events: admittedEvents,
+});
+await admittedCoordinator.ensureCurrentReady();
+admittedEvents.push('camera');
+admittedCameraCalls += 1;
+assert(admittedCameraCalls === 1, 'current ready truth admits camera exactly once');
+assert(
+  admittedEvents.join(',') === 'status,start,wait,status,status,camera',
+  'camera admission occurs only after replacement warmup and current ready revalidation',
 );
 
 const workerBlob = new Blob(['jpeg'], { type: 'image/jpeg' });

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../src/hand/live-hand-landmarker.worker.ts', import.meta.url), 'utf8');
 const liveHandSource = readFileSync(new URL('../src/hand/live-hand.ts', import.meta.url), 'utf8');
+const sidecarReadinessSource = readFileSync(new URL('../src/hand/live-hand-sidecar-readiness.ts', import.meta.url), 'utf8');
 const liveHandHtml = readFileSync(new URL('../live-hand.html', import.meta.url), 'utf8');
 
 assert.match(source, /tasks-vision@\$\{TASKS_VISION_VERSION\}/, 'MediaPipe Tasks Vision is version-pinned');
@@ -86,19 +87,24 @@ assert.match(
   'shutdown stops publishers, drains chronology, and refreshes visible persistence truth',
 );
 assert.match(
-  liveHandSource,
-  /async function ensureSidecarModelReady[\s\S]*modelReady[\s\S]*modelReadiness/,
-  'consumer startup distinguishes a launched sidecar process from a loaded WiLoR model',
+  sidecarReadinessSource,
+  /class LiveHandSidecarReadinessCoordinator[\s\S]*ensureCurrentReady[\s\S]*this\.dependencies\.status/,
+  'consumer coordinator distinguishes current process truth from loaded WiLoR model truth',
+);
+assert.match(
+  sidecarReadinessSource,
+  /function isReady[\s\S]*truth\.running[\s\S]*truth\.modelReady[\s\S]*truth\.modelReadiness/,
+  'coordinator admission requires current process, loaded model, and readiness phase truth',
 );
 assert.match(
   liveHandSource,
-  /async function ensureSidecarModelReady[\s\S]*runtimeFetch\('\/sidecar\/status'[\s\S]*modelReady[\s\S]*sidecarWarmup = null[\s\S]*beginSidecarModelWarmup/,
-  'camera admission revalidates cached prewarm and replaces stale sidecar authority',
+  /async function start\(\)[\s\S]*sidecarReadiness\.ensureCurrentReady\(\)[\s\S]*getUserMedia/,
+  'camera admission is downstream of the executable sidecar readiness coordinator',
 );
 assert.match(
   liveHandSource,
-  /async function start\(\)[\s\S]*ensureSidecarModelReady\(\)[\s\S]*getUserMedia/,
-  'WiLoR model readiness is established before live camera admission can emit no-anchor fallback',
+  /async function stop\(\)[\s\S]*runtimeFetch\('\/sidecar\/stop'[\s\S]*sidecarReadiness\.invalidate\(\)[\s\S]*runtimeFetch\('\/chronology\/flush'/,
+  'stop invalidates browser readiness authority before closing chronology',
 );
 assert.match(
   liveHandSource,

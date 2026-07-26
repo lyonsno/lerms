@@ -10,7 +10,6 @@ import {
   LIVE_HAND_ROUTE,
   MANO_DISPLAY_ORIENTATION,
   assertLiveRuntimeHealth,
-  assertLiveRuntimeSidecarStatus,
   normalizeLiveManoFrame,
   normalizeManoSurface,
   summarizeLiveHandLatency,
@@ -20,6 +19,7 @@ import {
   type RuntimeHealthTruth,
   type RuntimeSidecarStatusTruth,
 } from './live-hand-contract.js';
+import { LiveHandSidecarReadinessCoordinator } from './live-hand-sidecar-readiness.js';
 import {
   LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
   LIVE_HAND_CAPTURE_WORKER_ROUTE,
@@ -205,7 +205,6 @@ let lastAnchorCaptureAtMs: number | null = null;
 let lastLiveAt = 0;
 let runtimeRoute: RuntimeHealthTruth | null = null;
 let sidecarStatusTruth: RuntimeSidecarStatusTruth | null = null;
-let sidecarWarmup: Promise<RuntimeSidecarStatusTruth> | null = null;
 let targetPositions: Float32Array | null = null;
 let currentPositions: Float32Array | null = null;
 let topologySignature = '';
@@ -475,60 +474,22 @@ async function runtimeFetch(path: string, init: RequestInit = {}): Promise<Recor
   return payload;
 }
 
-async function waitForSidecarModelReady(): Promise<RuntimeSidecarStatusTruth> {
-  let truth = assertLiveRuntimeSidecarStatus(await runtimeFetch('/sidecar/start', { method: 'POST' }));
-  sidecarStatusTruth = truth;
-  setRouteTruth();
-  while (!truth.modelReady) {
-    if (!truth.running || truth.modelReadiness === 'failed_before_ready') {
-      throw new Error(`WiLoR sidecar ${truth.modelReadiness}${truth.stopReason ? `: ${truth.stopReason}` : ''}`);
-    }
-    if (truth.modelReadiness !== 'warming') {
-      throw new Error(`WiLoR sidecar cannot become ready from ${truth.modelReadiness}`);
-    }
+const sidecarReadiness = new LiveHandSidecarReadinessCoordinator({
+  start: () => runtimeFetch('/sidecar/start', { method: 'POST' }),
+  status: () => runtimeFetch('/sidecar/status'),
+  wait: () => new Promise(resolve => window.setTimeout(resolve, 100)),
+  observe: truth => {
+    sidecarStatusTruth = truth;
+    setRouteTruth();
+  },
+  observeWarming: () => {
     if (!running) setStatus('warming WiLoR anchor model');
-    await new Promise(resolve => window.setTimeout(resolve, 100));
-    truth = assertLiveRuntimeSidecarStatus(await runtimeFetch('/sidecar/status'));
-    sidecarStatusTruth = truth;
-    setRouteTruth();
-  }
-  return truth;
-}
-
-function beginSidecarModelWarmup(): Promise<RuntimeSidecarStatusTruth> {
-  if (!sidecarWarmup) {
-    const warmup = waitForSidecarModelReady();
-    sidecarWarmup = warmup;
-    void warmup.then(() => {
-      if (sidecarWarmup === warmup) sidecarWarmup = null;
-    }, () => {
-      if (sidecarWarmup === warmup) sidecarWarmup = null;
-    });
-  }
-  return sidecarWarmup;
-}
-
-async function ensureSidecarModelReady(): Promise<RuntimeSidecarStatusTruth> {
-  if (sidecarWarmup) await sidecarWarmup;
-  let truth = assertLiveRuntimeSidecarStatus(await runtimeFetch('/sidecar/status'));
-  sidecarStatusTruth = truth;
-  setRouteTruth();
-  if (!truth.modelReady || truth.modelReadiness !== 'ready') {
-    sidecarWarmup = null;
-    await beginSidecarModelWarmup();
-    truth = assertLiveRuntimeSidecarStatus(await runtimeFetch('/sidecar/status'));
-    sidecarStatusTruth = truth;
-    setRouteTruth();
-  }
-  if (!truth.running || !truth.modelReady || truth.modelReadiness !== 'ready') {
-    throw new Error(`WiLoR sidecar is not currently model-ready: ${truth.modelReadiness}`);
-  }
-  return truth;
-}
+  },
+});
 
 function prewarmSidecarForNextRun(): void {
   if (fixtureMode || fluidAssayMode) return;
-  void ensureSidecarModelReady().then(truth => {
+  void sidecarReadiness.ensureCurrentReady().then(truth => {
     sidecarStatusTruth = truth;
     setRouteTruth();
     if (!running && status.dataset.state !== 'error') {
@@ -1430,7 +1391,7 @@ async function start(): Promise<void> {
   setStatus('initializing fluid and WiLoR anchor model');
   const [, modelStatus] = await Promise.all([
     ensureFluidSolver(),
-    ensureSidecarModelReady(),
+    sidecarReadiness.ensureCurrentReady(),
   ]);
   sidecarStatusTruth = modelStatus;
   captureWorkerError = null;
@@ -1546,7 +1507,7 @@ async function stop(): Promise<void> {
     || (unflushedLatencySamples.length > 0 ? lastBenchmarkError || 'telemetry failure: viewer latency samples remain unflushed' : null);
   try {
     await runtimeFetch('/sidecar/stop', { method: 'POST' });
-    sidecarWarmup = null;
+    sidecarReadiness.invalidate();
     sidecarStatusTruth = null;
     await runtimeFetch('/chronology/flush', { method: 'POST' });
     runtimeRoute = assertLiveRuntimeHealth(await runtimeFetch('/health'));
@@ -1726,7 +1687,7 @@ window.addEventListener('beforeunload', () => {
   capturePostAbortController?.abort();
   stateAbortController?.abort();
   stream?.getTracks().forEach(track => track.stop());
-  sidecarWarmup = null;
+  sidecarReadiness.invalidate();
   sidecarStatusTruth = null;
   navigator.sendBeacon?.(`${runtimeUrl}/sidecar/stop`, new Blob([], { type: 'application/octet-stream' }));
   disposeCaptureWorker(new Error('viewer closed'));
