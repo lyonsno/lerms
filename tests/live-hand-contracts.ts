@@ -627,7 +627,7 @@ assert(normalized.positions[0] < 0 && normalized.positions[3] > 0, 'preserves di
 assert(normalized.positions[7] > normalized.positions[10], 'inverts camera y into display y');
 assert(normalized.burstMode === 'chunked' && normalized.chunkSegments === 7, 'carries chunk identity with the frame');
 
-const hybrid = normalizeLiveManoFrame({
+const hybridState = {
   ...state,
   frame: {
     ...state.frame,
@@ -661,13 +661,20 @@ const hybrid = normalizeLiveManoFrame({
       jointStepIntervalMs: 16.667,
       jointStepLimitRad: 0.08,
       maxJointStepAppliedRad: 0.073,
+      jointStepPolicy: 'adaptive_confidence_residual_anchor_v1',
+      jointStepSpeedRadS: 4.8,
+      jointStepBaseLimitRad: 0.04,
+      adaptiveStepQuality: 1 / 3,
+      idealFitResidualMean: 0.018,
+      idealFitImprovementRatio: 0.4375,
     },
     timing: {
       ...state.frame.timing,
       fastPathLatencyMs: 8.5,
     },
   },
-});
+};
+const hybrid = normalizeLiveManoFrame(hybridState);
 assert(hybrid.effectiveRoute === LIVE_HAND_HYBRID_ROUTE, 'accepts the explicit WiLoR-anchor/browser-fast hybrid route');
 assert(
   LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v2',
@@ -686,8 +693,57 @@ assert(hybrid.maxAnchorJointDeviationRad === 0.42, 'preserves absolute anchor-re
 assert(hybrid.jointStepIntervalMs === 16.667, 'preserves the observed fast-path correction interval');
 assert(hybrid.jointStepLimitRad === 0.08, 'preserves the cadence-scaled correction limit');
 assert(hybrid.maxJointStepAppliedRad === 0.073, 'preserves the correction actually applied to the visible mesh');
+assert(
+  hybrid.jointStepPolicy === 'adaptive_confidence_residual_anchor_v1',
+  'preserves the effective articulated debt policy',
+);
+assert(hybrid.jointStepSpeedRadS === 4.8, 'preserves the effective adaptive correction speed');
+assert(hybrid.jointStepBaseLimitRad === 0.04, 'preserves the fixed-speed counterfactual step');
+assert(hybrid.adaptiveStepQuality === 1 / 3, 'preserves the adaptive trust score');
+assert(hybrid.idealFitResidualMean === 0.018, 'preserves the trust-bounded ideal fit residual');
+assert(hybrid.idealFitImprovementRatio === 0.4375, 'preserves ideal improvement over the anchor');
 assert(hybrid.anchorSource === LIVE_HAND_ROUTE, 'preserves the WiLoR MANO anchor source');
 assert(hybrid.fastPathSource === 'browser_mediapipe_hand_landmarker_live', 'preserves the browser fast-path source');
+
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        jointStepPolicy: 'fixed_speed',
+      },
+    },
+  }),
+  'fixed-speed settling frame carries adaptive correction authority',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        jointStepSpeedRadS: 10,
+      },
+    },
+  }),
+  'adaptive joint correction policy exceeds its declared bounds',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        jointStepBaseLimitRad: 0.09,
+      },
+    },
+  }),
+  'adaptive joint correction limit is below its fixed-speed counterfactual',
+);
 
 assertThrows(
   () => normalizeLiveManoFrame({

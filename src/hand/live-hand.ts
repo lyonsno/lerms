@@ -333,6 +333,12 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   jointStepIntervalMs: number | null;
   jointStepLimitRad: number | null;
   maxJointStepAppliedRad: number | null;
+  jointStepPolicy: 'fixed_speed' | 'adaptive_confidence_residual_anchor_v1' | null;
+  jointStepSpeedRadS: number | null;
+  jointStepBaseLimitRad: number | null;
+  adaptiveStepQuality: number | null;
+  idealFitResidualMean: number | null;
+  idealFitImprovementRatio: number | null;
   fallbackState: null;
   viewerReceiveToWebglRenderReturnMs?: number;
   handRenderCpuMs?: number;
@@ -1297,6 +1303,12 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     jointStepIntervalMs: frame.jointStepIntervalMs,
     jointStepLimitRad: frame.jointStepLimitRad,
     maxJointStepAppliedRad: frame.maxJointStepAppliedRad,
+    jointStepPolicy: frame.jointStepPolicy,
+    jointStepSpeedRadS: frame.jointStepSpeedRadS,
+    jointStepBaseLimitRad: frame.jointStepBaseLimitRad,
+    adaptiveStepQuality: frame.adaptiveStepQuality,
+    idealFitResidualMean: frame.idealFitResidualMean,
+    idealFitImprovementRatio: frame.idealFitImprovementRatio,
     fallbackState: null,
     captureToWebglRenderReturnMs: -1,
     captureToRenderCompleteMs: -1,

@@ -82,6 +82,12 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   jointStepIntervalMs: number | null;
   jointStepLimitRad: number | null;
   maxJointStepAppliedRad: number | null;
+  jointStepPolicy: 'fixed_speed' | 'adaptive_confidence_residual_anchor_v1' | null;
+  jointStepSpeedRadS: number | null;
+  jointStepBaseLimitRad: number | null;
+  adaptiveStepQuality: number | null;
+  idealFitResidualMean: number | null;
+  idealFitImprovementRatio: number | null;
 }
 
 export interface ManoDisplayTransform {
@@ -300,6 +306,12 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let jointStepIntervalMs: number | null = null;
   let jointStepLimitRad: number | null = null;
   let maxJointStepAppliedRad: number | null = null;
+  let jointStepPolicy: NormalizedManoFrame['jointStepPolicy'] = null;
+  let jointStepSpeedRadS: number | null = null;
+  let jointStepBaseLimitRad: number | null = null;
+  let adaptiveStepQuality: number | null = null;
+  let idealFitResidualMean: number | null = null;
+  let idealFitImprovementRatio: number | null = null;
   if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
     if (source.rawSchema !== LIVE_HAND_FAST_LANDMARK_SCHEMA) {
       throw new Error(`hybrid frame must expose ${LIVE_HAND_FAST_LANDMARK_SCHEMA}`);
@@ -339,8 +351,53 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       diagnostics.maxJointStepAppliedRad,
       'maxJointStepAppliedRad',
     );
+    const rawJointStepPolicy = text(diagnostics.jointStepPolicy, 'jointStepPolicy');
+    if (
+      rawJointStepPolicy !== 'fixed_speed'
+      && rawJointStepPolicy !== 'adaptive_confidence_residual_anchor_v1'
+    ) {
+      throw new Error(`unsupported jointStepPolicy: ${rawJointStepPolicy}`);
+    }
+    jointStepPolicy = rawJointStepPolicy;
+    jointStepSpeedRadS = finiteNonNegative(diagnostics.jointStepSpeedRadS, 'jointStepSpeedRadS');
+    jointStepBaseLimitRad = finiteNonNegative(
+      diagnostics.jointStepBaseLimitRad,
+      'jointStepBaseLimitRad',
+    );
+    adaptiveStepQuality = finiteNonNegative(
+      diagnostics.adaptiveStepQuality,
+      'adaptiveStepQuality',
+    );
+    idealFitResidualMean = finiteNonNegative(
+      diagnostics.idealFitResidualMean,
+      'idealFitResidualMean',
+    );
+    idealFitImprovementRatio = finiteNonNegative(
+      diagnostics.idealFitImprovementRatio,
+      'idealFitImprovementRatio',
+    );
     if (maxJointStepAppliedRad > jointStepLimitRad + 1e-8) {
       throw new Error('visible joint correction exceeds the cadence-scaled correction limit');
+    }
+    if (jointStepBaseLimitRad > jointStepLimitRad + 1e-8) {
+      throw new Error('adaptive joint correction limit is below its fixed-speed counterfactual');
+    }
+    if (
+      jointStepSpeedRadS < 2.4 - 1e-8
+      || jointStepSpeedRadS > 9.6 + 1e-8
+      || adaptiveStepQuality > 1
+    ) {
+      throw new Error('adaptive joint correction policy exceeds its declared bounds');
+    }
+    if (
+      jointStepPolicy === 'fixed_speed'
+      && (
+        Math.abs(jointStepSpeedRadS - 2.4) > 1e-8
+        || Math.abs(jointStepLimitRad - jointStepBaseLimitRad) > 1e-8
+        || adaptiveStepQuality !== 0
+      )
+    ) {
+      throw new Error('fixed-speed settling frame carries adaptive correction authority');
     }
   }
   return {
@@ -382,6 +439,12 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     jointStepIntervalMs,
     jointStepLimitRad,
     maxJointStepAppliedRad,
+    jointStepPolicy,
+    jointStepSpeedRadS,
+    jointStepBaseLimitRad,
+    adaptiveStepQuality,
+    idealFitResidualMean,
+    idealFitImprovementRatio,
   };
 }
 
