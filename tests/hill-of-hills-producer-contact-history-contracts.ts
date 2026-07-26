@@ -303,6 +303,71 @@ assert.equal(
   'contact-history admission does not reset or teleport the support surface'
 );
 
+const additiveCache = createHillOfHillsLayerTileCache();
+const additiveParams = {
+  ...terrainParams,
+  producerTrafficDepositionLaw: 'additive_v0' as const
+};
+const additivePrior = createHillOfHillsTerrainWithCache(
+  additiveCache,
+  additiveParams
+);
+const additiveHistory = historyForPriorHill(
+  -1.25,
+  'additive-law-cache-crossing',
+  additivePrior
+);
+createHillOfHillsTerrainWithCache(
+  additiveCache,
+  { ...additiveParams, topologyPhaseTimeMs: 120 },
+  { producerContactHistory: additiveHistory }
+);
+const additiveMature = createHillOfHillsTerrainWithCache(
+  additiveCache,
+  { ...additiveParams, topologyPhaseTimeMs: 900 }
+);
+const switchedToBounded = createHillOfHillsTerrainWithCache(
+  additiveCache,
+  {
+    ...terrainParams,
+    producerTrafficDepositionLaw: 'bounded_exponential_v1',
+    topologyPhaseTimeMs: 900
+  }
+);
+const freshBoundedCache = createHillOfHillsLayerTileCache();
+const freshBounded = createHillOfHillsTerrainWithCache(
+  freshBoundedCache,
+  {
+    ...terrainParams,
+    producerTrafficDepositionLaw: 'bounded_exponential_v1',
+    topologyPhaseTimeMs: 900
+  }
+);
+assert.notDeepEqual(
+  additiveMature.witness.topologyDeformationRange,
+  freshBounded.witness.topologyDeformationRange,
+  'the additive control must actually carry different persistent dynamics before the law switch'
+);
+assert.deepEqual(
+  {
+    topologyChecksum: switchedToBounded.witness.topologyChecksum,
+    topologyPossibilityChecksum:
+      switchedToBounded.witness.topologyPossibilityChecksum,
+    deformation: switchedToBounded.witness.topologyDeformationRange,
+    velocity: switchedToBounded.witness.topologyVelocityRange,
+    force: switchedToBounded.witness.topologyForceRange
+  },
+  {
+    topologyChecksum: freshBounded.witness.topologyChecksum,
+    topologyPossibilityChecksum:
+      freshBounded.witness.topologyPossibilityChecksum,
+    deformation: freshBounded.witness.topologyDeformationRange,
+    velocity: freshBounded.witness.topologyVelocityRange,
+    force: freshBounded.witness.topologyForceRange
+  },
+  'switching deposition law cannot inherit the previous law topology trajectory'
+);
+
 const inheritedAffordance = sampleHillOfHillsTraversalAffordance(
   leftCrossing.afterDeparture,
   [-1.25, 0, -0.8],

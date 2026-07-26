@@ -3426,7 +3426,8 @@ function persistentTopologyTrajectoryKey(params: HillOfHillsTerrainParams): stri
       fieldResolutionX: Math.min(24, Math.max(8, params.gridResolutionX)),
       fieldResolutionZ: Math.min(32, Math.max(8, params.gridResolutionZ)),
       topologyPhaseSeed: params.topologyPhaseSeed,
-      topologyDynamicsMode: 'persistent_pressure'
+      topologyDynamicsMode: 'persistent_pressure',
+      producerTrafficDepositionLaw: params.producerTrafficDepositionLaw
     })
   );
 }
