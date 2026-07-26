@@ -1701,7 +1701,11 @@ window.addEventListener('beforeunload', () => {
   stream?.getTracks().forEach(track => track.stop());
   sidecarReadiness.invalidate();
   sidecarStatusTruth = null;
-  navigator.sendBeacon?.(`${runtimeUrl}/sidecar/stop`, new Blob([], { type: 'application/octet-stream' }));
+  void fetch(`${runtimeUrl}/sidecar/stop`, {
+    method: 'POST',
+    keepalive: true,
+    credentials: 'omit',
+  });
   disposeCaptureWorker(new Error('viewer closed'));
   disposeLandmarkerWorker();
   fluidSolver?.destroy();

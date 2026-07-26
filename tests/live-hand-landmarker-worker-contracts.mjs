@@ -113,6 +113,16 @@ assert.match(
 );
 assert.match(
   liveHandSource,
+  /beforeunload[\s\S]*fetch\(`\$\{runtimeUrl\}\/sidecar\/stop`,\s*\{[\s\S]*method:\s*'POST'[\s\S]*keepalive:\s*true[\s\S]*credentials:\s*'omit'/,
+  'viewer teardown uses a wildcard-CORS-compatible keepalive stop request',
+);
+assert.doesNotMatch(
+  liveHandSource,
+  /sendBeacon\?\.\(`\$\{runtimeUrl\}\/sidecar\/stop`/,
+  'viewer teardown does not use credentialed sendBeacon against wildcard CORS',
+);
+assert.match(
+  liveHandSource,
   /async function stop\(\)[\s\S]*recordStoppedLandmarkerInference\('hand_control_stopped'\)[\s\S]*disposeLandmarkerWorker/,
   'shutdown explicitly accounts for a MediaPipe inference terminated before worker output',
 );
