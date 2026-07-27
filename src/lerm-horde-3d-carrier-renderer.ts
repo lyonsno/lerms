@@ -35,6 +35,12 @@ import {
   type LermHordePrimaryViewerActorFrame,
 } from './lerm-horde-primary-viewer-actor-frame.js';
 import {
+  createLermHordeIndexedGpuPresenter,
+  LERM_HORDE_INDEXED_GPU_PRESENTER_IDENTITY,
+  type LermHordeIndexedGpuPresentationReceipt,
+  type LermHordeIndexedGpuPresenterIdentity,
+} from './lerm-horde-primary-viewer-gpu-presenter.js';
+import {
   LERM_HORDE_LIVE_RUNTIME_ROUTE,
   createLermHordeLiveRuntime,
   type LermHordeLiveRailSample,
@@ -42,6 +48,9 @@ import {
   type LermHordeLiveRuntimeReceipt,
   type LermHordeLiveRuntimeState,
 } from './lerm-horde-live-runtime-composition.js';
+import type {
+  HillPrimaryViewerActorDrawFrame,
+} from './terrain/hill-primary-viewer-actor-host.js';
 
 const SOURCE_ROOT = '/vendor/kaminos-6217fff8/artifacts';
 const BODY_PATH = `${SOURCE_ROOT}/motion-ready-719024/creature.glb`;
@@ -147,6 +156,10 @@ export interface ExactCarrierLiveSource {
   readonly railHistorySha256:
     typeof EXACT_3D_CARRIER_RAIL_HISTORY_SHA256;
   readonly effectiveRailId: typeof EXACT_3D_CARRIER_RAIL_ID;
+  readonly indexedPresentationIdentity:
+    LermHordeIndexedGpuPresenterIdentity;
+  readonly lastIndexedPresentation:
+    LermHordeIndexedGpuPresentationReceipt | null;
   advanceTo(elapsedMs: number): LermHordeLiveRuntimeState;
   reset(): LermHordeLiveRuntimeState;
   currentActorFrame(): ReturnType<
@@ -157,6 +170,12 @@ export interface ExactCarrierLiveSource {
       typeof createLermHordePrimaryViewerActorFrame
     >,
   ): Float32Array | null;
+  presentIndexedBody(
+    frame: HillPrimaryViewerActorDrawFrame,
+    actorFrame: ReturnType<
+      typeof createLermHordePrimaryViewerActorFrame
+    >,
+  ): void;
   createRuntimeReceipt(): LermHordeLiveRuntimeReceipt;
 }
 
@@ -202,14 +221,16 @@ export interface ExactCarrierLiveRuntimeReceipt {
   runtime: LermHordeLiveRuntimeReceipt;
 }
 
-export async function createExactCarrierLiveSource(): Promise<ExactCarrierLiveSource> {
-  return loadExactCarrierLiveSource();
+export async function createExactCarrierLiveSource(
+  includeIndexedPresenter = true,
+): Promise<ExactCarrierLiveSource> {
+  return loadExactCarrierLiveSource(includeIndexedPresenter);
 }
 
 export async function createExactCarrierRenderer(
   stage: HTMLElement,
 ): Promise<ExactCarrierRenderer> {
-  const source = await loadExactCarrierLiveSource();
+  const source = await loadExactCarrierLiveSource(false);
   const {
     geometry,
     bodySha256,
@@ -452,7 +473,9 @@ export async function createExactCarrierRenderer(
   };
 }
 
-async function loadExactCarrierLiveSource(): Promise<ExactCarrierLiveSourceInternal> {
+async function loadExactCarrierLiveSource(
+  includeIndexedPresenter: boolean,
+): Promise<ExactCarrierLiveSourceInternal> {
   const [
     bodyResponse,
     registrationResponse,
@@ -535,6 +558,9 @@ async function loadExactCarrierLiveSource(): Promise<ExactCarrierLiveSourceInter
   verifyProducerArtifacts(registration, fitReport, admission);
   verifyRailHistory(railHistory);
   const geometry = await loadExactGeometry(bodyBytes);
+  const indexedGpuPresenter = includeIndexedPresenter
+    ? await createLermHordeIndexedGpuPresenter(bodyBytes)
+    : null;
   const sourceBounds = fitReport.donor.sourceBounds;
   const normalization = fitReport.donor.normalization;
   normalizeExact719024Positions(
@@ -592,6 +618,15 @@ async function loadExactCarrierLiveSource(): Promise<ExactCarrierLiveSourceInter
         actorFrame.identity.fittedMotion.amplitude,
       );
     },
+    presentIndexedBody(frame, actorFrame) {
+      validateExactCarrierDetachedActorFrame(actorFrame);
+      if (!indexedGpuPresenter) {
+        throw new Error(
+          'indexed GPU presenter was not loaded for this source route',
+        );
+      }
+      indexedGpuPresenter.present(frame, actorFrame);
+    },
     createRuntimeReceipt() {
       return runtime.createReceipt();
     },
@@ -601,6 +636,11 @@ async function loadExactCarrierLiveSource(): Promise<ExactCarrierLiveSourceInter
     railModuleSha256: EXACT_3D_CARRIER_RAIL_MODULE_SHA256,
     railHistorySha256: EXACT_3D_CARRIER_RAIL_HISTORY_SHA256,
     effectiveRailId: EXACT_3D_CARRIER_RAIL_ID,
+    indexedPresentationIdentity:
+      LERM_HORDE_INDEXED_GPU_PRESENTER_IDENTITY,
+    get lastIndexedPresentation() {
+      return indexedGpuPresenter?.lastPresentation ?? null;
+    },
     geometry,
   };
 }
@@ -621,7 +661,7 @@ export function validateExactCarrierDetachedActorFrame(
     actorFrame.route.staleStatus !== 'fresh' ||
     identity?.carrierId !== '719024' ||
     identity.speciesAuthority !==
-      'non-lerm-engineering-carrier' ||
+      'kaminos.species-asset.v0' ||
     identity.bodyAsset?.sha256 !==
       EXACT_3D_CARRIER_BODY_SHA256 ||
     identity.fittedMotion?.evaluatorRoute !==
@@ -646,7 +686,10 @@ export function validateExactCarrierDetachedActorFrame(
         actorFrame.lifecycle.visible === true &&
         pose !== null &&
         pose.support.renderedHillSourceId ===
-          actorFrame.terrain.frameId) ||
+          actorFrame.terrain.frameId &&
+        pose.squirm?.terrainSupportProfile?.length === 7 &&
+        Number.isFinite(pose.squirm.phase) &&
+        Number.isFinite(pose.projection?.terrainLength)) ||
       (actorFrame.lifecycle.phase === 'departed' &&
         actorFrame.lifecycle.visible === false &&
         pose === null)

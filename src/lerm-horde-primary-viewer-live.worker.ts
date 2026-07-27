@@ -52,7 +52,7 @@ async function handleRequest(
 
   let source: ExactCarrierLiveSource;
   try {
-    sourcePromise ??= createExactCarrierLiveSource();
+    sourcePromise ??= createExactCarrierLiveSource(false);
     source = await sourcePromise;
   } catch (error) {
     const response = createLermHordePrimaryViewerWorkerFailure(

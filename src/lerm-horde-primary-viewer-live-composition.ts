@@ -8,12 +8,13 @@ import {
 } from './lerm-horde-primary-viewer-actor-frame.js';
 import {
   createLermHordePrimaryViewerActorLayer,
+  type LermHordePrimaryViewerActorLayerSource,
 } from './lerm-horde-primary-viewer-actor-layer.js';
 import {
-  LERM_HORDE_PRIMARY_VIEWER_WEBGL_RASTERIZER_ROUTE,
-  createLermHordePrimaryViewerWebglRasterizer,
-  type LermHordePrimaryViewerActorRasterizer,
-} from './lerm-horde-primary-viewer-webgl-rasterizer.js';
+  LERM_HORDE_INDEXED_GPU_PRESENTER_ROUTE,
+  type LermHordeIndexedGpuPresentationReceipt,
+  type LermHordeIndexedGpuPresenterIdentity,
+} from './lerm-horde-primary-viewer-gpu-presenter.js';
 import {
   LERM_HORDE_PRIMARY_VIEWER_ATOMIC_FRAME_SCHEMA,
   LERM_HORDE_PRIMARY_VIEWER_TIME_SCALE,
@@ -41,8 +42,6 @@ export const LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE =
 export const LERM_HORDE_PRIMARY_VIEWER_QUERY_KEY = 'actor' as const;
 export const LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE =
   'lerm-horde-live' as const;
-export const LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE =
-  'lerms/lerm-horde/primary-viewer-canvas2d-reference-v0' as const;
 export const LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE =
   'lerms/lerm-horde/primary-viewer-sync-runtime-reference-v0' as const;
 
@@ -56,11 +55,13 @@ export interface LermHordePrimaryViewerLiveSource {
   readonly state: LermHordeLiveRuntimeState;
   readonly durationMs: number;
   readonly completionElapsedMs: number;
+  readonly indexedPresentationIdentity:
+    LermHordeIndexedGpuPresenterIdentity;
+  readonly lastIndexedPresentation:
+    LermHordeIndexedGpuPresentationReceipt | null;
   advanceTo(elapsedMs: number): LermHordeLiveRuntimeState;
   currentActorFrame(): LermHordePrimaryViewerActorFrame;
-  evaluateBodyPositions(
-    actorFrame: LermHordePrimaryViewerActorFrame,
-  ): Float32Array | null;
+  presentIndexedBody: LermHordePrimaryViewerActorLayerSource['presentIndexedBody'];
 }
 
 export interface LermHordePrimaryViewerLiveCompositionReceipt {
@@ -70,9 +71,7 @@ export interface LermHordePrimaryViewerLiveCompositionReceipt {
     effective: typeof LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE;
     viewer: typeof HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE;
     actor: typeof LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE;
-    actorRenderer:
-      | typeof LERM_HORDE_PRIMARY_VIEWER_WEBGL_RASTERIZER_ROUTE
-      | typeof LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE;
+    actorRenderer: typeof LERM_HORDE_INDEXED_GPU_PRESENTER_ROUTE;
     runtime:
       | typeof LERM_HORDE_PRIMARY_VIEWER_WORKER_ROUTE
       | typeof LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE;
@@ -93,6 +92,19 @@ export interface LermHordePrimaryViewerLiveCompositionReceipt {
   lifecycle: {
     phase: LermHordeLiveRuntimeState['phase'];
     visible: boolean;
+  };
+  presentation: {
+    identity: LermHordeIndexedGpuPresenterIdentity;
+    drawCount: number;
+    terrainFrameId: string | null;
+    sourceDistance: number | null;
+    phase: number | null;
+    rootScreen: {
+      x: number;
+      y: number;
+      depth: number;
+    } | null;
+    cpuSubmitMilliseconds: number | null;
   };
   terrain: {
     frameId: string;
@@ -144,12 +156,9 @@ export async function loadLermHordePrimaryViewerLiveComposition(): Promise<LermH
         worker as LermHordePrimaryViewerWorkerPort,
       ),
     ]);
-    const rasterizer =
-      createLermHordePrimaryViewerWebglRasterizer();
     return createLermHordePrimaryViewerWorkerComposition(
       source,
       workerRuntime,
-      rasterizer,
     );
   } catch (error) {
     worker.terminate();
@@ -159,9 +168,6 @@ export async function loadLermHordePrimaryViewerLiveComposition(): Promise<LermH
 
 export function createLermHordePrimaryViewerLiveComposition(
   source: LermHordePrimaryViewerLiveSource,
-  options: {
-    rasterizer?: LermHordePrimaryViewerActorRasterizer;
-  } = {},
 ): LermHordePrimaryViewerLiveComposition {
   validateSource(source);
   let firstHostTimestampMs: number | undefined;
@@ -174,11 +180,8 @@ export function createLermHordePrimaryViewerLiveComposition(
   );
   const layer = createLermHordePrimaryViewerActorLayer({
     currentActorFrame: () => currentFrame.actor,
-    evaluateBodyPositions: (actorFrame) =>
-      source.evaluateBodyPositions(actorFrame),
-    ...(options.rasterizer
-      ? { rasterizer: options.rasterizer }
-      : {}),
+    presentIndexedBody: (frame, actorFrame) =>
+      source.presentIndexedBody(frame, actorFrame),
   });
 
   return {
@@ -223,6 +226,7 @@ export function createLermHordePrimaryViewerLiveComposition(
       );
       const actorFrame = currentFrame.actor;
       const terrain = currentFrame.terrainBuffer;
+      const presentation = source.lastIndexedPresentation;
       return {
         schema: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
         route: {
@@ -231,8 +235,7 @@ export function createLermHordePrimaryViewerLiveComposition(
           viewer: HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
           actor: LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
           actorRenderer:
-            options.rasterizer?.route ??
-            LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE,
+            source.indexedPresentationIdentity.route,
           runtime: LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE,
           runtimeBackend: 'synchronous-reference',
           fallbackStatus: 'none',
@@ -251,6 +254,18 @@ export function createLermHordePrimaryViewerLiveComposition(
         lifecycle: {
           phase: actorFrame.lifecycle.phase,
           visible: actorFrame.lifecycle.visible,
+        },
+        presentation: {
+          identity: { ...source.indexedPresentationIdentity },
+          drawCount: presentation?.drawCount ?? 0,
+          terrainFrameId: presentation?.terrainFrameId ?? null,
+          sourceDistance: presentation?.sourceDistance ?? null,
+          phase: presentation?.phase ?? null,
+          rootScreen: presentation
+            ? { ...presentation.rootScreen }
+            : null,
+          cpuSubmitMilliseconds:
+            presentation?.cpuSubmitMilliseconds ?? null,
         },
         terrain: {
           frameId: terrain.source.frameId,
@@ -313,14 +328,12 @@ export function createLermHordePrimaryViewerAtomicFrame(
 function createLermHordePrimaryViewerWorkerComposition(
   source: LermHordePrimaryViewerLiveSource,
   workerRuntime: LermHordePrimaryViewerWorkerRuntime,
-  rasterizer: LermHordePrimaryViewerActorRasterizer,
 ): LermHordePrimaryViewerLiveComposition {
   validateSource(source);
   const layer = createLermHordePrimaryViewerActorLayer({
     currentActorFrame: () => workerRuntime.frame.actor,
-    evaluateBodyPositions: (actorFrame) =>
-      source.evaluateBodyPositions(actorFrame),
-    rasterizer,
+    presentIndexedBody: (frame, actorFrame) =>
+      source.presentIndexedBody(frame, actorFrame),
   });
 
   return {
@@ -343,6 +356,7 @@ function createLermHordePrimaryViewerWorkerComposition(
       const actorFrame = frame.actor;
       const terrain = frame.terrainBuffer;
       const publication = workerRuntime.publication();
+      const presentation = source.lastIndexedPresentation;
       return {
         schema: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
         route: {
@@ -350,7 +364,8 @@ function createLermHordePrimaryViewerWorkerComposition(
           effective: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
           viewer: HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
           actor: LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
-          actorRenderer: rasterizer.route,
+          actorRenderer:
+            source.indexedPresentationIdentity.route,
           runtime: LERM_HORDE_PRIMARY_VIEWER_WORKER_ROUTE,
           runtimeBackend: 'dedicated-worker',
           fallbackStatus: 'none',
@@ -373,6 +388,18 @@ function createLermHordePrimaryViewerWorkerComposition(
         lifecycle: {
           phase: actorFrame.lifecycle.phase,
           visible: actorFrame.lifecycle.visible,
+        },
+        presentation: {
+          identity: { ...source.indexedPresentationIdentity },
+          drawCount: presentation?.drawCount ?? 0,
+          terrainFrameId: presentation?.terrainFrameId ?? null,
+          sourceDistance: presentation?.sourceDistance ?? null,
+          phase: presentation?.phase ?? null,
+          rootScreen: presentation
+            ? { ...presentation.rootScreen }
+            : null,
+          cpuSubmitMilliseconds:
+            presentation?.cpuSubmitMilliseconds ?? null,
         },
         terrain: {
           frameId: terrain.source.frameId,
@@ -398,7 +425,9 @@ function validateSource(
       source.completionElapsedMs > source.durationMs &&
       typeof source.advanceTo === 'function' &&
       typeof source.currentActorFrame === 'function' &&
-      typeof source.evaluateBodyPositions === 'function',
+      typeof source.presentIndexedBody === 'function' &&
+      source.indexedPresentationIdentity?.indexed === true &&
+      source.indexedPresentationIdentity.textured === true,
     'primary-viewer live composition requires the exact live Horde source',
   );
 }
