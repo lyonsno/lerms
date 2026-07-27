@@ -4,9 +4,14 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 const EXPECTED_COMPOSITION =
   'lerms/lerm-horde/primary-viewer-live-composition-v0';
@@ -64,6 +69,10 @@ async function runWitness() {
   let browser;
   let chrome;
   let profileDir;
+  mkdirSync(dirname(options.report), { recursive: true });
+  for (const screenshot of Object.values(report.screenshots)) {
+    mkdirSync(dirname(screenshot), { recursive: true });
+  }
   try {
     report.phase = 'launching-chrome';
     const port = await freePort();

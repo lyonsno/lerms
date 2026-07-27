@@ -56,6 +56,11 @@ assert.match(
 );
 assert.match(
   witness,
+  /mkdirSync\(dirname\(options\.report\)/,
+  'the browser witness must create the requested report directory before any failure can occur',
+);
+assert.match(
+  witness,
   /Page\.captureScreenshot/,
   'visual closure requires actual canonical-canvas screenshots',
 );

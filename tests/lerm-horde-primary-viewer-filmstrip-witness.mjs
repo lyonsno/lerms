@@ -158,9 +158,9 @@ async function runWitness() {
       'fallback state cannot produce continuity evidence',
     );
     assert.equal(
-      report.route.staleStatus,
-      'fresh',
-      'stale state cannot produce continuity evidence',
+      hasHonestPublicationFreshness(initial),
+      true,
+      'stale, partial, or unaccounted retained state cannot produce continuity evidence',
     );
     report.phase = 'setting-canonical-camera-zoom';
     const zoomed = await setCameraZoom(
@@ -362,6 +362,22 @@ async function currentState(browser) {
       canvasHeight: canvas?.height ?? 0
     };
   })()`);
+}
+
+function hasHonestPublicationFreshness(state) {
+  if (state?.effective?.staleStatus === 'fresh') return true;
+  const publication = state?.publication;
+  return (
+    state?.effective?.staleStatus === 'retained-complete-frame' &&
+    Number.isInteger(publication?.generation) &&
+    publication.generation >= 0 &&
+    Number.isFinite(publication.sourceElapsedMs) &&
+    publication.sourceElapsedMs === state.lifecycle?.elapsedMs &&
+    Number.isFinite(publication.hostPublishedAtMs) &&
+    Number.isFinite(publication.presentationAgeMs) &&
+    publication.presentationAgeMs > 0 &&
+    publication.completeness === 'atomic-terrain-actor'
+  );
 }
 
 async function measureBaselinePresentationRate(

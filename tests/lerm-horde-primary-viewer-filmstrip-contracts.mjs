@@ -95,6 +95,11 @@ assert.match(
 );
 assert.match(
   witness,
+  /retained-complete-frame.*atomic-terrain-actor/s,
+  'the filmstrip must admit only explicitly aged retained atomic worker frames rather than rejecting or laundering them as fresh',
+);
+assert.match(
+  witness,
   /writeFileSync\(options\.report/,
   'failure before the contact sheet must still write a durable report',
 );
@@ -167,16 +172,38 @@ assert.ok(
   'abrupt actor silhouette changes must be diagnosed',
 );
 
+const retainedFrames = [
+  smoothFrames[0],
+  {
+    ...smoothFrames[1],
+    runtimeElapsedMs: smoothFrames[0].runtimeElapsedMs,
+    tickCount: smoothFrames[0].tickCount,
+    sourceDistance: smoothFrames[0].sourceDistance,
+    terrainFrameId: smoothFrames[0].terrainFrameId,
+    observationToken: `${smoothFrames[0].terrainFrameId}:999:${smoothFrames[0].tickCount}`,
+  },
+];
+assert.doesNotThrow(
+  () => validateActorFilmstripFrames(retainedFrames),
+  'an explicitly retained atomic worker frame is evidence, not invalid telemetry',
+);
+assert.ok(
+  analyzeActorFilmstrip(retainedFrames).suspicions.some(
+    ({ kind }) => kind === 'retained-frame-hold',
+  ),
+  'a retained worker frame must remain visible as a stutter suspicion',
+);
 assert.throws(
   () =>
     validateActorFilmstripFrames([
       smoothFrames[0],
       {
         ...smoothFrames[1],
-        runtimeElapsedMs: smoothFrames[0].runtimeElapsedMs,
+        runtimeElapsedMs: smoothFrames[0].runtimeElapsedMs - 1,
       },
     ]),
   /nonmonotonic/i,
+  'a regressing worker frame must still fail loud',
 );
 assert.throws(
   () =>
@@ -206,6 +233,7 @@ function frame(
     captureCompletedAtMs: index * 500 + 25,
     runtimeElapsedMs,
     tickCount: index + 3,
+    drawCount: index + 10,
     terrainFrameId: `terrain-${index}`,
     observationToken: `terrain-${index}:${index + 10}:${index + 3}`,
     rootWorld: { x: rootX, y: 1.1, z: index * 0.08 },

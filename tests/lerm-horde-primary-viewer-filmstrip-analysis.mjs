@@ -23,6 +23,7 @@ export function validateActorFilmstripFrames(frames) {
       ['captureCompletedAtMs', frame.captureCompletedAtMs],
       ['runtimeElapsedMs', frame.runtimeElapsedMs],
       ['tickCount', frame.tickCount],
+      ['drawCount', frame.drawCount],
       ['sourceDistance', frame.sourceDistance],
       ['phase', frame.phase],
       ['rootCropSpeciesPixels', frame.rootCropSpeciesPixels],
@@ -64,16 +65,39 @@ export function validateActorFilmstripFrames(frames) {
     const previous = frames[index - 1];
     assert.ok(
       frame.captureStartedAtMs > previous.captureStartedAtMs &&
-        frame.runtimeElapsedMs > previous.runtimeElapsedMs &&
-        frame.tickCount > previous.tickCount &&
-        frame.sourceDistance > previous.sourceDistance,
+        frame.runtimeElapsedMs >= previous.runtimeElapsedMs &&
+        frame.tickCount >= previous.tickCount &&
+        frame.sourceDistance >= previous.sourceDistance,
       'filmstrip telemetry is nonmonotonic',
     );
     assert.notEqual(
-      frame.screenshotSha256,
-      previous.screenshotSha256,
-      'duplicate filmstrip image under advancing telemetry',
+      frame.observationToken,
+      previous.observationToken,
+      'duplicate filmstrip observation under advancing host presentation',
     );
+    if (frame.runtimeElapsedMs > previous.runtimeElapsedMs) {
+      assert.notEqual(
+        frame.screenshotSha256,
+        previous.screenshotSha256,
+        'duplicate filmstrip image under advancing telemetry',
+      );
+    } else {
+      assert.equal(
+        frame.tickCount,
+        previous.tickCount,
+        'retained worker frame changed tick without advancing runtime',
+      );
+      assert.equal(
+        frame.sourceDistance,
+        previous.sourceDistance,
+        'retained worker frame changed actor pose without advancing runtime',
+      );
+      assert.equal(
+        frame.terrainFrameId,
+        previous.terrainFrameId,
+        'retained worker frame crossed Hill identity without advancing runtime',
+      );
+    }
   }
 }
 
@@ -127,6 +151,16 @@ export function analyzeActorFilmstrip(
     };
     adjacentTransitions.push(transition);
 
+    if (runtimeDeltaMs === 0 && transition.tickDelta === 0) {
+      suspicions.push(
+        suspicion(
+          'retained-frame-hold',
+          transition,
+          0.35,
+          `worker retained tick ${to.tickCount} across ${captureCadenceMs.toFixed(1)} ms of host presentation`,
+        ),
+      );
+    }
     if (
       to.lifecycleVisible &&
       to.rootCropSpeciesPixels <
@@ -239,6 +273,7 @@ function transitionSeverity(transition) {
     Math.min(1, transition.supportProfileMaxDelta),
     Math.max(0, 1 - transition.pixelRetention),
     Math.min(1, transition.worldRootDelta / 1.8),
+    transition.runtimeDeltaMs === 0 ? 0.35 : 0,
   );
 }
 
