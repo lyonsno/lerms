@@ -14,6 +14,8 @@ const EXPECTED_VIEWER =
   'lerms/hill-of-hills/primary-viewer-v0';
 const EXPECTED_ACTOR =
   'lerms/lerm-horde/primary-viewer-actor-frame-v0';
+const EXPECTED_PRESENTATION =
+  'lerms/lerm-horde/indexed-textured-axial-gpu-v0';
 const EXPECTED_QUERY = 'actor=lerm-horde-live';
 const CHROME =
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -36,6 +38,7 @@ const report = {
   hostTerrainIdentityVerified: false,
   oneCanonicalCanvasVerified: false,
   actorPixelsPresent: false,
+  indexedPresentationVerified: false,
   actorPixelsAbsentAfterDeparture: false,
   cameraInteractionVerified: false,
   cameraInputState: null,
@@ -119,7 +122,10 @@ async function runWitness() {
       10_000,
       'present actor sample',
     );
-    const presentPixels = await canvasPixels(browser);
+    const presentPixels = await canvasPixels(
+      browser,
+      present.presentation?.rootScreen,
+    );
     const presentShot = await captureScreenshot(
       browser,
       options.presentScreenshot,
@@ -143,8 +149,25 @@ async function runWitness() {
       present.canvasCount === 1 &&
       present.webglCarrierCanvasCount === 0 &&
       present.canvasRoute === EXPECTED_VIEWER;
+    report.indexedPresentationVerified =
+      present.presentation?.identity?.route ===
+        EXPECTED_PRESENTATION &&
+      present.presentation?.identity?.vertexCount === 148_118 &&
+      present.presentation?.identity?.faceCount === 188_385 &&
+      present.presentation?.identity?.indexed === true &&
+      present.presentation?.identity?.textured === true &&
+      present.presentation?.identity?.deformer ===
+        'axial-parallel-transport-wave-v1' &&
+      present.presentation?.identity?.terrainSupportStationCount ===
+        7 &&
+      present.presentation?.drawCount > 0 &&
+      present.presentation?.terrainFrameId ===
+        present.terrain.frameId &&
+      Number.isFinite(
+        present.presentation?.cpuSubmitMilliseconds,
+      );
     report.actorPixelsPresent =
-      presentPixels.redActorPixels >= 80 &&
+      presentPixels.rootCropSpeciesPixels >= 20 &&
       presentPixels.nonBackgroundPixels >= 1_000;
     report.present = {
       state: present,
@@ -178,9 +201,14 @@ async function runWitness() {
       'primary-viewer composition created a second renderer or canvas',
     );
     assert.equal(
+      report.indexedPresentationVerified,
+      true,
+      'effective indexed textured presentation identity was missing or substituted',
+    );
+    assert.equal(
       report.actorPixelsPresent,
       true,
-      'canonical canvas lacks a legible red fitted actor',
+      'canonical canvas lacks a legible textured actor at its reported Hill root',
     );
 
     report.phase = 'exercising-camera-and-live-motion';
@@ -197,7 +225,10 @@ async function runWitness() {
       10_000,
       'camera-moved live actor sample',
     );
-    const movedPixels = await canvasPixels(browser);
+    const movedPixels = await canvasPixels(
+      browser,
+      moved.presentation?.rootScreen,
+    );
     const movedShot = await captureScreenshot(
       browser,
       options.movedScreenshot,
@@ -234,8 +265,8 @@ async function runWitness() {
       'actor/camera/Hill advancement produced an identical screenshot',
     );
     assert.ok(
-      movedPixels.redActorPixels >= 80,
-      'fitted actor disappeared before runtime departure',
+      movedPixels.rootCropSpeciesPixels >= 20,
+      'textured actor disappeared from its reported root before runtime departure',
     );
 
     report.phase = 'verifying-departure-and-retained-history';
@@ -252,7 +283,10 @@ async function runWitness() {
       20_000,
       'actor departure',
     );
-    const departedPixels = await canvasPixels(browser);
+    const departedPixels = await canvasPixels(
+      browser,
+      departed.presentation?.rootScreen,
+    );
     const departedShot = await captureScreenshot(
       browser,
       options.departedScreenshot,
@@ -260,8 +294,15 @@ async function runWitness() {
     await delay(600);
     const settled = await currentState(browser);
     report.actorPixelsAbsentAfterDeparture =
-      departedPixels.redActorPixels <=
-        Math.max(8, Math.floor(presentPixels.redActorPixels * 0.02));
+      departed.host?.drawnLayerCount === 0 &&
+      departed.lifecycle?.visible === false &&
+      departedPixels.rootCropSpeciesPixels <=
+        Math.max(
+          12,
+          Math.floor(
+            presentPixels.rootCropSpeciesPixels * 0.05,
+          ),
+        );
     report.retainedTrafficAfterDeparture =
       departed.terrain.trafficChecksum !==
         present.terrain.trafficChecksum &&
@@ -348,7 +389,9 @@ async function currentState(browser) {
   })()`);
 }
 
-async function canvasPixels(browser) {
+async function canvasPixels(browser, rootScreen) {
+  const rootX = Number(rootScreen?.x);
+  const rootY = Number(rootScreen?.y);
   return browser.evaluate(`(() => {
     const canvas = document.querySelector('#lerms-canvas');
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -363,8 +406,15 @@ async function canvasPixels(browser) {
       canvas.height
     ).data;
     let redActorPixels = 0;
+    let rootCropSpeciesPixels = 0;
     let nonBackgroundPixels = 0;
-    for (let offset = 0; offset < pixels.length; offset += 16) {
+    const rootX = ${Number.isFinite(rootX) ? rootX : -1};
+    const rootY = ${Number.isFinite(rootY) ? rootY : -1};
+    const sampleStride = 4;
+    for (let offset = 0; offset < pixels.length; offset += sampleStride * 4) {
+      const pixelIndex = offset / 4;
+      const pixelX = pixelIndex % canvas.width;
+      const pixelY = Math.floor(pixelIndex / canvas.width);
       const red = pixels[offset];
       const green = pixels[offset + 1];
       const blue = pixels[offset + 2];
@@ -383,10 +433,22 @@ async function canvasPixels(browser) {
       ) {
         redActorPixels += 1;
       }
+      if (
+        Math.abs(pixelX - rootX) <= 48 &&
+        Math.abs(pixelY - rootY) <= 48 &&
+        alpha > 180 &&
+        red > 72 &&
+        green > 58 &&
+        red - blue > 28 &&
+        green - blue > 18
+      ) {
+        rootCropSpeciesPixels += 1;
+      }
     }
     return {
       sampledPixelCount: pixels.length / 16,
       redActorPixels,
+      rootCropSpeciesPixels,
       nonBackgroundPixels
     };
   })()`);

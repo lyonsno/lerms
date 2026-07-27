@@ -62,11 +62,36 @@ assert.equal(initialActorFrame.route.staleStatus, 'fresh');
 assert.equal(initialActorFrame.identity.carrierId, '719024');
 assert.equal(
   initialActorFrame.identity.speciesAuthority,
-  'non-lerm-engineering-carrier',
+  'kaminos.species-asset.v0',
 );
 assert.equal(initialActorFrame.lifecycle.visible, true);
 assert.equal(initialActorFrame.lifecycle.phase, 'traversing');
 assert.equal(initialActorFrame.pose?.motionPhase, 0);
+assert.equal(
+  initialActorFrame.pose?.squirm.phaseSource,
+  'route-distance-v0',
+);
+assert.equal(initialActorFrame.pose?.squirm.amplitude, 0.082);
+assert.equal(
+  initialActorFrame.pose?.squirm.terrainSupportProfile.length,
+  7,
+);
+assert.deepEqual(
+  initialActorFrame.pose?.squirm.terrainSupportProfile.map(
+    (sample) => sample.t,
+  ),
+  [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1],
+);
+assert.equal(
+  initialActorFrame.pose?.squirm.terrainSupportProfile.every(
+    (sample) => Number.isFinite(sample.localOffset),
+  ),
+  true,
+);
+assert.equal(
+  initialActorFrame.pose?.projection.terrainLength,
+  initial.terrain.params.length,
+);
 assert.deepEqual(initialActorFrame.pose?.rootFrame.origin, {
   x: initial.body?.rootWorld[0],
   y: initial.body?.rootWorld[1],
@@ -136,6 +161,10 @@ assert.equal(middleActorFrame.lifecycle.visible, true);
 assert.equal(middleActorFrame.lifecycle.elapsedMs, middle.elapsedMs);
 assert.equal(middleActorFrame.lifecycle.tickCount, middle.tickCount);
 assert.equal(middleActorFrame.pose?.motionPhase, middle.body.progress);
+assert.equal(
+  middleActorFrame.pose?.squirm.phase,
+  middle.body.sourceDistance * 2.35,
+);
 assert.equal(
   middleActorFrame.pose?.support.renderedHillSourceId,
   middle.terrainBuffer.source.frameId,

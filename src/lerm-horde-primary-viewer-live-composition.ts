@@ -8,7 +8,12 @@ import {
 } from './lerm-horde-primary-viewer-actor-frame.js';
 import {
   createLermHordePrimaryViewerActorLayer,
+  type LermHordePrimaryViewerActorLayerSource,
 } from './lerm-horde-primary-viewer-actor-layer.js';
+import {
+  type LermHordeIndexedGpuPresentationReceipt,
+  type LermHordeIndexedGpuPresenterIdentity,
+} from './lerm-horde-primary-viewer-gpu-presenter.js';
 import {
   LERM_HORDE_LIVE_RUNTIME_ROUTE,
   type LermHordeLiveRuntimeState,
@@ -31,11 +36,13 @@ export interface LermHordePrimaryViewerLiveSource {
   readonly state: LermHordeLiveRuntimeState;
   readonly durationMs: number;
   readonly completionElapsedMs: number;
+  readonly indexedPresentationIdentity:
+    LermHordeIndexedGpuPresenterIdentity;
+  readonly lastIndexedPresentation:
+    LermHordeIndexedGpuPresentationReceipt | null;
   advanceTo(elapsedMs: number): LermHordeLiveRuntimeState;
   currentActorFrame(): LermHordePrimaryViewerActorFrame;
-  evaluateBodyPositions(
-    actorFrame: LermHordePrimaryViewerActorFrame,
-  ): Float32Array | null;
+  presentIndexedBody: LermHordePrimaryViewerActorLayerSource['presentIndexedBody'];
 }
 
 export interface LermHordePrimaryViewerLiveCompositionReceipt {
@@ -59,6 +66,19 @@ export interface LermHordePrimaryViewerLiveCompositionReceipt {
   lifecycle: {
     phase: LermHordeLiveRuntimeState['phase'];
     visible: boolean;
+  };
+  presentation: {
+    identity: LermHordeIndexedGpuPresenterIdentity;
+    drawCount: number;
+    terrainFrameId: string | null;
+    sourceDistance: number | null;
+    phase: number | null;
+    rootScreen: {
+      x: number;
+      y: number;
+      depth: number;
+    } | null;
+    cpuSubmitMilliseconds: number | null;
   };
   terrain: {
     frameId: string;
@@ -101,8 +121,8 @@ export function createLermHordePrimaryViewerLiveComposition(
   let lastHostTimestampMs: number | undefined;
   const layer = createLermHordePrimaryViewerActorLayer({
     currentActorFrame: () => source.currentActorFrame(),
-    evaluateBodyPositions: (actorFrame) =>
-      source.evaluateBodyPositions(actorFrame),
+    presentIndexedBody: (frame, actorFrame) =>
+      source.presentIndexedBody(frame, actorFrame),
   });
 
   return {
@@ -141,6 +161,7 @@ export function createLermHordePrimaryViewerLiveComposition(
       );
       const actorFrame = source.currentActorFrame();
       const terrain = source.state.terrainBuffer;
+      const presentation = source.lastIndexedPresentation;
       return {
         schema: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
         route: {
@@ -165,6 +186,18 @@ export function createLermHordePrimaryViewerLiveComposition(
           phase: actorFrame.lifecycle.phase,
           visible: actorFrame.lifecycle.visible,
         },
+        presentation: {
+          identity: { ...source.indexedPresentationIdentity },
+          drawCount: presentation?.drawCount ?? 0,
+          terrainFrameId: presentation?.terrainFrameId ?? null,
+          sourceDistance: presentation?.sourceDistance ?? null,
+          phase: presentation?.phase ?? null,
+          rootScreen: presentation
+            ? { ...presentation.rootScreen }
+            : null,
+          cpuSubmitMilliseconds:
+            presentation?.cpuSubmitMilliseconds ?? null,
+        },
         terrain: {
           frameId: terrain.source.frameId,
           sampleChecksum: terrain.sampleChecksum,
@@ -188,7 +221,9 @@ function validateSource(
       source.completionElapsedMs > source.durationMs &&
       typeof source.advanceTo === 'function' &&
       typeof source.currentActorFrame === 'function' &&
-      typeof source.evaluateBodyPositions === 'function',
+      typeof source.presentIndexedBody === 'function' &&
+      source.indexedPresentationIdentity?.indexed === true &&
+      source.indexedPresentationIdentity.textured === true,
     'primary-viewer live composition requires the exact live Horde source',
   );
 }

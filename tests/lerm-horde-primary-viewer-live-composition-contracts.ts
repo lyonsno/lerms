@@ -17,6 +17,11 @@ import {
   type LermHordePrimaryViewerActorFrame,
 } from '../src/lerm-horde-primary-viewer-actor-frame.js';
 import {
+  LERM_HORDE_INDEXED_GPU_PRESENTER_ROUTE,
+  LERM_HORDE_SPECIES_FACE_COUNT,
+  LERM_HORDE_SPECIES_VERTEX_COUNT,
+} from '../src/lerm-horde-primary-viewer-gpu-presenter.js';
+import {
   HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
 } from '../src/terrain/hill-primary-viewer-actor-host.js';
 import type {
@@ -34,6 +39,16 @@ const source: LermHordePrimaryViewerLiveSource = {
   },
   durationMs: 2_800,
   completionElapsedMs: 3_700,
+  indexedPresentationIdentity: {
+    route: LERM_HORDE_INDEXED_GPU_PRESENTER_ROUTE,
+    vertexCount: LERM_HORDE_SPECIES_VERTEX_COUNT,
+    faceCount: LERM_HORDE_SPECIES_FACE_COUNT,
+    indexed: true,
+    textured: true,
+    deformer: 'axial-parallel-transport-wave-v1',
+    terrainSupportStationCount: 7,
+  },
+  lastIndexedPresentation: null,
   advanceTo(elapsedMs) {
     advances.push(elapsedMs);
     state = createState(
@@ -45,15 +60,7 @@ const source: LermHordePrimaryViewerLiveSource = {
   currentActorFrame() {
     return createActorFrame(state);
   },
-  evaluateBodyPositions() {
-    return state.phase === 'traversing'
-      ? new Float32Array([
-          0, 1, 0,
-          1, 1, 0,
-          0, 2, 0,
-        ])
-      : null;
-  },
+  presentIndexedBody() {},
 };
 
 assert.equal(
@@ -119,6 +126,15 @@ assert.equal(receipt.lifecycle.phase, 'departed');
 assert.equal(receipt.lifecycle.visible, false);
 assert.equal(receipt.clock.mode, 'live_viewer_timestamp');
 assert.equal(receipt.clock.timeScale, 0.2);
+assert.deepEqual(receipt.presentation, {
+  identity: source.indexedPresentationIdentity,
+  drawCount: 0,
+  terrainFrameId: null,
+  sourceDistance: null,
+  phase: null,
+  rootScreen: null,
+  cpuSubmitMilliseconds: null,
+});
 assert.deepEqual(receipt.terrain, {
   frameId: state.terrainBuffer.source.frameId,
   sampleChecksum: state.terrainBuffer.sampleChecksum,

@@ -12,6 +12,10 @@ import {
   type CreatureRootFrame,
 } from './kaminos-719024-fitted-body.js';
 import {
+  sampleHillOfHillsTerrain,
+  type HillOfHillsTerrain,
+} from './terrain/hill-of-hills.js';
+import {
   LERM_HORDE_LIVE_RUNTIME_ROUTE,
   type LermHordeLiveBodySample,
   type LermHordeLiveRuntimeState,
@@ -25,6 +29,12 @@ export const LERM_HORDE_PRIMARY_VIEWER_BODY_ASSET_URL =
   '/vendor/kaminos-6217fff8/artifacts/motion-ready-719024/creature.glb' as const;
 export const LERM_HORDE_PRIMARY_VIEWER_REGISTRATION_URL =
   '/vendor/kaminos-6217fff8/artifacts/lirm-719024-fitted-proxy-rig-mechanism-witness-v1/registration.json' as const;
+export const LERM_HORDE_TERRAIN_SUPPORT_STATION_COUNT = 7 as const;
+
+const SPECIES_INSTANCE_SCALE = 1.14;
+const SPECIES_TAIL_Z = 0.47;
+const SPECIES_HEAD_Z = -0.47;
+const SPECIES_PHASE_RADIANS_PER_WORLD_UNIT = 2.35;
 
 export interface LermHordePrimaryViewerActorFrame {
   schema: typeof LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA;
@@ -36,7 +46,7 @@ export interface LermHordePrimaryViewerActorFrame {
   };
   identity: {
     carrierId: '719024';
-    speciesAuthority: 'non-lerm-engineering-carrier';
+    speciesAuthority: 'kaminos.species-asset.v0';
     bodyAsset: {
       url: typeof LERM_HORDE_PRIMARY_VIEWER_BODY_ASSET_URL;
       sha256: typeof EXACT_3D_CARRIER_BODY_SHA256;
@@ -74,6 +84,19 @@ export interface LermHordePrimaryViewerActorFrame {
       renderedHillSourceId: string;
       hillRevision: string;
     };
+    squirm: {
+      amplitude: 0.082;
+      verticalAmplitude: 0.016;
+      phase: number;
+      phaseSource: 'route-distance-v0';
+      terrainSupportProfile: Array<{
+        t: number;
+        localOffset: number;
+      }>;
+    };
+    projection: {
+      terrainLength: number;
+    };
   } | null;
   terrain: {
     frameId: string;
@@ -88,7 +111,9 @@ export function createLermHordePrimaryViewerActorFrame(
   state: LermHordeLiveRuntimeState,
 ): LermHordePrimaryViewerActorFrame {
   validateLiveSource(state);
-  const pose = state.body ? createPose(state.body) : null;
+  const pose = state.body
+    ? createPose(state.body, state.terrain)
+    : null;
 
   return {
     schema: LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA,
@@ -100,7 +125,7 @@ export function createLermHordePrimaryViewerActorFrame(
     },
     identity: {
       carrierId: '719024',
-      speciesAuthority: 'non-lerm-engineering-carrier',
+      speciesAuthority: 'kaminos.species-asset.v0',
       bodyAsset: {
         url: LERM_HORDE_PRIMARY_VIEWER_BODY_ASSET_URL,
         sha256: EXACT_3D_CARRIER_BODY_SHA256,
@@ -169,6 +194,7 @@ function validateLiveSource(state: LermHordeLiveRuntimeState): void {
 
 function createPose(
   body: LermHordeLiveBodySample,
+  terrain: HillOfHillsTerrain,
 ): NonNullable<LermHordePrimaryViewerActorFrame['pose']> {
   requireActorFrame(
     Number.isFinite(body.sourceDistance) &&
@@ -211,7 +237,53 @@ function createPose(
         body.support.renderedHillSourceId,
       hillRevision: body.support.provenance.revision,
     },
+    squirm: {
+      amplitude: 0.082,
+      verticalAmplitude: 0.016,
+      phase:
+        body.sourceDistance *
+        SPECIES_PHASE_RADIANS_PER_WORLD_UNIT,
+      phaseSource: 'route-distance-v0',
+      terrainSupportProfile: terrainSupportProfile(
+        terrain,
+        rootFrame,
+      ),
+    },
+    projection: {
+      terrainLength: terrain.params.length,
+    },
   };
+}
+
+function terrainSupportProfile(
+  terrain: HillOfHillsTerrain,
+  rootFrame: CreatureRootFrame,
+): Array<{ t: number; localOffset: number }> {
+  return Array.from(
+    { length: LERM_HORDE_TERRAIN_SUPPORT_STATION_COUNT },
+    (_, index) => {
+      const t =
+        index / (LERM_HORDE_TERRAIN_SUPPORT_STATION_COUNT - 1);
+      const localZ =
+        (SPECIES_TAIL_Z +
+          (SPECIES_HEAD_Z - SPECIES_TAIL_Z) * t) *
+        SPECIES_INSTANCE_SCALE;
+      const worldX =
+        rootFrame.origin.x + rootFrame.tangent.x * localZ;
+      const worldZ =
+        rootFrame.origin.z + rootFrame.tangent.z * localZ;
+      const height = sampleHillOfHillsTerrain(
+        terrain,
+        worldX,
+        worldZ,
+      ).height;
+      return {
+        t,
+        localOffset:
+          (height - rootFrame.origin.y) / SPECIES_INSTANCE_SCALE,
+      };
+    },
+  );
 }
 
 function requireActorFrame(
