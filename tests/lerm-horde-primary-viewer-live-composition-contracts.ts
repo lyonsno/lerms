@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
   LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
-  LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE,
   LERM_HORDE_PRIMARY_VIEWER_QUERY_KEY,
   LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE,
   LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE,
@@ -18,6 +17,11 @@ import {
   LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
   type LermHordePrimaryViewerActorFrame,
 } from '../src/lerm-horde-primary-viewer-actor-frame.js';
+import {
+  LERM_HORDE_INDEXED_GPU_PRESENTER_ROUTE,
+  LERM_HORDE_SPECIES_FACE_COUNT,
+  LERM_HORDE_SPECIES_VERTEX_COUNT,
+} from '../src/lerm-horde-primary-viewer-gpu-presenter.js';
 import {
   HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
 } from '../src/terrain/hill-primary-viewer-actor-host.js';
@@ -36,6 +40,16 @@ const source: LermHordePrimaryViewerLiveSource = {
   },
   durationMs: 2_800,
   completionElapsedMs: 3_700,
+  indexedPresentationIdentity: {
+    route: LERM_HORDE_INDEXED_GPU_PRESENTER_ROUTE,
+    vertexCount: LERM_HORDE_SPECIES_VERTEX_COUNT,
+    faceCount: LERM_HORDE_SPECIES_FACE_COUNT,
+    indexed: true,
+    textured: true,
+    deformer: 'axial-parallel-transport-wave-v1',
+    terrainSupportStationCount: 7,
+  },
+  lastIndexedPresentation: null,
   advanceTo(elapsedMs) {
     advances.push(elapsedMs);
     state = createState(
@@ -47,15 +61,7 @@ const source: LermHordePrimaryViewerLiveSource = {
   currentActorFrame() {
     return createActorFrame(state);
   },
-  evaluateBodyPositions() {
-    return state.phase === 'traversing'
-      ? new Float32Array([
-          0, 1, 0,
-          1, 1, 0,
-          0, 2, 0,
-        ])
-      : null;
-  },
+  presentIndexedBody() {},
 };
 
 assert.equal(
@@ -139,8 +145,7 @@ assert.deepEqual(receipt.route, {
   effective: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
   viewer: HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
   actor: LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
-  actorRenderer:
-    LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE,
+  actorRenderer: LERM_HORDE_INDEXED_GPU_PRESENTER_ROUTE,
   runtime: LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE,
   runtimeBackend: 'synchronous-reference',
   fallbackStatus: 'none',
@@ -171,6 +176,15 @@ assert.deepEqual(
   },
   'the receipt must make atomic publication identity and displayed age explicit',
 );
+assert.deepEqual(receipt.presentation, {
+  identity: source.indexedPresentationIdentity,
+  drawCount: 0,
+  terrainFrameId: null,
+  sourceDistance: null,
+  phase: null,
+  rootScreen: null,
+  cpuSubmitMilliseconds: null,
+});
 assert.deepEqual(receipt.terrain, {
   frameId: state.terrainBuffer.source.frameId,
   sampleChecksum: state.terrainBuffer.sampleChecksum,

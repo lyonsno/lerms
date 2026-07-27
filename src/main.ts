@@ -2104,6 +2104,9 @@ interface LermHordePrimaryViewerWindowState {
     completionElapsedMs: number;
     settledAfterDeparture: boolean;
   } | null;
+  presentation:
+    | LermHordePrimaryViewerLiveCompositionReceipt['presentation']
+    | null;
   terrain: {
     frameId: string;
     sampleChecksum: string;
@@ -2158,6 +2161,15 @@ function publishLermHordePrimaryViewerState(): void {
           elapsedMs: receipt.clock.elapsedMs,
           completionElapsedMs: receipt.clock.completionElapsedMs,
           settledAfterDeparture: receipt.clock.settledAfterDeparture
+        }
+      : null,
+    presentation: receipt
+      ? {
+          ...receipt.presentation,
+          identity: { ...receipt.presentation.identity },
+          rootScreen: receipt.presentation.rootScreen
+            ? { ...receipt.presentation.rootScreen }
+            : null,
         }
       : null,
     terrain: receipt ? { ...receipt.terrain } : null,

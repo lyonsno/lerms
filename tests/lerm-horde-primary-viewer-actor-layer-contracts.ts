@@ -78,17 +78,14 @@ assert.throws(
   /incompatible detached/i,
   'detached evaluation cannot weaken exact fitted-body provenance',
 );
-let bodyPositions: Float32Array | null = new Float32Array([
-  -0.4, 1.2, -0.2,
-  0.4, 1.2, -0.2,
-  0, 1.8, -0.1,
-  -0.3, 1.25, 0.2,
-  0, 1.75, 0.25,
-  0.3, 1.25, 0.2,
-]);
+let presentationError: Error | null = null;
+let indexedPresentationCount = 0;
 const layer = createLermHordePrimaryViewerActorLayer({
   currentActorFrame: () => actorFrame,
-  evaluateBodyPositions: () => bodyPositions,
+  presentIndexedBody: () => {
+    if (presentationError) throw presentationError;
+    indexedPresentationCount += 1;
+  },
 });
 
 assert.equal(
@@ -107,23 +104,23 @@ assert.deepEqual(layer.authority(), {
 layer.draw(createDrawFrame());
 assert.equal(
   projected.length,
-  6,
-  'the actor layer must project every exact fitted triangle vertex through Hill authority',
+  0,
+  'the indexed actor layer must not project source vertices through JavaScript',
 );
 assert.equal(
   calls.filter((call) => call === 'fill').length,
-  2,
-  'two source triangles must produce two filled canvas triangles',
+  0,
+  'the indexed actor layer must not issue one Canvas2D fill per source triangle',
 );
 assert.equal(
   calls.filter((call) => call === 'stroke').length,
-  2,
-  'source triangles must retain a legible body edge in the canonical canvas',
+  0,
+  'the indexed actor layer must not issue one Canvas2D stroke per source triangle',
 );
 assert.equal(
-  calls.some((call) => call.startsWith('fillStyle:')),
-  true,
-  'the fitted body triangles must carry actor-owned material color',
+  indexedPresentationCount,
+  1,
+  'the actor layer must present the exact indexed body once',
 );
 
 assert.throws(
@@ -140,12 +137,13 @@ assert.throws(
   'a stale Hill draw frame must fail before actor pixels are emitted',
 );
 
-bodyPositions = null;
+presentationError = new Error('indexed body unavailable');
 assert.throws(
   () => layer.draw(createDrawFrame()),
-  /body positions/i,
-  'a visible actor cannot close through an absent fitted body',
+  /indexed body unavailable/i,
+  'a visible actor cannot close through an absent indexed presentation',
 );
+presentationError = null;
 
 actorFrame = {
   ...actorFrame,
@@ -178,7 +176,7 @@ function createActorFrame(): LermHordePrimaryViewerActorFrame {
     },
     identity: {
       carrierId: '719024',
-      speciesAuthority: 'non-lerm-engineering-carrier',
+      speciesAuthority: 'kaminos.species-asset.v0',
       bodyAsset: {
         url: LERM_HORDE_PRIMARY_VIEWER_BODY_ASSET_URL,
         sha256: EXACT_3D_CARRIER_BODY_SHA256,
@@ -224,6 +222,22 @@ function createActorFrame(): LermHordePrimaryViewerActorFrame {
         sampledHillSourceId: terrain.frameId,
         renderedHillSourceId: terrain.frameId,
         hillRevision: 'f6458e5',
+      },
+      squirm: {
+        amplitude: 0.082,
+        verticalAmplitude: 0.016,
+        phase: 2.82,
+        phaseSource: 'route-distance-v0',
+        terrainSupportProfile: Array.from(
+          { length: 7 },
+          (_, index) => ({
+            t: index / 6,
+            localOffset: index * 0.01,
+          }),
+        ),
+      },
+      projection: {
+        terrainLength: 15,
       },
     },
     terrain: {
