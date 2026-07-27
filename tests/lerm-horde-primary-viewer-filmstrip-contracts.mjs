@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 
 import {
   analyzeActorFilmstrip,
@@ -179,6 +186,79 @@ for (const [label, mutate, pattern] of [
   );
 }
 
+for (const {
+  label,
+  frames,
+  expectedTrustedCount,
+  errorPattern,
+} of adversarialFixtureCases(smoothFrames)) {
+  const outputRoot = mkdtempSync(
+    `${tmpdir()}/lerms-filmstrip-adversarial-`,
+  );
+  const fixturePath = resolve(outputRoot, 'fixture.json');
+  const reportPath = resolve(outputRoot, 'report.json');
+  writeFileSync(
+    fixturePath,
+    `${JSON.stringify({ frames }, null, 2)}\n`,
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      'tests/lerm-horde-primary-viewer-filmstrip-witness.mjs',
+      '--adversarial-fixture',
+      fixturePath,
+      '--frame-count',
+      '3',
+      '--cadence-ms',
+      '150',
+      '--zoom',
+      '1.75',
+      '--output-root',
+      outputRoot,
+      '--report',
+      reportPath,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    },
+  );
+  assert.notEqual(
+    result.status,
+    0,
+    `${label} must exit nonzero`,
+  );
+  const failureReport = JSON.parse(
+    readFileSync(reportPath, 'utf8'),
+  );
+  assert.equal(
+    failureReport.evidenceMode,
+    'adversarial-fixture',
+    `${label} report must fail loud as non-browser evidence`,
+  );
+  assert.equal(failureReport.ok, false, `${label} cannot close`);
+  assert.equal(
+    failureReport.failurePhase,
+    'capturing-fixed-cadence-frames',
+    `${label} report must name the exact failure phase`,
+  );
+  assert.equal(
+    failureReport.frames.length,
+    expectedTrustedCount,
+    `${label} report must preserve only the last trustworthy observations`,
+  );
+  assert.match(
+    failureReport.error,
+    errorPattern,
+    `${label} report must preserve the falsifying reason`,
+  );
+  assert.equal(
+    failureReport.lastTrustworthyObservation?.index,
+    expectedTrustedCount - 1,
+    `${label} report must name the last trustworthy observation`,
+  );
+}
+
 const dropoutFrames = [
   ...smoothFrames.slice(0, 2),
   {
@@ -266,6 +346,59 @@ assert.ok(
   ),
   'a retained worker frame must remain visible as a stutter suspicion',
 );
+{
+  const outputRoot = mkdtempSync(
+    `${tmpdir()}/lerms-filmstrip-retained-control-`,
+  );
+  const fixturePath = resolve(outputRoot, 'fixture.json');
+  const reportPath = resolve(outputRoot, 'report.json');
+  writeFileSync(
+    fixturePath,
+    `${JSON.stringify({ frames: retainedFrames }, null, 2)}\n`,
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      'tests/lerm-horde-primary-viewer-filmstrip-witness.mjs',
+      '--adversarial-fixture',
+      fixturePath,
+      '--frame-count',
+      '2',
+      '--cadence-ms',
+      '150',
+      '--zoom',
+      '1.75',
+      '--output-root',
+      outputRoot,
+      '--report',
+      reportPath,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    },
+  );
+  assert.notEqual(
+    result.status,
+    0,
+    'a scripted retained control cannot become browser evidence',
+  );
+  const retainedReport = JSON.parse(
+    readFileSync(reportPath, 'utf8'),
+  );
+  assert.equal(
+    retainedReport.fixtureValidationStatus,
+    'passed',
+    'the process-level witness must accept a lawful retained frame',
+  );
+  assert.equal(
+    retainedReport.failurePhase,
+    'adversarial-fixture-non-evidence',
+    'a valid scripted fixture must still fail loud as non-evidence',
+  );
+  assert.equal(retainedReport.frames.length, 2);
+  assert.equal(retainedReport.ok, false);
+}
 assert.throws(
   () =>
     validateActorFilmstripFrames([
@@ -365,6 +498,52 @@ function frame(
     },
     screenshotSha256: String(index + 1).padStart(64, '0'),
   };
+}
+
+function adversarialFixtureCases(smoothFrames) {
+  const failed = smoothFrames.map((candidate) =>
+    structuredClone(candidate),
+  );
+  failed[1].status = 'failed';
+  failed[1].error = 'primary-viewer worker publication failure';
+
+  const partial = smoothFrames.map((candidate) =>
+    structuredClone(candidate),
+  );
+  partial[1].publication.completeness = 'partial';
+
+  const checksum = smoothFrames.map((candidate) =>
+    structuredClone(candidate),
+  );
+  checksum[1].hostTerrain.topologyChecksum =
+    'substituted-topology';
+
+  return [
+    {
+      label: 'mid-capture worker failure',
+      frames: failed,
+      expectedTrustedCount: 1,
+      errorPattern: /worker reported an error|status is not live/i,
+    },
+    {
+      label: 'partial publication',
+      frames: partial,
+      expectedTrustedCount: 1,
+      errorPattern: /partial or mixed atomic publication/i,
+    },
+    {
+      label: 'same-frame Hill checksum substitution',
+      frames: checksum,
+      expectedTrustedCount: 1,
+      errorPattern: /Hill identity or checksum/i,
+    },
+    {
+      label: 'requested-count truncation',
+      frames: smoothFrames.slice(0, 2),
+      expectedTrustedCount: 2,
+      errorPattern: /requested frame count|partial filmstrip/i,
+    },
+  ];
 }
 
 console.log('Lerm Horde primary-viewer filmstrip contracts passed');

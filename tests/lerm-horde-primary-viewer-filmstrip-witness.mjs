@@ -37,6 +37,9 @@ const CHROME =
 const options = parseArgs(process.argv.slice(2));
 const report = {
   schema: SCHEMA,
+  evidenceMode: options.adversarialFixture
+    ? 'adversarial-fixture'
+    : 'browser-capture',
   requestedUrl: options.url,
   effectiveUrl: null,
   requestedCadenceMs: options.cadenceMs,
@@ -59,6 +62,7 @@ const report = {
   ok: false,
   continuityStatus: 'unverified',
   primaryOutputWritten: false,
+  lastTrustworthyObservation: null,
   frameDirectory: options.frameDirectory,
   contactSheet: options.contactSheet,
   contactSheetHtml: options.contactSheetHtml,
@@ -259,6 +263,8 @@ async function runWitness() {
         report.frames.at(-1),
       );
       report.frames.push(frame);
+      report.lastTrustworthyObservation =
+        trustworthyObservation(frame);
     }
     assert.equal(
       report.frames.length,
@@ -371,6 +377,55 @@ async function runWitness() {
   console.log(
     `Lerm Horde actor filmstrip captured ${report.frames.length} frames with continuity ${report.continuityStatus}: ${options.report}`,
   );
+}
+
+async function runAdversarialFixture() {
+  try {
+    mkdirSync(dirname(options.report), { recursive: true });
+    report.phase = 'capturing-fixed-cadence-frames';
+    const fixture = JSON.parse(
+      readFileSync(options.adversarialFixture, 'utf8'),
+    );
+    assert.ok(
+      Array.isArray(fixture?.frames),
+      'adversarial fixture requires a frame sequence',
+    );
+    for (let index = 0; index < fixture.frames.length; index += 1) {
+      const frame = structuredClone(fixture.frames[index]);
+      validateActorFilmstripFrame(
+        frame,
+        index,
+        report.frames.at(-1),
+      );
+      report.frames.push(frame);
+      report.lastTrustworthyObservation =
+        trustworthyObservation(frame);
+    }
+    validateActorFilmstripFrames(report.frames, {
+      expectedFrameCount: options.frameCount,
+    });
+    report.fixtureValidationStatus = 'passed';
+    report.failurePhase = 'adversarial-fixture-non-evidence';
+    throw new Error(
+      'adversarial fixture validated but cannot produce browser evidence',
+    );
+  } catch (error) {
+    report.fixtureValidationStatus ??= 'rejected';
+    report.failurePhase ??= report.phase;
+    report.error =
+      error instanceof Error ? error.stack : String(error);
+    report.phase = 'failed';
+    report.continuityStatus = 'capture-failed';
+  } finally {
+    writeFileSync(
+      options.report,
+      `${JSON.stringify(report, null, 2)}\n`,
+    );
+  }
+  console.error(
+    `Lerm Horde adversarial filmstrip fixture failed during ${report.failurePhase}: ${report.error}`,
+  );
+  process.exitCode = 1;
 }
 
 async function currentState(browser) {
@@ -568,6 +623,18 @@ function writeCapturedPng(outputPath, pngBase64) {
   };
 }
 
+function trustworthyObservation(frame) {
+  return {
+    index: frame.index,
+    observationToken: frame.observationToken,
+    terrainFrameId: frame.terrainFrameId,
+    generation: frame.publication.generation,
+    sourceElapsedMs: frame.publication.sourceElapsedMs,
+    tickCount: frame.tickCount,
+    drawCount: frame.drawCount,
+  };
+}
+
 async function setCameraZoom(
   browser,
   initialZoom,
@@ -725,6 +792,9 @@ function parseArgs(args) {
       values.get('contact-sheet-html') ??
         `${outputRoot}/filmstrip.html`,
     ),
+    adversarialFixture: values.get('adversarial-fixture')
+      ? resolve(values.get('adversarial-fixture'))
+      : null,
   };
 }
 
@@ -890,5 +960,9 @@ async function waitForChildExit(child, timeoutMs) {
   });
 }
 
-await runWitness();
+if (options.adversarialFixture) {
+  await runAdversarialFixture();
+} else {
+  await runWitness();
+}
 process.exit(report.ok ? 0 : 1);
