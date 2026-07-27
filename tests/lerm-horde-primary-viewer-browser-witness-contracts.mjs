@@ -15,6 +15,7 @@ for (const requiredIdentity of [
   'lerms/hill-of-hills/primary-viewer-v0',
   'lerms/lerm-horde/primary-viewer-actor-frame-v0',
   'lerms/lerm-horde/primary-viewer-live-worker-v0',
+  'lerms/lerm-horde/indexed-textured-axial-gpu-v0',
   'actor=lerm-horde-live',
 ]) {
   assert.match(
@@ -70,8 +71,8 @@ assert.match(
 );
 assert.match(
   composition,
-  /createLermHordePrimaryViewerWebglRasterizer/,
-  'the canonical live composition must route the dense exact carrier through the retained WebGL rasterizer',
+  /indexedPresentationIdentity|LERM_HORDE_INDEXED_GPU_PRESENTER_ROUTE/,
+  'the canonical worker composition must preserve the admitted indexed textured actor presenter rather than substitute the red proxy rasterizer',
 );
 assert.match(
   witness,
