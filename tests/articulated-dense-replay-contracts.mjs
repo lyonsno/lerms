@@ -23,6 +23,9 @@ assert.equal(
   'hand-state-runtime/deterministic-articulated-replay-not-camera-v1',
 );
 assert.equal(fixture.geometryMode, 'native_mano_regeneration');
+assert.equal(fixture.palmSolverMode, 'robust_palm_procrustes_v1');
+assert.equal(fixture.poseSolverMode, 'chain_coupled_anatomical_v1');
+assert.equal(fixture.poseSolverDofCount, 20);
 assert.equal(fixture.vertexCount, 778);
 assert.equal(fixture.faceCount, 1538);
 assert.equal(fixture.frames.length, fixture.frameCount);
@@ -56,6 +59,8 @@ assert.match(witnessSource, /lerms\.articulated-dense-witness\.v1/, 'witness wri
 assert.match(witnessSource, /failurePhase/, 'witness records pre-output failure phase');
 assert.match(witnessSource, /lastTrustworthyEvidence/, 'witness records its last trustworthy evidence');
 assert.match(witnessSource, /deterministic_fixture_not_live_camera/, 'witness requires fixture authority');
+assert.match(witnessSource, /robust_palm_procrustes_v1/, 'witness requires the exact robust palm solver');
+assert.match(witnessSource, /chain_coupled_anatomical_v1/, 'witness requires the exact anatomical pose solver');
 assert.match(witnessContractSource, /fixture_density_bench_not_live_hand/, 'witness requires fixture fluid authority');
 assert.match(witnessSource, /currentFrameIndex/, 'witness records dense frame progression');
 assert.match(witnessSource, /Page\.captureScreenshot/, 'witness captures rendered pixels');

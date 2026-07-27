@@ -93,6 +93,8 @@ const maxFrameAgeMs = 750;
 const LIVE_FLUID_ENVELOPE_ASSAY_ROUTE = 'lerms.live-fluid-envelope.synthetic-assay.v0' as const;
 const ARTICULATED_FIXTURE_SCHEMA = 'lerms.articulated-mano-dense-fixture.v1' as const;
 const ARTICULATED_FIXTURE_ROUTE = 'hand-state-runtime/deterministic-articulated-replay-not-camera-v1' as const;
+const ARTICULATED_PALM_SOLVER = 'robust_palm_procrustes_v1' as const;
+const ARTICULATED_POSE_SOLVER = 'chain_coupled_anatomical_v1' as const;
 
 interface ArticulatedFixtureFrame {
   frameIndex: number;
@@ -101,6 +103,9 @@ interface ArticulatedFixtureFrame {
   diagnostics: {
     jointStepLimitRad: number;
     maxJointStepAppliedRad: number;
+    palmSolverMode: typeof ARTICULATED_PALM_SOLVER;
+    poseSolverMode: typeof ARTICULATED_POSE_SOLVER;
+    poseSolverDofCount: 20;
   };
 }
 
@@ -109,6 +114,9 @@ interface ArticulatedFixture {
   sourceAuthority: 'deterministic_fixture_not_live_camera';
   effectiveRoute: typeof ARTICULATED_FIXTURE_ROUTE;
   geometryMode: 'native_mano_regeneration';
+  palmSolverMode: typeof ARTICULATED_PALM_SOLVER;
+  poseSolverMode: typeof ARTICULATED_POSE_SOLVER;
+  poseSolverDofCount: 20;
   frameRate: number;
   frameCount: number;
   vertexCount: 778;
@@ -352,6 +360,17 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   adaptiveStepQuality: number | null;
   idealFitResidualMean: number | null;
   idealFitImprovementRatio: number | null;
+  palmSolverMode: NormalizedManoFrame['palmSolverMode'];
+  palmSolverResidualMean: number | null;
+  palmSolverInlierFraction: number | null;
+  poseSolverMode: NormalizedManoFrame['poseSolverMode'];
+  poseSolverIterations: number | null;
+  poseSolverDofCount: number | null;
+  poseSolverObjectiveInitial: number | null;
+  poseSolverObjectiveFinal: number | null;
+  poseSolverRobustInlierFraction: number | null;
+  poseSolverConstraintSaturation: number | null;
+  poseSolverDistalCouplingResidualRad: number | null;
   anchorReplay: NormalizedManoFrame['anchorReplay'];
   fingerExtension: NormalizedManoFrame['fingerExtension'];
   fallbackState: null;
@@ -1379,6 +1398,18 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     adaptiveStepQuality: frame.adaptiveStepQuality,
     idealFitResidualMean: frame.idealFitResidualMean,
     idealFitImprovementRatio: frame.idealFitImprovementRatio,
+    palmSolverMode: frame.palmSolverMode,
+    palmSolverResidualMean: frame.palmSolverResidualMean,
+    palmSolverInlierFraction: frame.palmSolverInlierFraction,
+    poseSolverMode: frame.poseSolverMode,
+    poseSolverIterations: frame.poseSolverIterations,
+    poseSolverDofCount: frame.poseSolverDofCount,
+    poseSolverObjectiveInitial: frame.poseSolverObjectiveInitial,
+    poseSolverObjectiveFinal: frame.poseSolverObjectiveFinal,
+    poseSolverRobustInlierFraction: frame.poseSolverRobustInlierFraction,
+    poseSolverConstraintSaturation: frame.poseSolverConstraintSaturation,
+    poseSolverDistalCouplingResidualRad:
+      frame.poseSolverDistalCouplingResidualRad,
     anchorReplay: frame.anchorReplay,
     fingerExtension: frame.fingerExtension,
     fallbackState: null,
@@ -1844,6 +1875,9 @@ function collectLiveHandDebugState(): Record<string, unknown> {
       sourceAuthority: articulatedFixture.sourceAuthority,
       effectiveRoute: articulatedFixture.effectiveRoute,
       geometryMode: articulatedFixture.geometryMode,
+      palmSolverMode: articulatedFixture.palmSolverMode,
+      poseSolverMode: articulatedFixture.poseSolverMode,
+      poseSolverDofCount: articulatedFixture.poseSolverDofCount,
       frameRate: articulatedFixture.frameRate,
       frameCount: articulatedFixture.frameCount,
       currentFrameIndex: articulatedFixtureFrameIndex,
@@ -2104,6 +2138,9 @@ if (routeConfigError) {
         || fixture.sourceAuthority !== 'deterministic_fixture_not_live_camera'
         || fixture.effectiveRoute !== ARTICULATED_FIXTURE_ROUTE
         || fixture.geometryMode !== 'native_mano_regeneration'
+        || fixture.palmSolverMode !== ARTICULATED_PALM_SOLVER
+        || fixture.poseSolverMode !== ARTICULATED_POSE_SOLVER
+        || fixture.poseSolverDofCount !== 20
       ) {
         throw new Error('articulated MANO fixture route identity mismatch');
       }
@@ -2127,6 +2164,9 @@ if (routeConfigError) {
           || !Array.isArray(frame.keypoints3d)
           || frame.keypoints3d.length !== 21
           || !frame.diagnostics
+          || frame.diagnostics.palmSolverMode !== ARTICULATED_PALM_SOLVER
+          || frame.diagnostics.poseSolverMode !== ARTICULATED_POSE_SOLVER
+          || frame.diagnostics.poseSolverDofCount !== 20
           || frame.diagnostics.maxJointStepAppliedRad > frame.diagnostics.jointStepLimitRad + 1e-8
         ) {
           throw new Error('articulated MANO fixture contains an invalid frame');
@@ -2136,7 +2176,7 @@ if (routeConfigError) {
       await applyDensityBenchFixture('five-finger');
       presentArticulatedFixtureFrame(0);
       articulatedFixtureStartedAt = performance.now();
-      routeTruth.textContent = `${ARTICULATED_FIXTURE_ROUTE} | deterministic_fixture_not_live_camera | native MANO 778v / 1538f | five-finger Juice ${liveJuiceBudget.effectiveBudget.toFixed(0)}`;
+      routeTruth.textContent = `${ARTICULATED_FIXTURE_ROUTE} | ${ARTICULATED_POSE_SOLVER} | deterministic_fixture_not_live_camera | native MANO 778v / 1538f | five-finger Juice ${liveJuiceBudget.effectiveBudget.toFixed(0)}`;
       setStatus('dense articulated MANO replay under fixture fluid load', 'live');
       toggle.disabled = true;
       routeModeControl.disabled = true;

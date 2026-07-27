@@ -738,6 +738,17 @@ const hybridState = {
       adaptiveStepQuality: 1 / 3,
       idealFitResidualMean: 0.018,
       idealFitImprovementRatio: 0.4375,
+      palmSolverMode: 'robust_palm_procrustes_v1',
+      palmSolverResidualMean: 0.003,
+      palmSolverInlierFraction: 1,
+      poseSolverMode: 'chain_coupled_anatomical_v1',
+      poseSolverIterations: 3,
+      poseSolverDofCount: 20,
+      poseSolverObjectiveInitial: 0.0018,
+      poseSolverObjectiveFinal: 0.0007,
+      poseSolverRobustInlierFraction: 0.8,
+      poseSolverConstraintSaturation: 0.1,
+      poseSolverDistalCouplingResidualRad: 0.12,
       anchorReplay: {
         mode: 'capture_time_fast_observation_replay_v1',
         anchorCaptureTimestampMs: 1_000,
@@ -785,6 +796,21 @@ assert(hybrid.jointStepBaseLimitRad === 0.04, 'preserves the fixed-speed counter
 assert(hybrid.adaptiveStepQuality === 1 / 3, 'preserves the adaptive trust score');
 assert(hybrid.idealFitResidualMean === 0.018, 'preserves the trust-bounded ideal fit residual');
 assert(hybrid.idealFitImprovementRatio === 0.4375, 'preserves ideal improvement over the anchor');
+assert(hybrid.palmSolverMode === 'robust_palm_procrustes_v1', 'preserves robust palm solver identity');
+assert(hybrid.palmSolverInlierFraction === 1, 'preserves robust palm inlier truth');
+assert(hybrid.poseSolverMode === 'chain_coupled_anatomical_v1', 'preserves chain-coupled pose solver identity');
+assert(hybrid.poseSolverDofCount === 20, 'preserves reduced anatomical coordinate count');
+assert(hybrid.poseSolverIterations === 3, 'preserves pose solve iteration count');
+assert(
+  hybrid.poseSolverObjectiveFinal === 0.0007
+    && hybrid.poseSolverObjectiveFinal <= hybrid.poseSolverObjectiveInitial!,
+  'preserves monotonic pose objective truth',
+);
+assert(hybrid.poseSolverConstraintSaturation === 0.1, 'preserves anatomical bound saturation');
+assert(
+  hybrid.poseSolverDistalCouplingResidualRad === 0.12,
+  'preserves distal-chain coupling residual',
+);
 assert(
   hybrid.anchorReplay?.mode === 'capture_time_fast_observation_replay_v1'
     && hybrid.anchorReplay.observationCount === 2
@@ -1013,6 +1039,32 @@ assertThrows(
     },
   }),
   'adaptive joint correction limit is below its fixed-speed counterfactual',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        poseSolverMode: 'independent_bone_swings',
+      },
+    },
+  }),
+  'hybrid frame must expose the chain-coupled anatomical pose solver',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        poseSolverObjectiveFinal: 0.002,
+      },
+    },
+  }),
+  'pose solver final objective exceeds its initial objective',
 );
 
 assertThrows(

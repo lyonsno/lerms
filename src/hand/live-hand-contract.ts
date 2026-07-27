@@ -106,6 +106,17 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   adaptiveStepQuality: number | null;
   idealFitResidualMean: number | null;
   idealFitImprovementRatio: number | null;
+  palmSolverMode: 'robust_palm_procrustes_v1' | null;
+  palmSolverResidualMean: number | null;
+  palmSolverInlierFraction: number | null;
+  poseSolverMode: 'chain_coupled_anatomical_v1' | null;
+  poseSolverIterations: number | null;
+  poseSolverDofCount: number | null;
+  poseSolverObjectiveInitial: number | null;
+  poseSolverObjectiveFinal: number | null;
+  poseSolverRobustInlierFraction: number | null;
+  poseSolverConstraintSaturation: number | null;
+  poseSolverDistalCouplingResidualRad: number | null;
   anchorReplay: AnchorReplayTruth | null;
   fingerExtension: {
     target: FingerExtensionTruth;
@@ -516,6 +527,17 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let adaptiveStepQuality: number | null = null;
   let idealFitResidualMean: number | null = null;
   let idealFitImprovementRatio: number | null = null;
+  let palmSolverMode: NormalizedManoFrame['palmSolverMode'] = null;
+  let palmSolverResidualMean: number | null = null;
+  let palmSolverInlierFraction: number | null = null;
+  let poseSolverMode: NormalizedManoFrame['poseSolverMode'] = null;
+  let poseSolverIterations: number | null = null;
+  let poseSolverDofCount: number | null = null;
+  let poseSolverObjectiveInitial: number | null = null;
+  let poseSolverObjectiveFinal: number | null = null;
+  let poseSolverRobustInlierFraction: number | null = null;
+  let poseSolverConstraintSaturation: number | null = null;
+  let poseSolverDistalCouplingResidualRad: number | null = null;
   let anchorReplay: AnchorReplayTruth | null = null;
   let fingerExtension: NormalizedManoFrame['fingerExtension'] = null;
   if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
@@ -587,6 +609,68 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       diagnostics.idealFitImprovementRatio,
       'idealFitImprovementRatio',
     );
+    const rawPalmSolverMode = text(diagnostics.palmSolverMode, 'palmSolverMode');
+    if (rawPalmSolverMode !== 'robust_palm_procrustes_v1') {
+      throw new Error('hybrid frame must expose the robust palm Procrustes solver');
+    }
+    palmSolverMode = rawPalmSolverMode;
+    palmSolverResidualMean = finiteNonNegative(
+      diagnostics.palmSolverResidualMean,
+      'palmSolverResidualMean',
+    );
+    palmSolverInlierFraction = finiteNonNegative(
+      diagnostics.palmSolverInlierFraction,
+      'palmSolverInlierFraction',
+    );
+    const rawPoseSolverMode = text(diagnostics.poseSolverMode, 'poseSolverMode');
+    if (rawPoseSolverMode !== 'chain_coupled_anatomical_v1') {
+      throw new Error('hybrid frame must expose the chain-coupled anatomical pose solver');
+    }
+    poseSolverMode = rawPoseSolverMode;
+    poseSolverIterations = finiteNonNegative(
+      diagnostics.poseSolverIterations,
+      'poseSolverIterations',
+    );
+    if (!Number.isInteger(poseSolverIterations)) {
+      throw new Error('poseSolverIterations must be an integer');
+    }
+    poseSolverDofCount = finiteNonNegative(
+      diagnostics.poseSolverDofCount,
+      'poseSolverDofCount',
+    );
+    if (poseSolverDofCount !== 20) {
+      throw new Error('chain-coupled pose solver must expose 20 anatomical coordinates');
+    }
+    poseSolverObjectiveInitial = finiteNonNegative(
+      diagnostics.poseSolverObjectiveInitial,
+      'poseSolverObjectiveInitial',
+    );
+    poseSolverObjectiveFinal = finiteNonNegative(
+      diagnostics.poseSolverObjectiveFinal,
+      'poseSolverObjectiveFinal',
+    );
+    poseSolverRobustInlierFraction = finiteNonNegative(
+      diagnostics.poseSolverRobustInlierFraction,
+      'poseSolverRobustInlierFraction',
+    );
+    poseSolverConstraintSaturation = finiteNonNegative(
+      diagnostics.poseSolverConstraintSaturation,
+      'poseSolverConstraintSaturation',
+    );
+    poseSolverDistalCouplingResidualRad = finiteNonNegative(
+      diagnostics.poseSolverDistalCouplingResidualRad,
+      'poseSolverDistalCouplingResidualRad',
+    );
+    if (
+      palmSolverInlierFraction > 1
+      || poseSolverRobustInlierFraction > 1
+      || poseSolverConstraintSaturation > 1
+    ) {
+      throw new Error('pose solver fractions must remain in [0, 1]');
+    }
+    if (poseSolverObjectiveFinal > poseSolverObjectiveInitial + 1e-12) {
+      throw new Error('pose solver final objective exceeds its initial objective');
+    }
     anchorReplay = normalizeAnchorReplay(
       diagnostics.anchorReplay,
       captureTimestampMs,
@@ -675,6 +759,17 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     adaptiveStepQuality,
     idealFitResidualMean,
     idealFitImprovementRatio,
+    palmSolverMode,
+    palmSolverResidualMean,
+    palmSolverInlierFraction,
+    poseSolverMode,
+    poseSolverIterations,
+    poseSolverDofCount,
+    poseSolverObjectiveInitial,
+    poseSolverObjectiveFinal,
+    poseSolverRobustInlierFraction,
+    poseSolverConstraintSaturation,
+    poseSolverDistalCouplingResidualRad,
     anchorReplay,
     fingerExtension,
   };
