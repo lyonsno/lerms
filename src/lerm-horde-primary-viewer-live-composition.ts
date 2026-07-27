@@ -67,6 +67,21 @@ export interface LermHordePrimaryViewerLiveCompositionReceipt {
     phase: LermHordeLiveRuntimeState['phase'];
     visible: boolean;
   };
+  actor: {
+    elapsedMs: number;
+    tickCount: number;
+    rootWorld: {
+      x: number;
+      y: number;
+      z: number;
+    };
+    sourceDistance: number;
+    phase: number;
+    supportProfile: Array<{
+      t: number;
+      localOffset: number;
+    }>;
+  } | null;
   presentation: {
     identity: LermHordeIndexedGpuPresenterIdentity;
     drawCount: number;
@@ -186,6 +201,19 @@ export function createLermHordePrimaryViewerLiveComposition(
           phase: actorFrame.lifecycle.phase,
           visible: actorFrame.lifecycle.visible,
         },
+        actor: actorFrame.pose
+          ? {
+              elapsedMs: actorFrame.lifecycle.elapsedMs,
+              tickCount: actorFrame.lifecycle.tickCount,
+              rootWorld: { ...actorFrame.pose.rootFrame.origin },
+              sourceDistance: actorFrame.pose.sourceDistance,
+              phase: actorFrame.pose.squirm.phase,
+              supportProfile:
+                actorFrame.pose.squirm.terrainSupportProfile.map(
+                  (sample) => ({ ...sample }),
+                ),
+            }
+          : null,
         presentation: {
           identity: { ...source.indexedPresentationIdentity },
           drawCount: presentation?.drawCount ?? 0,

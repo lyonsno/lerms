@@ -100,6 +100,18 @@ assert.deepEqual(
 );
 composition.advance(11_400);
 assert.deepEqual(advances, [200, 280]);
+const traversingReceipt = composition.receipt();
+assert.deepEqual(traversingReceipt.actor, {
+  elapsedMs: 280,
+  tickCount: 2,
+  rootWorld: { x: 0.28, y: 1.2, z: -0.14 },
+  sourceDistance: 0.56,
+  phase: 1.316,
+  supportProfile: Array.from({ length: 7 }, (_, index) => ({
+    t: index / 6,
+    localOffset: index * 0.01,
+  })),
+});
 assert.throws(
   () => composition.advance(11_399),
   /monotonic/i,
@@ -126,6 +138,7 @@ assert.equal(receipt.lifecycle.phase, 'departed');
 assert.equal(receipt.lifecycle.visible, false);
 assert.equal(receipt.clock.mode, 'live_viewer_timestamp');
 assert.equal(receipt.clock.timeScale, 0.2);
+assert.equal(receipt.actor, null);
 assert.deepEqual(receipt.presentation, {
   identity: source.indexedPresentationIdentity,
   drawCount: 0,
@@ -167,6 +180,7 @@ function createState(
 function createActorFrame(
   current: LermHordeLiveRuntimeState,
 ): LermHordePrimaryViewerActorFrame {
+  const elapsedMs = current.elapsedMs;
   return {
     route: {
       requested: LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
@@ -180,7 +194,28 @@ function createActorFrame(
       elapsedMs: current.elapsedMs,
       tickCount: advances.length,
     },
-    pose: current.phase === 'traversing' ? ({} as never) : null,
+    pose: current.phase === 'traversing'
+      ? ({
+          sourceDistance: elapsedMs / 500,
+          rootFrame: {
+            origin: {
+              x: elapsedMs / 1_000,
+              y: 1.2,
+              z: -elapsedMs / 2_000,
+            },
+          },
+          squirm: {
+            phase: elapsedMs * 0.0047,
+            terrainSupportProfile: Array.from(
+              { length: 7 },
+              (_, index) => ({
+                t: index / 6,
+                localOffset: index * 0.01,
+              }),
+            ),
+          },
+        } as never)
+      : null,
     terrain: {
       frameId: current.terrainBuffer.source.frameId,
       sampleChecksum: current.terrainBuffer.sampleChecksum,
