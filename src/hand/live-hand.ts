@@ -93,7 +93,8 @@ const maxFrameAgeMs = 750;
 const LIVE_FLUID_ENVELOPE_ASSAY_ROUTE = 'lerms.live-fluid-envelope.synthetic-assay.v0' as const;
 const ARTICULATED_FIXTURE_SCHEMA = 'lerms.articulated-mano-dense-fixture.v1' as const;
 const ARTICULATED_FIXTURE_ROUTE = 'hand-state-runtime/deterministic-articulated-replay-not-camera-v1' as const;
-const ARTICULATED_PALM_SOLVER = 'robust_palm_procrustes_v1' as const;
+const ARTICULATED_PALM_SOLVER = 'robust_palm_procrustes_v2' as const;
+const ARTICULATED_PALM_CONSENSUS_MODES = ['fixed_radius_v1', 'bounded_trimmed_v1'] as const;
 const ARTICULATED_POSE_SOLVER = 'chain_coupled_anatomical_v1' as const;
 
 interface ArticulatedFixtureFrame {
@@ -104,6 +105,7 @@ interface ArticulatedFixtureFrame {
     jointStepLimitRad: number;
     maxJointStepAppliedRad: number;
     palmSolverMode: typeof ARTICULATED_PALM_SOLVER;
+    palmSolverConsensusMode: typeof ARTICULATED_PALM_CONSENSUS_MODES[number];
     poseSolverMode: typeof ARTICULATED_POSE_SOLVER;
     poseSolverDofCount: 20;
   };
@@ -115,6 +117,7 @@ interface ArticulatedFixture {
   effectiveRoute: typeof ARTICULATED_FIXTURE_ROUTE;
   geometryMode: 'native_mano_regeneration';
   palmSolverMode: typeof ARTICULATED_PALM_SOLVER;
+  palmSolverConsensusModes: Array<typeof ARTICULATED_PALM_CONSENSUS_MODES[number]>;
   poseSolverMode: typeof ARTICULATED_POSE_SOLVER;
   poseSolverDofCount: 20;
   frameRate: number;
@@ -361,6 +364,7 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   idealFitResidualMean: number | null;
   idealFitImprovementRatio: number | null;
   palmSolverMode: NormalizedManoFrame['palmSolverMode'];
+  palmSolverConsensusMode: NormalizedManoFrame['palmSolverConsensusMode'];
   palmSolverResidualMean: number | null;
   palmSolverInlierFraction: number | null;
   poseSolverMode: NormalizedManoFrame['poseSolverMode'];
@@ -1399,6 +1403,7 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     idealFitResidualMean: frame.idealFitResidualMean,
     idealFitImprovementRatio: frame.idealFitImprovementRatio,
     palmSolverMode: frame.palmSolverMode,
+    palmSolverConsensusMode: frame.palmSolverConsensusMode,
     palmSolverResidualMean: frame.palmSolverResidualMean,
     palmSolverInlierFraction: frame.palmSolverInlierFraction,
     poseSolverMode: frame.poseSolverMode,
@@ -1876,6 +1881,7 @@ function collectLiveHandDebugState(): Record<string, unknown> {
       effectiveRoute: articulatedFixture.effectiveRoute,
       geometryMode: articulatedFixture.geometryMode,
       palmSolverMode: articulatedFixture.palmSolverMode,
+      palmSolverConsensusModes: articulatedFixture.palmSolverConsensusModes,
       poseSolverMode: articulatedFixture.poseSolverMode,
       poseSolverDofCount: articulatedFixture.poseSolverDofCount,
       frameRate: articulatedFixture.frameRate,
@@ -2139,6 +2145,11 @@ if (routeConfigError) {
         || fixture.effectiveRoute !== ARTICULATED_FIXTURE_ROUTE
         || fixture.geometryMode !== 'native_mano_regeneration'
         || fixture.palmSolverMode !== ARTICULATED_PALM_SOLVER
+        || !Array.isArray(fixture.palmSolverConsensusModes)
+        || fixture.palmSolverConsensusModes.length < 1
+        || fixture.palmSolverConsensusModes.some(
+          mode => !ARTICULATED_PALM_CONSENSUS_MODES.includes(mode),
+        )
         || fixture.poseSolverMode !== ARTICULATED_POSE_SOLVER
         || fixture.poseSolverDofCount !== 20
       ) {
@@ -2165,6 +2176,9 @@ if (routeConfigError) {
           || frame.keypoints3d.length !== 21
           || !frame.diagnostics
           || frame.diagnostics.palmSolverMode !== ARTICULATED_PALM_SOLVER
+          || !fixture.palmSolverConsensusModes.includes(
+            frame.diagnostics.palmSolverConsensusMode,
+          )
           || frame.diagnostics.poseSolverMode !== ARTICULATED_POSE_SOLVER
           || frame.diagnostics.poseSolverDofCount !== 20
           || frame.diagnostics.maxJointStepAppliedRad > frame.diagnostics.jointStepLimitRad + 1e-8

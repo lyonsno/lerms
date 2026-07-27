@@ -106,7 +106,8 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   adaptiveStepQuality: number | null;
   idealFitResidualMean: number | null;
   idealFitImprovementRatio: number | null;
-  palmSolverMode: 'robust_palm_procrustes_v1' | null;
+  palmSolverMode: 'robust_palm_procrustes_v2' | null;
+  palmSolverConsensusMode: 'fixed_radius_v1' | 'bounded_trimmed_v1' | null;
   palmSolverResidualMean: number | null;
   palmSolverInlierFraction: number | null;
   poseSolverMode: 'chain_coupled_anatomical_v1' | null;
@@ -528,6 +529,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let idealFitResidualMean: number | null = null;
   let idealFitImprovementRatio: number | null = null;
   let palmSolverMode: NormalizedManoFrame['palmSolverMode'] = null;
+  let palmSolverConsensusMode: NormalizedManoFrame['palmSolverConsensusMode'] = null;
   let palmSolverResidualMean: number | null = null;
   let palmSolverInlierFraction: number | null = null;
   let poseSolverMode: NormalizedManoFrame['poseSolverMode'] = null;
@@ -610,10 +612,23 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       'idealFitImprovementRatio',
     );
     const rawPalmSolverMode = text(diagnostics.palmSolverMode, 'palmSolverMode');
-    if (rawPalmSolverMode !== 'robust_palm_procrustes_v1') {
+    if (rawPalmSolverMode !== 'robust_palm_procrustes_v2') {
       throw new Error('hybrid frame must expose the robust palm Procrustes solver');
     }
     palmSolverMode = rawPalmSolverMode;
+    const rawPalmSolverConsensusMode = text(
+      diagnostics.palmSolverConsensusMode,
+      'palmSolverConsensusMode',
+    );
+    if (
+      rawPalmSolverConsensusMode !== 'fixed_radius_v1'
+      && rawPalmSolverConsensusMode !== 'bounded_trimmed_v1'
+    ) {
+      throw new Error(
+        `unsupported palmSolverConsensusMode: ${rawPalmSolverConsensusMode}`,
+      );
+    }
+    palmSolverConsensusMode = rawPalmSolverConsensusMode;
     palmSolverResidualMean = finiteNonNegative(
       diagnostics.palmSolverResidualMean,
       'palmSolverResidualMean',
@@ -760,6 +775,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     idealFitResidualMean,
     idealFitImprovementRatio,
     palmSolverMode,
+    palmSolverConsensusMode,
     palmSolverResidualMean,
     palmSolverInlierFraction,
     poseSolverMode,

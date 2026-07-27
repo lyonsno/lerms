@@ -11,7 +11,7 @@ import {
 const REPORT_SCHEMA = 'lerms.articulated-dense-witness.v1';
 const FIXTURE_ROUTE = 'hand-state-runtime/deterministic-articulated-replay-not-camera-v1';
 const FIXTURE_AUTHORITY = 'deterministic_fixture_not_live_camera';
-const PALM_SOLVER = 'robust_palm_procrustes_v1';
+const PALM_SOLVER = 'robust_palm_procrustes_v2';
 const POSE_SOLVER = 'chain_coupled_anatomical_v1';
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
@@ -501,6 +501,8 @@ async function main() {
         debugState?.articulatedFixture?.sourceAuthority !== FIXTURE_AUTHORITY
         || debugState?.articulatedFixture?.geometryMode !== 'native_mano_regeneration'
         || debugState?.articulatedFixture?.palmSolverMode !== PALM_SOLVER
+        || debugState?.articulatedFixture?.palmSolverConsensusModes?.length !== 1
+        || debugState?.articulatedFixture?.palmSolverConsensusModes?.[0] !== 'fixed_radius_v1'
         || debugState?.articulatedFixture?.poseSolverMode !== POSE_SOLVER
         || debugState?.articulatedFixture?.poseSolverDofCount !== 20,
       partialTopology: debugState?.vertexCount !== 778
