@@ -129,8 +129,103 @@ await assert.rejects(
   'worker initialization failure must reject without a synchronous fallback',
 );
 
+await assertRejectedAtomicMutation(
+  'generation/tick mismatch',
+  (candidate) => {
+    candidate.generation += 1;
+  },
+);
+await assertRejectedAtomicMutation(
+  'traffic checksum substitution',
+  (candidate) => {
+    candidate.actor.terrain.trafficChecksum = 'substituted-traffic';
+  },
+);
+await assertRejectedAtomicMutation(
+  'support checksum substitution',
+  (candidate) => {
+    candidate.actor.terrain.supportFrameChecksum =
+      'substituted-support';
+  },
+);
+await assertRejectedGenerationRegression();
+
 runtime.terminate();
 assert.equal(port.terminated, true);
+
+async function assertRejectedAtomicMutation(
+  label: string,
+  mutate: (candidate: LermHordePrimaryViewerAtomicFrame) => void,
+): Promise<void> {
+  let localNowMs = 20_000;
+  const mutationPort = new FakeWorkerPort();
+  const runtimePromise =
+    createLermHordePrimaryViewerWorkerRuntime(
+      mutationPort,
+      () => localNowMs,
+    );
+  mutationPort.respond(
+    success(mutationPort.requests[0], frame(0, 0), 3_700),
+  );
+  const mutationRuntime = await runtimePromise;
+  mutationRuntime.advance(20_000);
+  mutationRuntime.advance(21_000);
+  const candidate = frame(1, 200);
+  mutate(candidate);
+  localNowMs = 21_050;
+  mutationPort.respond(
+    success(mutationPort.requests[1], candidate, 3_700),
+  );
+  assert.throws(
+    () => mutationRuntime.advance(21_100),
+    /atomic|generation|checksum|same Hill/i,
+    `${label} must fail loud at the next runtime boundary`,
+  );
+  assert.equal(
+    mutationRuntime.frame.sourceElapsedMs,
+    0,
+    `${label} cannot replace the last trustworthy frame`,
+  );
+  mutationRuntime.terminate();
+}
+
+async function assertRejectedGenerationRegression(): Promise<void> {
+  let localNowMs = 30_000;
+  const regressionPort = new FakeWorkerPort();
+  const runtimePromise =
+    createLermHordePrimaryViewerWorkerRuntime(
+      regressionPort,
+      () => localNowMs,
+    );
+  regressionPort.respond(
+    success(regressionPort.requests[0], frame(0, 0), 3_700),
+  );
+  const regressionRuntime = await runtimePromise;
+  regressionRuntime.advance(30_000);
+  regressionRuntime.advance(31_000);
+  localNowMs = 31_050;
+  regressionPort.respond(
+    success(regressionPort.requests[1], frame(1, 200), 3_700),
+  );
+  assert.equal(regressionRuntime.frame.generation, 1);
+  regressionRuntime.advance(32_000);
+  const regressed = frame(0, 400);
+  localNowMs = 32_050;
+  regressionPort.respond(
+    success(regressionPort.requests[2], regressed, 3_700),
+  );
+  assert.throws(
+    () => regressionRuntime.advance(32_100),
+    /atomic|generation|regress/i,
+    'a newly published worker response cannot regress generation',
+  );
+  assert.equal(
+    regressionRuntime.frame.generation,
+    1,
+    'generation regression cannot replace the last trustworthy frame',
+  );
+  regressionRuntime.terminate();
+}
 
 function success(
   request: LermHordePrimaryViewerWorkerRequest,
@@ -176,6 +271,9 @@ function frame(
       topologyChecksum,
       witness: {
         producerTrafficFieldChecksum: `traffic-${elapsedMs}`,
+        supportFrame: {
+          supportFrameChecksum: `support-${elapsedMs}`,
+        },
       },
     } as LermHordePrimaryViewerAtomicFrame['terrainBuffer'],
     terrain: {

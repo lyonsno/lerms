@@ -219,7 +219,11 @@ export async function createLermHordePrimaryViewerWorkerRuntime(
         );
         return;
       }
-      validateAtomicFrame(response.frame, request.sourceElapsedMs);
+      validateAtomicFrame(
+        response.frame,
+        request,
+        currentFrame?.generation,
+      );
       requireWorkerRuntime(
         Number.isFinite(response.completionElapsedMs) &&
           response.completionElapsedMs > 0 &&
@@ -387,13 +391,21 @@ function validateResponseEnvelope(
 
 function validateAtomicFrame(
   frame: LermHordePrimaryViewerAtomicFrame,
-  requestedSourceElapsedMs: number,
+  request: LermHordePrimaryViewerWorkerRequest,
+  retainedGeneration: number | undefined,
 ): void {
   requireWorkerRuntime(
     frame?.schema === LERM_HORDE_PRIMARY_VIEWER_ATOMIC_FRAME_SCHEMA &&
+      Number.isInteger(frame.generation) &&
+      frame.generation >= 0 &&
+      (request.command === 'initialize'
+        ? retainedGeneration === undefined &&
+          frame.generation === 0
+        : retainedGeneration !== undefined &&
+          frame.generation > retainedGeneration) &&
       frame.completeness === 'atomic-terrain-actor' &&
       frame.hostPublishedAtMs === null &&
-      frame.sourceElapsedMs === requestedSourceElapsedMs &&
+      frame.sourceElapsedMs === request.sourceElapsedMs &&
       frame.actor?.schema ===
         LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA &&
       frame.actor.route?.requested ===
@@ -402,6 +414,7 @@ function validateAtomicFrame(
         LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE &&
       frame.actor.route.fallbackStatus === 'none' &&
       frame.actor.route.staleStatus === 'fresh' &&
+      frame.actor.lifecycle.tickCount === frame.generation &&
       frame.actor.lifecycle.elapsedMs === frame.sourceElapsedMs &&
       frame.terrain?.frameId === frame.terrainBuffer?.source?.frameId &&
       frame.terrain.sampleChecksum ===
@@ -412,8 +425,14 @@ function validateAtomicFrame(
       frame.actor.terrain.sampleChecksum ===
         frame.terrain.sampleChecksum &&
       frame.actor.terrain.topologyChecksum ===
-        frame.terrain.topologyChecksum,
-    'primary-viewer atomic worker frame cannot cross ticks or substitute a different Hill',
+        frame.terrain.topologyChecksum &&
+      frame.actor.terrain.trafficChecksum ===
+        frame.terrainBuffer.witness
+          .producerTrafficFieldChecksum &&
+      frame.actor.terrain.supportFrameChecksum ===
+        frame.terrainBuffer.witness.supportFrame
+          .supportFrameChecksum,
+    'primary-viewer atomic worker frame cannot regress generation, cross ticks, or substitute a different Hill checksum',
   );
 }
 

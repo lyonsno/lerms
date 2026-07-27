@@ -39,6 +39,12 @@ for (const evidenceField of [
   'captureCompletedAtMs',
   'runtimeElapsedMs',
   'tickCount',
+  'status',
+  'error',
+  'route',
+  'publication',
+  'terrain',
+  'hostTerrain',
   'rootWorld',
   'rootScreen',
   'sourceDistance',
@@ -70,6 +76,9 @@ for (const falseClosurePath of [
   'capture cadence',
   'presentation-rate-low',
   'visible actor disappeared',
+  'worker reported an error',
+  'requested frame count',
+  'Hill identity or checksum',
 ]) {
   assert.match(
     harness,
@@ -116,6 +125,59 @@ const smoothFrames = [
 ];
 assert.doesNotThrow(() => validateActorFilmstripFrames(smoothFrames));
 assert.deepEqual(analyzeActorFilmstrip(smoothFrames).suspicions, []);
+assert.throws(
+  () =>
+    validateActorFilmstripFrames(smoothFrames.slice(0, 2), {
+      expectedFrameCount: 3,
+    }),
+  /requested frame count|partial filmstrip/i,
+  'a fixed-count filmstrip cannot silently close on two frames',
+);
+
+for (const [label, mutate, pattern] of [
+  [
+    'mid-capture worker failure',
+    (candidate) => {
+      candidate.status = 'failed';
+      candidate.error = 'primary-viewer worker publication failure';
+    },
+    /worker|status|live/i,
+  ],
+  [
+    'route fallback',
+    (candidate) => {
+      candidate.route.fallbackStatus = 'fallback';
+    },
+    /fallback|route/i,
+  ],
+  [
+    'partial publication',
+    (candidate) => {
+      candidate.publication.completeness = 'partial';
+    },
+    /partial|atomic|publication/i,
+  ],
+  [
+    'same-frame Hill checksum substitution',
+    (candidate) => {
+      candidate.hostTerrain.sampleChecksum = 'substituted-sample';
+    },
+    /checksum|Hill|terrain/i,
+  ],
+]) {
+  const invalidFrames = smoothFrames.map((candidate) =>
+    structuredClone(candidate),
+  );
+  mutate(invalidFrames[1]);
+  assert.throws(
+    () =>
+      validateActorFilmstripFrames(invalidFrames, {
+        expectedFrameCount: 3,
+      }),
+    pattern,
+    `${label} must fail the filmstrip`,
+  );
+}
 
 const dropoutFrames = [
   ...smoothFrames.slice(0, 2),
@@ -176,11 +238,22 @@ const retainedFrames = [
   smoothFrames[0],
   {
     ...smoothFrames[1],
+    route: {
+      ...smoothFrames[0].route,
+      staleStatus: 'retained-complete-frame',
+    },
+    publication: {
+      ...smoothFrames[0].publication,
+      presentationAgeMs: 150,
+    },
+    terrain: { ...smoothFrames[0].terrain },
+    hostTerrain: { ...smoothFrames[0].hostTerrain },
     runtimeElapsedMs: smoothFrames[0].runtimeElapsedMs,
     tickCount: smoothFrames[0].tickCount,
     sourceDistance: smoothFrames[0].sourceDistance,
     terrainFrameId: smoothFrames[0].terrainFrameId,
-    observationToken: `${smoothFrames[0].terrainFrameId}:999:${smoothFrames[0].tickCount}`,
+    screenshotSha256: smoothFrames[0].screenshotSha256,
+    observationToken: `${smoothFrames[0].terrainFrameId}:${smoothFrames[0].publication.generation}:999:${smoothFrames[0].tickCount}`,
   },
 ];
 assert.doesNotThrow(
@@ -200,6 +273,11 @@ assert.throws(
       {
         ...smoothFrames[1],
         runtimeElapsedMs: smoothFrames[0].runtimeElapsedMs - 1,
+        publication: {
+          ...smoothFrames[1].publication,
+          sourceElapsedMs:
+            smoothFrames[0].runtimeElapsedMs - 1,
+        },
       },
     ]),
   /nonmonotonic/i,
@@ -227,6 +305,8 @@ function frame(
 ) {
   return {
     index,
+    status: 'live',
+    error: 'none',
     lifecyclePhase: 'traversing',
     lifecycleVisible: true,
     captureStartedAtMs: index * 500,
@@ -235,7 +315,37 @@ function frame(
     tickCount: index + 3,
     drawCount: index + 10,
     terrainFrameId: `terrain-${index}`,
-    observationToken: `terrain-${index}:${index + 10}:${index + 3}`,
+    route: {
+      composition:
+        'lerms/lerm-horde/primary-viewer-live-composition-v0',
+      viewer: 'lerms/hill-of-hills/primary-viewer-v0',
+      presentation:
+        'lerms/lerm-horde/indexed-textured-axial-gpu-v0',
+      runtime:
+        'lerms/lerm-horde/primary-viewer-live-worker-v0',
+      runtimeBackend: 'dedicated-worker',
+      fallbackStatus: 'none',
+      staleStatus: 'fresh',
+    },
+    publication: {
+      generation: index + 3,
+      sourceElapsedMs: runtimeElapsedMs,
+      hostPublishedAtMs: index * 500,
+      presentationAgeMs: 0,
+      completeness: 'atomic-terrain-actor',
+    },
+    terrain: {
+      frameId: `terrain-${index}`,
+      sampleChecksum: `sample-${index}`,
+      topologyChecksum: `topology-${index}`,
+      trafficChecksum: `traffic-${index}`,
+    },
+    hostTerrain: {
+      frameId: `terrain-${index}`,
+      sampleChecksum: `sample-${index}`,
+      topologyChecksum: `topology-${index}`,
+    },
+    observationToken: `terrain-${index}:${index + 3}:${index + 10}:${index + 3}`,
     rootWorld: { x: rootX, y: 1.1, z: index * 0.08 },
     rootScreen: { x: screenX, y: screenY, depth: index * 0.08 },
     sourceDistance: index * 0.2,

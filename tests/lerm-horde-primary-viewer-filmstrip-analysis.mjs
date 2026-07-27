@@ -1,23 +1,124 @@
 import assert from 'node:assert/strict';
 
-export function validateActorFilmstripFrames(frames) {
+const EXPECTED_COMPOSITION =
+  'lerms/lerm-horde/primary-viewer-live-composition-v0';
+const EXPECTED_VIEWER =
+  'lerms/hill-of-hills/primary-viewer-v0';
+const EXPECTED_PRESENTATION =
+  'lerms/lerm-horde/indexed-textured-axial-gpu-v0';
+const EXPECTED_RUNTIME =
+  'lerms/lerm-horde/primary-viewer-live-worker-v0';
+
+export function validateActorFilmstripFrames(
+  frames,
+  { expectedFrameCount } = {},
+) {
   assert.ok(
     Array.isArray(frames) && frames.length >= 2,
     'actor filmstrip requires at least two complete frames',
   );
+  if (expectedFrameCount !== undefined) {
+    assert.equal(
+      frames.length,
+      expectedFrameCount,
+      'partial filmstrip did not capture the requested frame count',
+    );
+  }
   for (let index = 0; index < frames.length; index += 1) {
     const frame = frames[index];
-    assert.equal(frame.index, index, 'filmstrip frame index is partial');
-    assert.equal(
-      frame.lifecyclePhase,
-      'traversing',
-      'cross-loop or departed state entered the traversal filmstrip',
+    validateActorFilmstripFrame(
+      frame,
+      index,
+      index === 0 ? undefined : frames[index - 1],
     );
-    assert.equal(
-      frame.lifecycleVisible,
-      true,
-      'visible actor disappeared before declared departure',
-    );
+  }
+}
+
+export function validateActorFilmstripFrame(
+  frame,
+  index,
+  previous,
+) {
+  assert.equal(frame.index, index, 'filmstrip frame index is partial');
+  assert.equal(
+    frame.status,
+    'live',
+    'filmstrip worker status is not live',
+  );
+  assert.ok(
+    frame.error === '' || frame.error === 'none',
+    'filmstrip worker reported an error',
+  );
+  assert.equal(
+    frame.lifecyclePhase,
+    'traversing',
+    'cross-loop or departed state entered the traversal filmstrip',
+  );
+  assert.equal(
+    frame.lifecycleVisible,
+    true,
+    'visible actor disappeared before declared departure',
+  );
+  assert.deepEqual(
+    {
+      composition: frame.route?.composition,
+      viewer: frame.route?.viewer,
+      presentation: frame.route?.presentation,
+      runtime: frame.route?.runtime,
+      runtimeBackend: frame.route?.runtimeBackend,
+      fallbackStatus: frame.route?.fallbackStatus,
+    },
+    {
+      composition: EXPECTED_COMPOSITION,
+      viewer: EXPECTED_VIEWER,
+      presentation: EXPECTED_PRESENTATION,
+      runtime: EXPECTED_RUNTIME,
+      runtimeBackend: 'dedicated-worker',
+      fallbackStatus: 'none',
+    },
+    'filmstrip frame route is substituted or fallback',
+  );
+  assert.ok(
+    frame.route.staleStatus === 'fresh' ||
+      frame.route.staleStatus === 'retained-complete-frame',
+    'filmstrip frame stale state is partial or unaccounted',
+  );
+  assert.ok(
+    Number.isInteger(frame.publication?.generation) &&
+      frame.publication.generation >= 0 &&
+      frame.publication.generation === frame.tickCount &&
+      Number.isFinite(frame.publication.sourceElapsedMs) &&
+      frame.publication.sourceElapsedMs ===
+        frame.runtimeElapsedMs &&
+      Number.isFinite(frame.publication.hostPublishedAtMs) &&
+      Number.isFinite(frame.publication.presentationAgeMs) &&
+      frame.publication.presentationAgeMs >= 0 &&
+      frame.publication.completeness ===
+        'atomic-terrain-actor',
+    'filmstrip frame has partial or mixed atomic publication',
+  );
+  assert.equal(
+    frame.route.staleStatus === 'fresh'
+      ? frame.publication.presentationAgeMs === 0
+      : frame.publication.presentationAgeMs > 0,
+    true,
+    'filmstrip frame freshness does not match publication age',
+  );
+  assertTerrainIdentity(frame.terrain, 'terrain');
+  assertTerrainIdentity(frame.hostTerrain, 'hostTerrain');
+  assert.deepEqual(
+    {
+      frameId: frame.terrain.frameId,
+      sampleChecksum: frame.terrain.sampleChecksum,
+      topologyChecksum: frame.terrain.topologyChecksum,
+    },
+    frame.hostTerrain,
+    'filmstrip frame Hill identity or checksum does not match the canonical host',
+  );
+  assertChecksum(
+    frame.terrain.trafficChecksum,
+    'terrain traffic checksum',
+  );
     for (const [name, value] of [
       ['captureStartedAtMs', frame.captureStartedAtMs],
       ['captureCompletedAtMs', frame.captureCompletedAtMs],
@@ -58,17 +159,20 @@ export function validateActorFilmstripFrames(frames) {
     );
     assert.match(
       frame.observationToken,
-      /^.+:\d+:\d+$/,
+      /^.+:\d+:\d+:\d+$/,
       'filmstrip frame has partial same-observation identity',
     );
-    if (index === 0) continue;
-    const previous = frames[index - 1];
+    if (!previous) return;
     assert.ok(
       frame.captureStartedAtMs > previous.captureStartedAtMs &&
         frame.runtimeElapsedMs >= previous.runtimeElapsedMs &&
         frame.tickCount >= previous.tickCount &&
         frame.sourceDistance >= previous.sourceDistance,
       'filmstrip telemetry is nonmonotonic',
+    );
+    assert.ok(
+      frame.drawCount > previous.drawCount,
+      'duplicate filmstrip host presentation identity',
     );
     assert.notEqual(
       frame.observationToken,
@@ -97,8 +201,37 @@ export function validateActorFilmstripFrames(frames) {
         previous.terrainFrameId,
         'retained worker frame crossed Hill identity without advancing runtime',
       );
+      assert.equal(
+        frame.route.staleStatus,
+        'retained-complete-frame',
+        'retained worker frame was laundered as fresh',
+      );
+      assert.equal(
+        frame.publication.generation,
+        previous.publication.generation,
+        'retained worker frame changed publication generation',
+      );
+      assert.equal(
+        frame.publication.sourceElapsedMs,
+        previous.publication.sourceElapsedMs,
+        'retained worker frame changed publication source time',
+      );
+      assert.equal(
+        frame.publication.hostPublishedAtMs,
+        previous.publication.hostPublishedAtMs,
+        'retained worker frame changed publication host identity',
+      );
+      assert.deepEqual(
+        frame.terrain,
+        previous.terrain,
+        'retained worker frame changed full Hill identity',
+      );
+      assert.deepEqual(
+        frame.hostTerrain,
+        previous.hostTerrain,
+        'retained worker frame changed canonical-host Hill identity',
+      );
     }
-  }
 }
 
 export function analyzeActorFilmstrip(
@@ -325,6 +458,25 @@ function assertBounds(value, name) {
       Number.isFinite(value.height) &&
       value.width > 0 &&
       value.height > 0,
+    `filmstrip frame has partial ${name}`,
+  );
+}
+
+function assertTerrainIdentity(value, name) {
+  assert.ok(
+    value && typeof value.frameId === 'string' && value.frameId.length > 0,
+    `filmstrip frame has partial ${name} frame identity`,
+  );
+  assertChecksum(value.sampleChecksum, `${name} sample checksum`);
+  assertChecksum(
+    value.topologyChecksum,
+    `${name} topology checksum`,
+  );
+}
+
+function assertChecksum(value, name) {
+  assert.ok(
+    typeof value === 'string' && value.length > 0,
     `filmstrip frame has partial ${name}`,
   );
 }

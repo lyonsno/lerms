@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
   analyzeActorFilmstrip,
+  validateActorFilmstripFrame,
   validateActorFilmstripFrames,
 } from './lerm-horde-primary-viewer-filmstrip-analysis.mjs';
 
@@ -27,6 +28,8 @@ const EXPECTED_VIEWER =
   'lerms/hill-of-hills/primary-viewer-v0';
 const EXPECTED_PRESENTATION =
   'lerms/lerm-horde/indexed-textured-axial-gpu-v0';
+const EXPECTED_RUNTIME =
+  'lerms/lerm-horde/primary-viewer-live-worker-v0';
 const EXPECTED_QUERY = 'actor=lerm-horde-live';
 const CHROME =
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -187,12 +190,6 @@ async function runWitness() {
       const captureStartedAtMs = performance.now() - witnessStartedAt;
       const observation = await captureActorObservation(browser);
       const state = observation.state;
-      if (
-        state?.lifecycle?.phase !== 'traversing' ||
-        state?.lifecycle?.visible !== true
-      ) {
-        break;
-      }
       assert.ok(
         state.actor &&
           state.presentation?.rootScreen &&
@@ -214,8 +211,10 @@ async function runWitness() {
       );
       const captureCompletedAtMs =
         performance.now() - witnessStartedAt;
-      report.frames.push({
+      const frame = {
         index,
+        status: state.status,
+        error: state.error,
         lifecyclePhase: state.lifecycle.phase,
         lifecycleVisible: state.lifecycle.visible,
         captureStartedAtMs,
@@ -224,8 +223,21 @@ async function runWitness() {
         tickCount: state.actor.tickCount,
         drawCount: state.presentation.drawCount,
         terrainFrameId: state.terrain.frameId,
+        route: {
+          composition: state.effective?.composition,
+          viewer: state.effective?.viewer,
+          presentation:
+            state.presentation?.identity?.route,
+          runtime: state.effective?.runtime,
+          runtimeBackend: state.effective?.runtimeBackend,
+          fallbackStatus: state.effective?.fallbackStatus,
+          staleStatus: state.effective?.staleStatus,
+        },
+        publication: { ...state.publication },
+        terrain: { ...state.terrain },
+        hostTerrain: { ...state.host.terrain },
         observationToken:
-          `${state.terrain.frameId}:${state.presentation.drawCount}:${state.actor.tickCount}`,
+          `${state.terrain.frameId}:${state.publication.generation}:${state.presentation.drawCount}:${state.actor.tickCount}`,
         rootWorld: { ...state.actor.rootWorld },
         rootScreen: { ...state.presentation.rootScreen },
         sourceDistance: state.actor.sourceDistance,
@@ -240,11 +252,18 @@ async function runWitness() {
         screenshotPath: framePath,
         screenshotByteLength: screenshot.byteLength,
         screenshotSha256: screenshot.sha256,
-      });
+      };
+      validateActorFilmstripFrame(
+        frame,
+        index,
+        report.frames.at(-1),
+      );
+      report.frames.push(frame);
     }
-    assert.ok(
-      report.frames.length >= 2,
-      'partial filmstrip ended before two traversal frames',
+    assert.equal(
+      report.frames.length,
+      options.frameCount,
+      'partial filmstrip did not capture the requested frame count',
     );
 
     report.phase = 'writing-contact-sheet';
@@ -283,7 +302,9 @@ async function runWitness() {
     report.primaryOutputWritten = true;
 
     report.phase = 'validating-filmstrip';
-    validateActorFilmstripFrames(report.frames);
+    validateActorFilmstripFrames(report.frames, {
+      expectedFrameCount: options.frameCount,
+    });
     const analysis = analyzeActorFilmstrip(report.frames, {
       requestedCadenceMs: options.cadenceMs,
     });
