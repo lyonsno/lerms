@@ -14,6 +14,10 @@ const EXPECTED_VIEWER =
   'lerms/hill-of-hills/primary-viewer-v0';
 const EXPECTED_ACTOR =
   'lerms/lerm-horde/primary-viewer-actor-frame-v0';
+const EXPECTED_ACTOR_RENDERER =
+  'lerms/lerm-horde/primary-viewer-webgl-rasterizer-v0';
+const EXPECTED_RUNTIME =
+  'lerms/lerm-horde/primary-viewer-live-worker-v0';
 const EXPECTED_QUERY = 'actor=lerm-horde-live';
 const CHROME =
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -34,6 +38,8 @@ const report = {
   effectiveRouteVerified: false,
   noFallbackOrStaleState: false,
   hostTerrainIdentityVerified: false,
+  atomicPublicationVerified: false,
+  performanceMetricsVerified: false,
   oneCanonicalCanvasVerified: false,
   actorPixelsPresent: false,
   actorPixelsAbsentAfterDeparture: false,
@@ -45,6 +51,7 @@ const report = {
   present: null,
   moved: null,
   departed: null,
+  performance: null,
   screenshots: {
     present: options.presentScreenshot,
     moved: options.movedScreenshot,
@@ -108,6 +115,64 @@ async function runWitness() {
       30_000,
       'live primary-viewer actor',
     );
+    await installPerformanceProbe(browser);
+    if (options.performanceOnly) {
+      report.phase = 'profiling-canonical-route';
+      const before = await currentState(browser);
+      await delay(options.performanceDurationMs);
+      const after = await currentState(browser);
+      report.effectiveUrl = after.location;
+      report.requestedRouteVerified =
+        new URL(after.location).searchParams.get('actor') ===
+          'lerm-horde-live' &&
+        after.location.includes(EXPECTED_QUERY);
+      report.effectiveRouteVerified =
+        after.effective?.composition === EXPECTED_COMPOSITION &&
+        after.effective?.viewer === EXPECTED_VIEWER &&
+        after.effective?.actor === EXPECTED_ACTOR &&
+        after.effective?.runtime === EXPECTED_RUNTIME &&
+        after.effective?.runtimeBackend === 'dedicated-worker' &&
+        (options.expectedActorRenderer === null ||
+          after.effective?.actorRenderer ===
+            options.expectedActorRenderer);
+      report.noFallbackOrStaleState =
+        after.effective?.fallbackStatus === 'none' &&
+        hasHonestPublicationFreshness(after);
+      report.performance = summarizePerformanceProbe(
+        await collectPerformanceProbe(browser),
+      );
+      report.performanceMetricsVerified =
+        report.performance.frameIntervalsMs.length >= 10 &&
+        report.performance.frames.count >= 10 &&
+        Number.isFinite(report.performance.frames.meanMs) &&
+        Number.isFinite(report.performance.frames.p95Ms) &&
+        Number.isFinite(report.performance.longTasks.totalMs);
+      report.profile = { before, after };
+      assert.equal(
+        report.requestedRouteVerified,
+        true,
+        'performance witness navigated the wrong requested route',
+      );
+      assert.equal(
+        report.effectiveRouteVerified,
+        true,
+        'performance witness effective route identity was missing or substituted',
+      );
+      assert.equal(
+        report.noFallbackOrStaleState,
+        true,
+        'fallback or stale state impersonated the profiled canonical route',
+      );
+      assert.equal(
+        report.performanceMetricsVerified,
+        true,
+        'performance witness did not capture complete frame and long-task metrics',
+      );
+      report.phase = 'complete';
+      report.failurePhase = null;
+      report.ok = true;
+      return;
+    }
 
     report.phase = 'verifying-route-and-present-actor';
     const present = await waitForState(
@@ -133,12 +198,17 @@ async function runWitness() {
     report.effectiveRouteVerified =
       present.effective?.composition === EXPECTED_COMPOSITION &&
       present.effective?.viewer === EXPECTED_VIEWER &&
-      present.effective?.actor === EXPECTED_ACTOR;
+      present.effective?.actor === EXPECTED_ACTOR &&
+      present.effective?.actorRenderer === EXPECTED_ACTOR_RENDERER &&
+      present.effective?.runtime === EXPECTED_RUNTIME &&
+      present.effective?.runtimeBackend === 'dedicated-worker';
     report.noFallbackOrStaleState =
       present.effective?.fallbackStatus === 'none' &&
-      present.effective?.staleStatus === 'fresh';
+      hasHonestPublicationFreshness(present);
     report.hostTerrainIdentityVerified =
       sameTerrain(present.terrain, present.host?.terrain);
+    report.atomicPublicationVerified =
+      validAtomicPublication(present);
     report.oneCanonicalCanvasVerified =
       present.canvasCount === 1 &&
       present.webglCarrierCanvasCount === 0 &&
@@ -171,6 +241,11 @@ async function runWitness() {
       report.hostTerrainIdentityVerified,
       true,
       'actor host terrain does not match the visible live Hill',
+    );
+    assert.equal(
+      report.atomicPublicationVerified,
+      true,
+      'present actor/Hill frame lacks complete atomic publication identity',
     );
     assert.equal(
       report.oneCanonicalCanvasVerified,
@@ -213,6 +288,9 @@ async function runWitness() {
     report.hostTerrainIdentityVerified =
       report.hostTerrainIdentityVerified &&
       sameTerrain(moved.terrain, moved.host?.terrain);
+    report.atomicPublicationVerified =
+      report.atomicPublicationVerified &&
+      validAtomicPublication(moved);
     report.moved = {
       state: moved,
       pixels: movedPixels,
@@ -274,12 +352,24 @@ async function runWitness() {
     report.hostTerrainIdentityVerified =
       report.hostTerrainIdentityVerified &&
       sameTerrain(departed.terrain, departed.host?.terrain);
+    report.atomicPublicationVerified =
+      report.atomicPublicationVerified &&
+      validAtomicPublication(departed);
     report.departed = {
       state: departed,
       settledState: settled,
       pixels: departedPixels,
       screenshotSha256: departedShot.sha256,
     };
+    report.performance = summarizePerformanceProbe(
+      await collectPerformanceProbe(browser),
+    );
+    report.performanceMetricsVerified =
+      report.performance.frameIntervalsMs.length >= 10 &&
+      report.performance.frames.count >= 10 &&
+      Number.isFinite(report.performance.frames.meanMs) &&
+      Number.isFinite(report.performance.frames.p95Ms) &&
+      Number.isFinite(report.performance.longTasks.totalMs);
     assert.equal(
       report.actorPixelsAbsentAfterDeparture,
       true,
@@ -295,6 +385,16 @@ async function runWitness() {
       true,
       'host and visible Hill terrain diverged during the witness',
     );
+    assert.equal(
+      report.atomicPublicationVerified,
+      true,
+      'camera-moved or departed frame lost atomic publication identity',
+    );
+    assert.equal(
+      report.performanceMetricsVerified,
+      true,
+      'canonical witness did not capture complete frame interval and long-task metrics',
+    );
     assert.notEqual(
       departedShot.sha256,
       presentShot.sha256,
@@ -309,6 +409,13 @@ async function runWitness() {
     report.error = error instanceof Error ? error.stack : String(error);
     report.phase = 'failed';
   } finally {
+    if (browser && report.performance === null) {
+      try {
+        report.performance = summarizePerformanceProbe(
+          await collectPerformanceProbe(browser),
+        );
+      } catch {}
+    }
     writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`);
     browser?.close();
     if (chrome) await stopChrome(chrome);
@@ -346,6 +453,135 @@ async function currentState(browser) {
       canvasHeight: canvas?.height ?? 0
     };
   })()`);
+}
+
+function validAtomicPublication(state) {
+  const publication = state?.publication;
+  return (
+    Number.isInteger(publication?.generation) &&
+    publication.generation >= 0 &&
+    Number.isFinite(publication.sourceElapsedMs) &&
+    publication.sourceElapsedMs === state.lifecycle?.elapsedMs &&
+    Number.isFinite(publication.hostPublishedAtMs) &&
+    Number.isFinite(publication.presentationAgeMs) &&
+    publication.presentationAgeMs >= 0 &&
+    publication.completeness === 'atomic-terrain-actor'
+  );
+}
+
+function hasHonestPublicationFreshness(state) {
+  const status = state?.effective?.staleStatus;
+  return (
+    status === 'fresh' ||
+    (status === 'retained-complete-frame' &&
+      validAtomicPublication(state) &&
+      state.publication.presentationAgeMs > 0)
+  );
+}
+
+async function installPerformanceProbe(browser) {
+  await browser.evaluate(`(() => {
+    const probe = {
+      startedAtMs: performance.now(),
+      endedAtMs: null,
+      previousFrameMs: null,
+      frameIntervalsMs: [],
+      longTasks: []
+    };
+    window.__lermsPrimaryViewerPerformance = probe;
+    const onFrame = (timestampMs) => {
+      if (probe.previousFrameMs !== null) {
+        probe.frameIntervalsMs.push(timestampMs - probe.previousFrameMs);
+      }
+      probe.previousFrameMs = timestampMs;
+      requestAnimationFrame(onFrame);
+    };
+    requestAnimationFrame(onFrame);
+    if (typeof PerformanceObserver === 'function') {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          probe.longTasks.push({
+            startMs: entry.startTime,
+            durationMs: entry.duration
+          });
+        }
+      });
+      observer.observe({ type: 'longtask' });
+      window.__lermsPrimaryViewerPerformanceObserver = observer;
+    }
+    return true;
+  })()`);
+}
+
+async function collectPerformanceProbe(browser) {
+  return browser.evaluate(`(() => {
+    const probe = window.__lermsPrimaryViewerPerformance;
+    if (!probe) throw new Error('primary-viewer performance probe is missing');
+    probe.endedAtMs = performance.now();
+    return {
+      startedAtMs: probe.startedAtMs,
+      endedAtMs: probe.endedAtMs,
+      frameIntervalsMs: [...probe.frameIntervalsMs],
+      longTasks: probe.longTasks.map((task) => ({ ...task }))
+    };
+  })()`);
+}
+
+function summarizePerformanceProbe(raw) {
+  const frameIntervalsMs = raw.frameIntervalsMs.filter(
+    (value) => Number.isFinite(value) && value > 0,
+  );
+  const orderedFrames = [...frameIntervalsMs].sort(
+    (left, right) => left - right,
+  );
+  const longTasks = raw.longTasks.filter(
+    (task) =>
+      Number.isFinite(task?.startMs) &&
+      Number.isFinite(task?.durationMs) &&
+      task.startMs >= raw.startedAtMs &&
+      task.startMs <= raw.endedAtMs &&
+      task.durationMs >= 0,
+  );
+  const wallMs = Math.max(0, raw.endedAtMs - raw.startedAtMs);
+  const meanMs =
+    frameIntervalsMs.length === 0
+      ? 0
+      : frameIntervalsMs.reduce((sum, value) => sum + value, 0) /
+        frameIntervalsMs.length;
+  return {
+    wallMs,
+    frameIntervalsMs,
+    frames: {
+      count: frameIntervalsMs.length,
+      meanMs,
+      p50Ms: percentile(orderedFrames, 0.5),
+      p95Ms: percentile(orderedFrames, 0.95),
+      p99Ms: percentile(orderedFrames, 0.99),
+      maxMs: orderedFrames.at(-1) ?? 0,
+      approxFps: meanMs > 0 ? 1000 / meanMs : 0,
+    },
+    longTasks: {
+      entries: longTasks,
+      count: longTasks.length,
+      totalMs: longTasks.reduce(
+        (sum, task) => sum + task.durationMs,
+        0,
+      ),
+      maxMs: Math.max(
+        0,
+        ...longTasks.map((task) => task.durationMs),
+      ),
+    },
+  };
+}
+
+function percentile(ordered, ratio) {
+  if (ordered.length === 0) return 0;
+  const index = Math.min(
+    ordered.length - 1,
+    Math.max(0, Math.ceil(ordered.length * ratio) - 1),
+  );
+  return ordered[index];
 }
 
 async function canvasPixels(browser) {
@@ -510,6 +746,13 @@ function parseArgs(args) {
       values.get('departed-screenshot') ??
         `${tmpdir()}/lerms-primary-viewer-${label}-departed.png`,
     ),
+    performanceOnly:
+      values.get('performance-only') === 'true',
+    performanceDurationMs: Number(
+      values.get('performance-duration-ms') ?? '15633',
+    ),
+    expectedActorRenderer:
+      values.get('expected-actor-renderer') ?? null,
   };
 }
 

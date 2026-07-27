@@ -11,6 +11,10 @@ import {
   type HillPrimaryViewerActorLayer,
   type HillPrimaryViewerProjectionPoint,
 } from '../src/terrain/hill-primary-viewer-actor-host.js';
+import {
+  HILL_PRIMARY_VIEWER_RETAINED_ACTOR_TARGET_ROUTE,
+  createHillPrimaryViewerRetainedActorTargetFactory,
+} from '../src/terrain/hill-primary-viewer-retained-actor-targets.js';
 
 const terrain = {
   frameId: 'hill-frame-current',
@@ -426,10 +430,81 @@ assert.deepEqual(
   'primary-viewer actor host must reject partial authority and isolate producer drawing',
 );
 
+let retainedCanvasCount = 0;
+let retainedDrawImageCount = 0;
+const retainedContexts: CanvasRenderingContext2D[] = [];
+const retainedTargets =
+  createHillPrimaryViewerRetainedActorTargetFactory({
+    createCanvas: () => {
+      retainedCanvasCount += 1;
+      const retainedContext = {
+        clearRect() {},
+        setTransform() {},
+        drawImage() {
+          retainedDrawImageCount += 1;
+        },
+      } as unknown as CanvasRenderingContext2D;
+      retainedContexts.push(retainedContext);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => retainedContext,
+      };
+    },
+    compositeContext: {
+      drawImage() {
+        retainedDrawImageCount += 1;
+      },
+    } as unknown as CanvasRenderingContext2D,
+  });
+
+for (const timestampMs of [1_240, 1_280]) {
+  const target = retainedTargets.createFrameTarget({
+    timestampMs,
+    viewport: {
+      width: 1280,
+      height: 720,
+      pixelRatio: 2,
+    },
+    terrain,
+  });
+  const layerTarget = target.createLayerTarget({
+    layerId: 'retained-lerm',
+    requestedRoute:
+      'lerms/lerm-horde/primary-viewer-actor-frame-v0',
+    effectiveRoute:
+      'lerms/lerm-horde/primary-viewer-actor-frame-v0',
+  });
+  assert.equal(
+    layerTarget.surface.context,
+    retainedContexts[1],
+    'the retained seam substituted the producer layer context',
+  );
+  layerTarget.merge();
+  target.composite();
+  assert.throws(
+    () => target.composite(),
+    /publish twice/i,
+    'one retained actor generation cannot publish twice',
+  );
+}
+assert.equal(
+  retainedCanvasCount,
+  2,
+  'the retained seam must allocate one frame and one named layer canvas, not two full-size canvases per frame',
+);
+assert.equal(retainedDrawImageCount, 4);
+assert.deepEqual(retainedTargets.stats(), {
+  route: HILL_PRIMARY_VIEWER_RETAINED_ACTOR_TARGET_ROUTE,
+  frameCanvasCount: 1,
+  layerCanvasCount: 1,
+  frameGeneration: 2,
+});
+
 const primaryViewerSource = readFileSync(resolve('src/main.ts'), 'utf8');
 assert.match(
   primaryViewerSource,
-  /hillPrimaryViewerActorHost\.draw\(\{[\s\S]*terrainBuffer\.source\.frameId[\s\S]*terrainBuffer\.sampleChecksum[\s\S]*terrainBuffer\.topologyChecksum[\s\S]*createFrameTarget:\s*createActorFrameTarget[\s\S]*project:/,
+  /hillPrimaryViewerActorHost\.draw\(\{[\s\S]*terrainBuffer\.source\.frameId[\s\S]*terrainBuffer\.sampleChecksum[\s\S]*terrainBuffer\.topologyChecksum[\s\S]*createFrameTarget:\s*retainedActorTargets\.createFrameTarget[\s\S]*project:/,
   'canonical primary viewer does not supply current Hill identity, isolated actor target factory, and projection to the actor host',
 );
 assert.doesNotMatch(
@@ -439,8 +514,13 @@ assert.doesNotMatch(
 );
 assert.match(
   primaryViewerSource,
-  /function createActorFrameTarget[\s\S]*const frameCanvas = document\.createElement\('canvas'\)[\s\S]*const layerCanvas = document\.createElement\('canvas'\)[\s\S]*frameContext\.drawImage\([\s\S]*ctx\.drawImage\(/,
-  'canonical primary viewer does not isolate each producer layer and composite one Hill-owned actor frame',
+  /createHillPrimaryViewerRetainedActorTargetFactory/,
+  'canonical primary viewer does not use the Hill-owned retained actor presentation seam',
+);
+assert.doesNotMatch(
+  primaryViewerSource,
+  /function createActorFrameTarget[\s\S]*document\.createElement\('canvas'\)/,
+  'canonical primary viewer still allocates full-size actor canvases inside every visible frame',
 );
 assert.match(
   primaryViewerSource,

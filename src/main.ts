@@ -107,9 +107,11 @@ import {
 import {
   HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
   hillPrimaryViewerActorHost,
-  type HillPrimaryViewerActorFrameTarget,
   type HillPrimaryViewerActorHostReceipt
 } from './terrain/hill-primary-viewer-actor-host.js';
+import {
+  createHillPrimaryViewerRetainedActorTargetFactory
+} from './terrain/hill-primary-viewer-retained-actor-targets.js';
 import {
   LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
   LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE,
@@ -281,6 +283,7 @@ let lermHordePrimaryViewerStatus = lermHordePrimaryViewerRequested
   ? 'loading'
   : 'not-requested';
 let lermHordePrimaryViewerError = 'none';
+let lermHordePrimaryViewerAdvanceFailed = false;
 
 if (lermHordePrimaryViewerRequested) {
   workerStatus = 'horde-live-source-loading';
@@ -288,9 +291,9 @@ if (lermHordePrimaryViewerRequested) {
     .then((composition) => {
       hillPrimaryViewerActorHost.register(composition.layer);
       lermHordePrimaryViewerComposition = composition;
-      terrainBuffer = composition.state.terrainBuffer;
+      terrainBuffer = composition.frame.terrainBuffer;
       lermHordePrimaryViewerStatus = 'live';
-      workerStatus = 'horde-live-source';
+      workerStatus = 'horde-live-worker';
     })
     .catch((error) => {
       lermHordePrimaryViewerStatus = 'failed';
@@ -435,6 +438,11 @@ let previewSettings: HillPreviewSettings = loadHillPreviewSettings(safePreviewSe
 previewSettings = applyHillDiagnosticPreviewPreset(previewSettings, hillDiagnosticPreset);
 const previewDebugControls = createPreviewDebugControls();
 const witnessPanel = createWitnessPanel();
+const retainedActorTargets =
+  createHillPrimaryViewerRetainedActorTargetFactory({
+    createCanvas: () => document.createElement('canvas'),
+    compositeContext: ctx
+  });
 
 document.body.append(controls.element, viewControls.element, previewDebugControls.element, witnessPanel);
 installCameraDrag();
@@ -446,73 +454,6 @@ function resize(): void {
   appCanvas.style.width = '100vw';
   appCanvas.style.height = '100vh';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-
-function createActorFrameTarget(frame: {
-  viewport: {
-    width: number;
-    height: number;
-    pixelRatio: number;
-  };
-}): HillPrimaryViewerActorFrameTarget {
-  const { width, height, pixelRatio } = frame.viewport;
-  const backingWidth = Math.max(1, Math.floor(width * pixelRatio));
-  const backingHeight = Math.max(1, Math.floor(height * pixelRatio));
-  const frameCanvas = document.createElement('canvas');
-  frameCanvas.width = backingWidth;
-  frameCanvas.height = backingHeight;
-  const frameContext = frameCanvas.getContext('2d');
-
-  if (!frameContext) {
-    throw new Error('primary-viewer actor frame target is unavailable');
-  }
-  frameContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-
-  return {
-    createLayerTarget() {
-      const layerCanvas = document.createElement('canvas');
-      layerCanvas.width = backingWidth;
-      layerCanvas.height = backingHeight;
-      const layerContext = layerCanvas.getContext('2d');
-
-      if (!layerContext) {
-        throw new Error('primary-viewer actor layer target is unavailable');
-      }
-      layerContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-
-      return {
-        surface: {
-          context: layerContext
-        },
-        merge() {
-          frameContext.drawImage(
-            layerCanvas,
-            0,
-            0,
-            backingWidth,
-            backingHeight,
-            0,
-            0,
-            width,
-            height
-          );
-        }
-      };
-    },
-    composite() {
-      ctx.drawImage(
-        frameCanvas,
-        0,
-        0,
-        backingWidth,
-        backingHeight,
-        0,
-        0,
-        width,
-        height
-      );
-    }
-  };
 }
 
 function render(timestampMs: number): void {
@@ -531,9 +472,25 @@ function render(timestampMs: number): void {
     params.topologyPhaseIntensity > 0
       ? params.topologyPhaseTimeMs + motionTimestampMs * 0.3
       : params.topologyPhaseTimeMs;
-  if (lermHordePrimaryViewerComposition) {
-    terrainBuffer =
-      lermHordePrimaryViewerComposition.advance(timestampMs).terrainBuffer;
+  if (
+    lermHordePrimaryViewerComposition &&
+    !lermHordePrimaryViewerAdvanceFailed
+  ) {
+    try {
+      terrainBuffer =
+        lermHordePrimaryViewerComposition.advance(timestampMs).terrainBuffer;
+    } catch (error) {
+      lermHordePrimaryViewerAdvanceFailed = true;
+      lermHordePrimaryViewerStatus = 'failed';
+      lermHordePrimaryViewerError =
+        error instanceof Error ? error.message : String(error);
+      latestWorkerError = lermHordePrimaryViewerError;
+      workerStatus = 'horde-live-worker-failed';
+      console.error(
+        'primary-viewer Lerm Horde worker publication failed',
+        error,
+      );
+    }
   } else if (!lermHordePrimaryViewerRequested) {
     requestTerrain({
       ...params,
@@ -565,7 +522,7 @@ function render(timestampMs: number): void {
       panX: viewState.panX,
       panY: viewState.panY
     },
-    createFrameTarget: createActorFrameTarget,
+    createFrameTarget: retainedActorTargets.createFrameTarget,
     project: (point) =>
       project(
         point.x,
@@ -2106,6 +2063,10 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `support motion: delta ${witness.supportFrame.maxHeightDelta.toFixed(3)} speed ${witness.supportFrame.maxSurfaceSpeed.toFixed(2)} dirty ${witness.supportFrame.dirtySubstrateTileCount}/${witness.supportFrame.substrateTileCount}`,
     `worker: ${workerStatus} req ${latestTerrainRequestId} pending ${pendingTerrainRequestId || 'none'} duration ${latestWorkerDurationMs.toFixed(1)}ms`,
     `worker error: ${latestWorkerError}`,
+    `Horde composition: ${lermHordePrimaryViewerStatus} ${latestLermHordeCompositionReceipt?.route.effective ?? 'none'}`,
+    `Horde runtime: ${latestLermHordeCompositionReceipt?.route.runtime ?? 'none'} ${latestLermHordeCompositionReceipt?.route.runtimeBackend ?? 'none'} ${latestLermHordeCompositionReceipt?.route.staleStatus ?? 'none'}`,
+    `Horde actor: ${latestLermHordeCompositionReceipt?.route.actor ?? 'none'} ${latestLermHordeCompositionReceipt?.lifecycle.phase ?? 'absent'}`,
+    `Horde error: ${lermHordePrimaryViewerError}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
     `preview: ${previewSettings.mode} / ${activePreviewLayerSummary()}`,
@@ -2114,9 +2075,6 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `pressure: ${pressureFieldWitnessSummary(witness)}`,
     `actor host: ${latestActorHostReceipt?.route.effective ?? HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE} layers ${latestActorHostReceipt?.drawnLayerCount ?? 0}/${latestActorHostReceipt?.registeredLayerCount ?? 0}`,
     `actor routes: ${latestActorHostReceipt?.effectiveActorRoutes.join(',') || 'none'}`,
-    `Horde composition: ${lermHordePrimaryViewerStatus} ${latestLermHordeCompositionReceipt?.route.effective ?? 'none'}`,
-    `Horde actor: ${latestLermHordeCompositionReceipt?.route.actor ?? 'none'} ${latestLermHordeCompositionReceipt?.lifecycle.phase ?? 'absent'}`,
-    `Horde error: ${lermHordePrimaryViewerError}`,
     latestGrowthPlacementSummary,
     `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`
   ].join('\n');
@@ -2133,6 +2091,9 @@ interface LermHordePrimaryViewerWindowState {
     composition: string;
     viewer: string;
     actor: string;
+    actorRenderer: string;
+    runtime: string;
+    runtimeBackend: string;
     fallbackStatus: string;
     staleStatus: string;
   } | null;
@@ -2148,6 +2109,13 @@ interface LermHordePrimaryViewerWindowState {
     sampleChecksum: string;
     topologyChecksum: string;
     trafficChecksum: string;
+  } | null;
+  publication: {
+    generation: number;
+    sourceElapsedMs: number;
+    hostPublishedAtMs: number;
+    presentationAgeMs: number;
+    completeness: 'atomic-terrain-actor';
   } | null;
   host: HillPrimaryViewerActorHostReceipt | null;
   view: {
@@ -2176,6 +2144,9 @@ function publishLermHordePrimaryViewerState(): void {
           composition: receipt.route.effective,
           viewer: receipt.route.viewer,
           actor: receipt.route.actor,
+          actorRenderer: receipt.route.actorRenderer,
+          runtime: receipt.route.runtime,
+          runtimeBackend: receipt.route.runtimeBackend,
           fallbackStatus: receipt.route.fallbackStatus,
           staleStatus: receipt.route.staleStatus
         }
@@ -2190,6 +2161,7 @@ function publishLermHordePrimaryViewerState(): void {
         }
       : null,
     terrain: receipt ? { ...receipt.terrain } : null,
+    publication: receipt ? { ...receipt.publication } : null,
     host: latestActorHostReceipt
       ? {
           ...latestActorHostReceipt,

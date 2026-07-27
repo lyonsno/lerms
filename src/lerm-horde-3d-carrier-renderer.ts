@@ -29,7 +29,10 @@ import {
   LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
 } from './lerm-horde-live-body-motion.js';
 import {
+  LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
+  LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA,
   createLermHordePrimaryViewerActorFrame,
+  type LermHordePrimaryViewerActorFrame,
 } from './lerm-horde-primary-viewer-actor-frame.js';
 import {
   LERM_HORDE_LIVE_RUNTIME_ROUTE,
@@ -580,23 +583,7 @@ async function loadExactCarrierLiveSource(): Promise<ExactCarrierLiveSourceInter
       return createLermHordePrimaryViewerActorFrame(runtime.state);
     },
     evaluateBodyPositions(actorFrame) {
-      const current =
-        createLermHordePrimaryViewerActorFrame(runtime.state);
-      if (
-        actorFrame.lifecycle.tickCount !==
-          current.lifecycle.tickCount ||
-        actorFrame.lifecycle.elapsedMs !==
-          current.lifecycle.elapsedMs ||
-        actorFrame.terrain.frameId !== current.terrain.frameId ||
-        actorFrame.terrain.sampleChecksum !==
-          current.terrain.sampleChecksum ||
-        actorFrame.terrain.topologyChecksum !==
-          current.terrain.topologyChecksum
-      ) {
-        throw new Error(
-          'exact carrier evaluator received a stale primary-viewer actor frame',
-        );
-      }
+      validateExactCarrierDetachedActorFrame(actorFrame);
       if (!actorFrame.pose) return null;
       return evaluateSmoothFittedPhase(
         binding,
@@ -616,6 +603,59 @@ async function loadExactCarrierLiveSource(): Promise<ExactCarrierLiveSourceInter
     effectiveRailId: EXACT_3D_CARRIER_RAIL_ID,
     geometry,
   };
+}
+
+export function validateExactCarrierDetachedActorFrame(
+  actorFrame: LermHordePrimaryViewerActorFrame,
+): void {
+  const identity = actorFrame?.identity;
+  const pose = actorFrame?.pose;
+  if (
+    actorFrame?.schema !==
+      LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA ||
+    actorFrame.route?.requested !==
+      LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE ||
+    actorFrame.route.effective !==
+      LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE ||
+    actorFrame.route.fallbackStatus !== 'none' ||
+    actorFrame.route.staleStatus !== 'fresh' ||
+    identity?.carrierId !== '719024' ||
+    identity.speciesAuthority !==
+      'non-lerm-engineering-carrier' ||
+    identity.bodyAsset?.sha256 !==
+      EXACT_3D_CARRIER_BODY_SHA256 ||
+    identity.fittedMotion?.evaluatorRoute !==
+      EXACT_3D_CARRIER_EVALUATOR_ROUTE ||
+    identity.fittedMotion.registrationSha256 !==
+      EXACT_3D_CARRIER_REGISTRATION_SHA256 ||
+    identity.rail?.id !== EXACT_3D_CARRIER_RAIL_ID ||
+    identity.rail.revision !==
+      EXACT_3D_CARRIER_RAIL_REVISION ||
+    identity.rail.moduleSha256 !==
+      EXACT_3D_CARRIER_RAIL_MODULE_SHA256 ||
+    identity.rail.historySha256 !==
+      EXACT_3D_CARRIER_RAIL_HISTORY_SHA256 ||
+    !Number.isFinite(actorFrame.lifecycle?.elapsedMs) ||
+    !Number.isInteger(actorFrame.lifecycle?.tickCount) ||
+    actorFrame.lifecycle.tickCount < 0 ||
+    !actorFrame.terrain?.frameId ||
+    !actorFrame.terrain.sampleChecksum ||
+    !actorFrame.terrain.topologyChecksum ||
+    !(
+      (actorFrame.lifecycle.phase === 'traversing' &&
+        actorFrame.lifecycle.visible === true &&
+        pose !== null &&
+        pose.support.renderedHillSourceId ===
+          actorFrame.terrain.frameId) ||
+      (actorFrame.lifecycle.phase === 'departed' &&
+        actorFrame.lifecycle.visible === false &&
+        pose === null)
+    )
+  ) {
+    throw new Error(
+      'exact carrier evaluator received an incompatible detached primary-viewer actor frame',
+    );
+  }
 }
 
 async function loadExactGeometry(

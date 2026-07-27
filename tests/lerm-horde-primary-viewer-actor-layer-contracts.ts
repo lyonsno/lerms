@@ -14,6 +14,9 @@ import {
   EXACT_3D_CARRIER_REGISTRATION_SHA256,
 } from '../src/lerm-horde-3d-carrier-contract.js';
 import {
+  validateExactCarrierDetachedActorFrame,
+} from '../src/lerm-horde-3d-carrier-renderer.js';
+import {
   LERM_HORDE_PRIMARY_VIEWER_BODY_ASSET_URL,
   LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
   LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA,
@@ -56,6 +59,25 @@ const context = {
 } as unknown as CanvasRenderingContext2D;
 
 let actorFrame = createActorFrame();
+assert.doesNotThrow(
+  () => validateExactCarrierDetachedActorFrame(actorFrame),
+  'a source-authenticated worker frame must remain evaluable without sharing the worker runtime clock',
+);
+assert.throws(
+  () =>
+    validateExactCarrierDetachedActorFrame({
+      ...actorFrame,
+      identity: {
+        ...actorFrame.identity,
+        bodyAsset: {
+          ...actorFrame.identity.bodyAsset,
+          sha256: 'substituted-body',
+        },
+      },
+    } as unknown as LermHordePrimaryViewerActorFrame),
+  /incompatible detached/i,
+  'detached evaluation cannot weaken exact fitted-body provenance',
+);
 let bodyPositions: Float32Array | null = new Float32Array([
   -0.4, 1.2, -0.2,
   0.4, 1.2, -0.2,

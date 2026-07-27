@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
   LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
+  LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE,
   LERM_HORDE_PRIMARY_VIEWER_QUERY_KEY,
   LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE,
+  LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE,
   createLermHordePrimaryViewerLiveComposition,
   isLermHordePrimaryViewerRequested,
   type LermHordePrimaryViewerLiveSource,
@@ -82,6 +84,31 @@ assert.equal(
   composition.layer.id,
   LERM_HORDE_PRIMARY_VIEWER_ACTOR_LAYER_ID,
 );
+const initialAtomicFrame = (
+  composition as unknown as {
+    frame?: {
+      generation: number;
+      sourceElapsedMs: number;
+      terrain: {
+        frameId: string;
+        sampleChecksum: string;
+        topologyChecksum: string;
+      };
+      actor: LermHordePrimaryViewerActorFrame;
+    };
+  }
+).frame;
+assert.ok(
+  initialAtomicFrame,
+  'the live composition must publish one atomic terrain/actor frame before the host can draw',
+);
+assert.equal(initialAtomicFrame.generation, 0);
+assert.equal(initialAtomicFrame.sourceElapsedMs, 0);
+assert.equal(
+  initialAtomicFrame.terrain.frameId,
+  initialAtomicFrame.actor.terrain.frameId,
+  'the published actor cannot cross ticks with its rendered Hill',
+);
 
 composition.advance(10_000);
 assert.deepEqual(advances, [], 'first host frame establishes the live clock');
@@ -112,6 +139,10 @@ assert.deepEqual(receipt.route, {
   effective: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
   viewer: HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
   actor: LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
+  actorRenderer:
+    LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE,
+  runtime: LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE,
+  runtimeBackend: 'synchronous-reference',
   fallbackStatus: 'none',
   staleStatus: 'fresh',
 });
@@ -119,6 +150,27 @@ assert.equal(receipt.lifecycle.phase, 'departed');
 assert.equal(receipt.lifecycle.visible, false);
 assert.equal(receipt.clock.mode, 'live_viewer_timestamp');
 assert.equal(receipt.clock.timeScale, 0.2);
+assert.deepEqual(
+  (
+    receipt as unknown as {
+      publication?: {
+        generation: number;
+        sourceElapsedMs: number;
+        hostPublishedAtMs: number;
+        presentationAgeMs: number;
+        completeness: string;
+      };
+    }
+  ).publication,
+  {
+    generation: advances.length,
+    sourceElapsedMs: state.elapsedMs,
+    hostPublishedAtMs: 30_000,
+    presentationAgeMs: 0,
+    completeness: 'atomic-terrain-actor',
+  },
+  'the receipt must make atomic publication identity and displayed age explicit',
+);
 assert.deepEqual(receipt.terrain, {
   frameId: state.terrainBuffer.source.frameId,
   sampleChecksum: state.terrainBuffer.sampleChecksum,
@@ -126,6 +178,20 @@ assert.deepEqual(receipt.terrain, {
   trafficChecksum:
     state.terrainBuffer.witness.producerTrafficFieldChecksum,
 });
+
+const mismatchedSource: LermHordePrimaryViewerLiveSource = {
+  ...source,
+  currentActorFrame() {
+    const actor = createActorFrame(state);
+    actor.terrain.frameId = 'cross-tick-hill-frame';
+    return actor;
+  },
+};
+assert.throws(
+  () => createLermHordePrimaryViewerLiveComposition(mismatchedSource),
+  /atomic|same.*Hill|cross.tick/i,
+  'the composition must reject a partial cross-tick terrain/actor publication before host drawing',
+);
 
 function createState(
   elapsedMs: number,

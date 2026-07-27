@@ -12,6 +12,7 @@ import {
   type HillPrimaryViewerActorLayer,
   type HillPrimaryViewerProjectionPoint,
 } from './terrain/hill-primary-viewer-actor-host.js';
+import type { LermHordePrimaryViewerActorRasterizer } from './lerm-horde-primary-viewer-webgl-rasterizer.js';
 
 export const LERM_HORDE_PRIMARY_VIEWER_ACTOR_LAYER_ID =
   'lerm-horde-exact-719024-live' as const;
@@ -21,6 +22,7 @@ export interface LermHordePrimaryViewerActorLayerSource {
   evaluateBodyPositions: (
     actorFrame: LermHordePrimaryViewerActorFrame,
   ) => Float32Array | null;
+  rasterizer?: LermHordePrimaryViewerActorRasterizer;
 }
 
 interface ProjectedTriangle {
@@ -62,7 +64,18 @@ export function createLermHordePrimaryViewerActorLayer(
           positions.every(Number.isFinite),
         'primary-viewer visible actor requires finite fitted body positions',
       );
-      drawBodyTriangles(frame, positions);
+      if (source.rasterizer) {
+        const raster = source.rasterizer.render(frame, positions);
+        frame.surface.context.drawImage(
+          raster,
+          0,
+          0,
+          frame.viewport.width,
+          frame.viewport.height,
+        );
+      } else {
+        drawBodyTriangles(frame, positions);
+      }
     },
   };
 }

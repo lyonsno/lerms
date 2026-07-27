@@ -10,9 +10,25 @@ import {
   createLermHordePrimaryViewerActorLayer,
 } from './lerm-horde-primary-viewer-actor-layer.js';
 import {
+  LERM_HORDE_PRIMARY_VIEWER_WEBGL_RASTERIZER_ROUTE,
+  createLermHordePrimaryViewerWebglRasterizer,
+  type LermHordePrimaryViewerActorRasterizer,
+} from './lerm-horde-primary-viewer-webgl-rasterizer.js';
+import {
+  LERM_HORDE_PRIMARY_VIEWER_ATOMIC_FRAME_SCHEMA,
+  LERM_HORDE_PRIMARY_VIEWER_TIME_SCALE,
+  type LermHordePrimaryViewerAtomicFrame,
+} from './lerm-horde-primary-viewer-live-contract.js';
+import {
   LERM_HORDE_LIVE_RUNTIME_ROUTE,
   type LermHordeLiveRuntimeState,
 } from './lerm-horde-live-runtime-composition.js';
+import {
+  LERM_HORDE_PRIMARY_VIEWER_WORKER_ROUTE,
+  createLermHordePrimaryViewerWorkerRuntime,
+  type LermHordePrimaryViewerWorkerPort,
+  type LermHordePrimaryViewerWorkerRuntime,
+} from './lerm-horde-primary-viewer-live-worker-client.js';
 import {
   HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
   type HillPrimaryViewerActorLayer,
@@ -25,7 +41,16 @@ export const LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE =
 export const LERM_HORDE_PRIMARY_VIEWER_QUERY_KEY = 'actor' as const;
 export const LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE =
   'lerm-horde-live' as const;
-export const LERM_HORDE_PRIMARY_VIEWER_TIME_SCALE = 0.2 as const;
+export const LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE =
+  'lerms/lerm-horde/primary-viewer-canvas2d-reference-v0' as const;
+export const LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE =
+  'lerms/lerm-horde/primary-viewer-sync-runtime-reference-v0' as const;
+
+export {
+  LERM_HORDE_PRIMARY_VIEWER_ATOMIC_FRAME_SCHEMA,
+  LERM_HORDE_PRIMARY_VIEWER_TIME_SCALE,
+};
+export type { LermHordePrimaryViewerAtomicFrame };
 
 export interface LermHordePrimaryViewerLiveSource {
   readonly state: LermHordeLiveRuntimeState;
@@ -45,8 +70,17 @@ export interface LermHordePrimaryViewerLiveCompositionReceipt {
     effective: typeof LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE;
     viewer: typeof HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE;
     actor: typeof LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE;
+    actorRenderer:
+      | typeof LERM_HORDE_PRIMARY_VIEWER_WEBGL_RASTERIZER_ROUTE
+      | typeof LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE;
+    runtime:
+      | typeof LERM_HORDE_PRIMARY_VIEWER_WORKER_ROUTE
+      | typeof LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE;
+    runtimeBackend:
+      | 'dedicated-worker'
+      | 'synchronous-reference';
     fallbackStatus: 'none';
-    staleStatus: 'fresh';
+    staleStatus: 'fresh' | 'retained-complete-frame';
   };
   clock: {
     mode: 'live_viewer_timestamp';
@@ -66,6 +100,13 @@ export interface LermHordePrimaryViewerLiveCompositionReceipt {
     topologyChecksum: string;
     trafficChecksum: string;
   };
+  publication: {
+    generation: number;
+    sourceElapsedMs: number;
+    hostPublishedAtMs: number;
+    presentationAgeMs: number;
+    completeness: 'atomic-terrain-actor';
+  };
 }
 
 export interface LermHordePrimaryViewerLiveComposition {
@@ -74,8 +115,8 @@ export interface LermHordePrimaryViewerLiveComposition {
   readonly route:
     typeof LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE;
   readonly layer: HillPrimaryViewerActorLayer;
-  readonly state: LermHordeLiveRuntimeState;
-  advance(hostTimestampMs: number): LermHordeLiveRuntimeState;
+  readonly frame: LermHordePrimaryViewerAtomicFrame;
+  advance(hostTimestampMs: number): LermHordePrimaryViewerAtomicFrame;
   receipt(): LermHordePrimaryViewerLiveCompositionReceipt;
 }
 
@@ -89,28 +130,63 @@ export function isLermHordePrimaryViewerRequested(
 }
 
 export async function loadLermHordePrimaryViewerLiveComposition(): Promise<LermHordePrimaryViewerLiveComposition> {
-  const source = await createExactCarrierLiveSource();
-  return createLermHordePrimaryViewerLiveComposition(source);
+  const worker = new Worker(
+    new URL(
+      './lerm-horde-primary-viewer-live.worker.ts',
+      import.meta.url,
+    ),
+    { type: 'module' },
+  );
+  try {
+    const [source, workerRuntime] = await Promise.all([
+      createExactCarrierLiveSource(),
+      createLermHordePrimaryViewerWorkerRuntime(
+        worker as LermHordePrimaryViewerWorkerPort,
+      ),
+    ]);
+    const rasterizer =
+      createLermHordePrimaryViewerWebglRasterizer();
+    return createLermHordePrimaryViewerWorkerComposition(
+      source,
+      workerRuntime,
+      rasterizer,
+    );
+  } catch (error) {
+    worker.terminate();
+    throw error;
+  }
 }
 
 export function createLermHordePrimaryViewerLiveComposition(
   source: LermHordePrimaryViewerLiveSource,
+  options: {
+    rasterizer?: LermHordePrimaryViewerActorRasterizer;
+  } = {},
 ): LermHordePrimaryViewerLiveComposition {
   validateSource(source);
   let firstHostTimestampMs: number | undefined;
   let lastHostTimestampMs: number | undefined;
+  let generation = 0;
+  let currentFrame = createLermHordePrimaryViewerAtomicFrame(
+    source,
+    generation,
+    null,
+  );
   const layer = createLermHordePrimaryViewerActorLayer({
-    currentActorFrame: () => source.currentActorFrame(),
+    currentActorFrame: () => currentFrame.actor,
     evaluateBodyPositions: (actorFrame) =>
       source.evaluateBodyPositions(actorFrame),
+    ...(options.rasterizer
+      ? { rasterizer: options.rasterizer }
+      : {}),
   });
 
   return {
     schema: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
     route: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
     layer,
-    get state() {
-      return source.state;
+    get frame() {
+      return currentFrame;
     },
     advance(hostTimestampMs) {
       requireComposition(
@@ -131,16 +207,22 @@ export function createLermHordePrimaryViewerLiveComposition(
       );
       if (elapsedMs > source.state.elapsedMs) {
         source.advanceTo(elapsedMs);
+        generation += 1;
       }
-      return source.state;
+      currentFrame = createLermHordePrimaryViewerAtomicFrame(
+        source,
+        generation,
+        hostTimestampMs,
+      );
+      return currentFrame;
     },
     receipt() {
       requireComposition(
         lastHostTimestampMs !== undefined,
         'primary-viewer live receipt requires one host frame',
       );
-      const actorFrame = source.currentActorFrame();
-      const terrain = source.state.terrainBuffer;
+      const actorFrame = currentFrame.actor;
+      const terrain = currentFrame.terrainBuffer;
       return {
         schema: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
         route: {
@@ -148,6 +230,11 @@ export function createLermHordePrimaryViewerLiveComposition(
           effective: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
           viewer: HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
           actor: LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
+          actorRenderer:
+            options.rasterizer?.route ??
+            LERM_HORDE_PRIMARY_VIEWER_CANVAS2D_RASTERIZER_ROUTE,
+          runtime: LERM_HORDE_PRIMARY_VIEWER_SYNC_RUNTIME_ROUTE,
+          runtimeBackend: 'synchronous-reference',
           fallbackStatus: 'none',
           staleStatus: 'fresh',
         },
@@ -172,6 +259,129 @@ export function createLermHordePrimaryViewerLiveComposition(
           trafficChecksum:
             terrain.witness.producerTrafficFieldChecksum,
         },
+        publication: {
+          generation: currentFrame.generation,
+          sourceElapsedMs: currentFrame.sourceElapsedMs,
+          hostPublishedAtMs:
+            currentFrame.hostPublishedAtMs ?? lastHostTimestampMs,
+          presentationAgeMs: Math.max(
+            0,
+            lastHostTimestampMs -
+              (currentFrame.hostPublishedAtMs ?? lastHostTimestampMs),
+          ),
+          completeness: currentFrame.completeness,
+        },
+      };
+    },
+  };
+}
+
+export function createLermHordePrimaryViewerAtomicFrame(
+  source: LermHordePrimaryViewerLiveSource,
+  generation: number,
+  hostPublishedAtMs: number | null,
+  terrainBuffer: LermHordeLiveRuntimeState['terrainBuffer'] =
+    source.state.terrainBuffer,
+): LermHordePrimaryViewerAtomicFrame {
+  const state = source.state;
+  const actor = source.currentActorFrame();
+  requireComposition(
+    Number.isInteger(generation) &&
+      generation >= 0 &&
+      actor.lifecycle.elapsedMs === state.elapsedMs &&
+      actor.terrain.frameId === terrainBuffer.source.frameId &&
+      actor.terrain.sampleChecksum === terrainBuffer.sampleChecksum &&
+      actor.terrain.topologyChecksum === terrainBuffer.topologyChecksum,
+    'primary-viewer atomic frame cannot cross ticks or substitute a different Hill',
+  );
+  return {
+    schema: LERM_HORDE_PRIMARY_VIEWER_ATOMIC_FRAME_SCHEMA,
+    generation,
+    sourceElapsedMs: state.elapsedMs,
+    hostPublishedAtMs,
+    completeness: 'atomic-terrain-actor',
+    terrainBuffer,
+    terrain: {
+      frameId: terrainBuffer.source.frameId,
+      sampleChecksum: terrainBuffer.sampleChecksum,
+      topologyChecksum: terrainBuffer.topologyChecksum,
+    },
+    actor,
+  };
+}
+
+function createLermHordePrimaryViewerWorkerComposition(
+  source: LermHordePrimaryViewerLiveSource,
+  workerRuntime: LermHordePrimaryViewerWorkerRuntime,
+  rasterizer: LermHordePrimaryViewerActorRasterizer,
+): LermHordePrimaryViewerLiveComposition {
+  validateSource(source);
+  const layer = createLermHordePrimaryViewerActorLayer({
+    currentActorFrame: () => workerRuntime.frame.actor,
+    evaluateBodyPositions: (actorFrame) =>
+      source.evaluateBodyPositions(actorFrame),
+    rasterizer,
+  });
+
+  return {
+    schema: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
+    route: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
+    layer,
+    get frame() {
+      return workerRuntime.frame;
+    },
+    advance(hostTimestampMs) {
+      return workerRuntime.advance(hostTimestampMs);
+    },
+    receipt() {
+      const hostTimestampMs = workerRuntime.latestHostTimestampMs;
+      requireComposition(
+        hostTimestampMs !== null,
+        'primary-viewer live receipt requires one host frame',
+      );
+      const frame = workerRuntime.frame;
+      const actorFrame = frame.actor;
+      const terrain = frame.terrainBuffer;
+      const publication = workerRuntime.publication();
+      return {
+        schema: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_SCHEMA,
+        route: {
+          requested: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
+          effective: LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
+          viewer: HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE,
+          actor: LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_ROUTE,
+          actorRenderer: rasterizer.route,
+          runtime: LERM_HORDE_PRIMARY_VIEWER_WORKER_ROUTE,
+          runtimeBackend: 'dedicated-worker',
+          fallbackStatus: 'none',
+          staleStatus:
+            publication.presentationAgeMs === 0
+              ? 'fresh'
+              : 'retained-complete-frame',
+        },
+        clock: {
+          mode: 'live_viewer_timestamp',
+          timeScale: LERM_HORDE_PRIMARY_VIEWER_TIME_SCALE,
+          hostTimestampMs,
+          elapsedMs: frame.sourceElapsedMs,
+          completionElapsedMs: workerRuntime.completionElapsedMs,
+          settledAfterDeparture:
+            actorFrame.lifecycle.phase === 'departed' &&
+            frame.sourceElapsedMs ===
+              workerRuntime.completionElapsedMs,
+        },
+        lifecycle: {
+          phase: actorFrame.lifecycle.phase,
+          visible: actorFrame.lifecycle.visible,
+        },
+        terrain: {
+          frameId: terrain.source.frameId,
+          sampleChecksum: terrain.sampleChecksum,
+          topologyChecksum: terrain.topologyChecksum,
+          trafficChecksum:
+            terrain.witness.producerTrafficFieldChecksum,
+        },
+        publication,
       };
     },
   };
