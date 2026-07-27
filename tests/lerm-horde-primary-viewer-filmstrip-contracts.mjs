@@ -171,6 +171,20 @@ for (const [label, mutate, pattern] of [
     },
     /checksum|Hill|terrain/i,
   ],
+  [
+    'same-frame traffic checksum substitution',
+    (candidate) => {
+      candidate.terrainFrameId = smoothFrames[0].terrainFrameId;
+      candidate.terrain = {
+        ...smoothFrames[0].terrain,
+        trafficChecksum: 'substituted-traffic',
+      };
+      candidate.hostTerrain = {
+        ...smoothFrames[0].hostTerrain,
+      };
+    },
+    /traffic|checksum|Hill|terrain/i,
+  ],
 ]) {
   const invalidFrames = smoothFrames.map((candidate) =>
     structuredClone(candidate),
@@ -518,6 +532,18 @@ function adversarialFixtureCases(smoothFrames) {
   checksum[1].hostTerrain.topologyChecksum =
     'substituted-topology';
 
+  const traffic = smoothFrames.map((candidate) =>
+    structuredClone(candidate),
+  );
+  traffic[1].terrainFrameId = smoothFrames[0].terrainFrameId;
+  traffic[1].terrain = {
+    ...smoothFrames[0].terrain,
+    trafficChecksum: 'substituted-traffic',
+  };
+  traffic[1].hostTerrain = {
+    ...smoothFrames[0].hostTerrain,
+  };
+
   return [
     {
       label: 'mid-capture worker failure',
@@ -536,6 +562,12 @@ function adversarialFixtureCases(smoothFrames) {
       frames: checksum,
       expectedTrustedCount: 1,
       errorPattern: /Hill identity or checksum/i,
+    },
+    {
+      label: 'same-frame traffic checksum substitution',
+      frames: traffic,
+      expectedTrustedCount: 1,
+      errorPattern: /traffic|Hill identity or checksum/i,
     },
     {
       label: 'requested-count truncation',

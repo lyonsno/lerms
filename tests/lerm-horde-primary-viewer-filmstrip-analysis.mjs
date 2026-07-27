@@ -106,6 +106,11 @@ export function validateActorFilmstripFrame(
   );
   assertTerrainIdentity(frame.terrain, 'terrain');
   assertTerrainIdentity(frame.hostTerrain, 'hostTerrain');
+  assert.equal(
+    frame.terrainFrameId,
+    frame.terrain.frameId,
+    'filmstrip frame telemetry substituted terrain frame identity',
+  );
   assert.deepEqual(
     {
       frameId: frame.terrain.frameId,
@@ -179,6 +184,18 @@ export function validateActorFilmstripFrame(
       previous.observationToken,
       'duplicate filmstrip observation under advancing host presentation',
     );
+    if (frame.terrainFrameId === previous.terrainFrameId) {
+      assert.deepEqual(
+        frame.terrain,
+        previous.terrain,
+        'same-frame Hill identity or checksum changed, including traffic',
+      );
+      assert.deepEqual(
+        frame.hostTerrain,
+        previous.hostTerrain,
+        'same-frame canonical-host Hill identity or checksum changed',
+      );
+    }
     if (frame.runtimeElapsedMs > previous.runtimeElapsedMs) {
       assert.notEqual(
         frame.screenshotSha256,
