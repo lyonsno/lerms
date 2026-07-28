@@ -31,6 +31,24 @@ const episodeBStartMs =
 const episodeBEndMs = episodeBStartMs + traversalMs;
 const finalSettleEndMs =
   episodeBEndMs + LERM_HORDE_EPISODE_SETTLE_MS;
+const boundaryOnlyRuntime =
+  createLermHordeHistoryConditionedRuntime({
+    producerReceipt,
+    railSampler: createReceiptRailSampler(producerReceipt),
+    hillRevision: 'f6458e5bd74d9305c4149e6a2ee3844bf4613150',
+  });
+boundaryOnlyRuntime.advanceTo(traversalMs);
+boundaryOnlyRuntime.advanceTo(episodeBStartMs);
+boundaryOnlyRuntime.advanceTo(episodeBEndMs);
+boundaryOnlyRuntime.advanceTo(
+  boundaryOnlyRuntime.completionElapsedMs,
+);
+assert.throws(
+  () => boundaryOnlyRuntime.createReceipt(),
+  /positive visible settle/i,
+  'touching traversal boundaries cannot impersonate positive visible settle intervals',
+);
+
 const runtime = createLermHordeHistoryConditionedRuntime({
   producerReceipt,
   railSampler: createReceiptRailSampler(producerReceipt),

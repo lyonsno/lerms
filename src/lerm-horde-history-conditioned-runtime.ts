@@ -167,7 +167,7 @@ export function createLermHordeHistoryConditionedRuntime(
     [],
   );
   let firstTerminalState: LermHordeLiveRuntimeState | undefined;
-  const observedSettles = new Set<0 | 1>();
+  const observedPositiveSettles = new Set<0 | 1>();
   const traversedEpisodes = new Set<0 | 1>();
 
   const ensureFirstTerminal = (
@@ -245,7 +245,9 @@ export function createLermHordeHistoryConditionedRuntime(
       if (elapsedMs <= episodeASettleEndMs) {
         const base = first.advanceTo(traversalMs);
         traversedEpisodes.add(0);
-        observedSettles.add(0);
+        if (elapsedMs > traversalMs && base.body !== null) {
+          observedPositiveSettles.add(0);
+        }
         currentState = mapState(
           base,
           elapsedMs,
@@ -300,7 +302,9 @@ export function createLermHordeHistoryConditionedRuntime(
       if (elapsedMs <= finalSettleEndMs) {
         const base = next.advanceTo(traversalMs);
         traversedEpisodes.add(1);
-        observedSettles.add(1);
+        if (elapsedMs > episodeBEndMs && base.body !== null) {
+          observedPositiveSettles.add(1);
+        }
         currentState = mapState(
           base,
           elapsedMs,
@@ -337,11 +341,11 @@ export function createLermHordeHistoryConditionedRuntime(
         currentState.episodeController.stage !== 'complete' ||
         !decisionB ||
         currentState.body !== null ||
-        observedSettles.size !== 2 ||
+        observedPositiveSettles.size !== 2 ||
         traversedEpisodes.size !== 2
       ) {
         throw new Error(
-          'history-conditioned receipt requires two live traversals, two observed settles, and final departure',
+          'history-conditioned receipt requires two live traversals, two positive visible settle observations, and final departure',
         );
       }
       const samePolicy =
