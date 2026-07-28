@@ -1,9 +1,10 @@
 export const LIVE_HAND_ROUTE = 'native_wilor_mini_mlx_detector_sidecar_live' as const;
-export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v2' as const;
+export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v3' as const;
 export const LIVE_HAND_HYBRID_FALLBACK_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano/fallback' as const;
 export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_live' as const;
-export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_pose' as const;
+export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_state_observer' as const;
 export const LIVE_HAND_HYBRID_GEOMETRY_MODE = 'native_mano_regeneration' as const;
+export const LIVE_HAND_POSE_OBSERVER_MODE = 'fixed_lag_anatomical_state_v1' as const;
 export const LIVE_HAND_FAST_LANDMARK_SCHEMA = 'hand-state.browser-fast-landmarks.v1' as const;
 export const LIVE_HAND_RUNTIME_OWNER = 'hand-state-runtime' as const;
 export const MANO_VERTEX_COUNT = 778 as const;
@@ -47,15 +48,30 @@ export type LiveHandFinger = 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
 
 export type FingerExtensionTruth = Record<LiveHandFinger, number>;
 
+export type PoseObserverChainAuthorityMode =
+  | 'accepted_measurement'
+  | 'weighted_measurement'
+  | 'attenuated_large_innovation'
+  | 'held_incoherent_measurement';
+
+export type PoseObserverChainAuthority = Record<
+  LiveHandFinger,
+  PoseObserverChainAuthorityMode
+>;
+
 export interface AnchorReplayTruth {
   mode: 'capture_time_fast_observation_replay_v1';
   anchorCaptureTimestampMs: number;
   observationCount: number;
   acceptedCount: number;
   lastAcceptedCaptureTimestampMs: number;
+  observerMode: typeof LIVE_HAND_POSE_OBSERVER_MODE;
+  observerCaptureTimestampMs: number | null;
   candidateLastAcceptedCaptureTimestampMs: number | null;
-  promotionCatchUpMode: 'accepted_pose_state_transplant_v1' | null;
+  promotionCatchUpMode: 'accepted_pose_observer_state_transplant_v2' | null;
   promotionCatchUpCaptureTimestampMs: number | null;
+  promotionObserverMode: typeof LIVE_HAND_POSE_OBSERVER_MODE | null;
+  promotionObserverCaptureTimestampMs: number | null;
   failure: null;
 }
 
@@ -125,6 +141,12 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   poseSolverRobustInlierFraction: number | null;
   poseSolverConstraintSaturation: number | null;
   poseSolverDistalCouplingResidualRad: number | null;
+  poseObserverMode: typeof LIVE_HAND_POSE_OBSERVER_MODE | null;
+  poseObserverCaptureTimestampMs: number | null;
+  poseObserverPredictionHorizonMs: number | null;
+  poseObserverMaxInnovationRad: number | null;
+  poseObserverMaxVelocityRadS: number | null;
+  poseObserverChainAuthority: PoseObserverChainAuthority | null;
   anchorReplay: AnchorReplayTruth | null;
   fingerExtension: {
     target: FingerExtensionTruth;
@@ -424,6 +446,12 @@ export function assertLiveRuntimeSidecarStatus(value: unknown): RuntimeSidecarSt
 }
 
 const LIVE_HAND_FINGERS = ['thumb', 'index', 'middle', 'ring', 'pinky'] as const;
+const POSE_OBSERVER_CHAIN_AUTHORITY_MODES = new Set<PoseObserverChainAuthorityMode>([
+  'accepted_measurement',
+  'weighted_measurement',
+  'attenuated_large_innovation',
+  'held_incoherent_measurement',
+]);
 
 function normalizeFingerExtensions(value: unknown, label: string): FingerExtensionTruth {
   const extensions = record(value, label);
@@ -434,6 +462,31 @@ function normalizeFingerExtensions(value: unknown, label: string): FingerExtensi
       return [finger, extension];
     }),
   ) as unknown as FingerExtensionTruth;
+}
+
+function normalizePoseObserverChainAuthority(
+  value: unknown,
+): PoseObserverChainAuthority {
+  const authority = record(value, 'poseObserverChainAuthority');
+  const keys = Object.keys(authority);
+  if (
+    keys.length !== LIVE_HAND_FINGERS.length
+    || keys.some(key => !LIVE_HAND_FINGERS.includes(key as LiveHandFinger))
+  ) {
+    throw new Error('poseObserverChainAuthority must name exactly five finger chains');
+  }
+  return Object.fromEntries(
+    LIVE_HAND_FINGERS.map(finger => {
+      const mode = text(
+        authority[finger],
+        `poseObserverChainAuthority.${finger}`,
+      ) as PoseObserverChainAuthorityMode;
+      if (!POSE_OBSERVER_CHAIN_AUTHORITY_MODES.has(mode)) {
+        throw new Error(`unsupported pose observer authority for ${finger}: ${mode}`);
+      }
+      return [finger, mode];
+    }),
+  ) as PoseObserverChainAuthority;
 }
 
 function normalizeAnchorReplay(
@@ -478,15 +531,38 @@ function normalizeAnchorReplay(
   if (replay.failure !== null) {
     throw new Error('fresh hybrid frame cannot carry a failed anchor replay');
   }
+  if (replay.observerMode !== LIVE_HAND_POSE_OBSERVER_MODE) {
+    throw new Error('anchor replay must expose the anatomical observer mode');
+  }
+  const observerCaptureTimestampMs = replay.observerCaptureTimestampMs === null
+    ? null
+    : finiteNonNegative(
+      replay.observerCaptureTimestampMs,
+      'anchorReplay.observerCaptureTimestampMs',
+    );
+  if (
+    observerCaptureTimestampMs !== null
+    && (
+      observerCaptureTimestampMs < anchorCaptureTimestampMs
+      || observerCaptureTimestampMs > frameCaptureTimestampMs
+    )
+  ) {
+    throw new Error('anchor replay observer chronology is invalid');
+  }
   const hasPromotionCatchUp = replay.promotionCatchUpMode !== undefined;
   let candidateLastAcceptedCaptureTimestampMs: number | null = null;
   let promotionCatchUpMode: AnchorReplayTruth['promotionCatchUpMode'] = null;
   let promotionCatchUpCaptureTimestampMs: number | null = null;
+  let promotionObserverMode: AnchorReplayTruth['promotionObserverMode'] = null;
+  let promotionObserverCaptureTimestampMs: number | null = null;
   if (hasPromotionCatchUp) {
-    if (replay.promotionCatchUpMode !== 'accepted_pose_state_transplant_v1') {
+    if (
+      replay.promotionCatchUpMode
+      !== 'accepted_pose_observer_state_transplant_v2'
+    ) {
       throw new Error('unsupported anchor replay promotion catch-up mode');
     }
-    promotionCatchUpMode = 'accepted_pose_state_transplant_v1';
+    promotionCatchUpMode = 'accepted_pose_observer_state_transplant_v2';
     candidateLastAcceptedCaptureTimestampMs = finiteNonNegative(
       replay.candidateLastAcceptedCaptureTimestampMs,
       'anchorReplay.candidateLastAcceptedCaptureTimestampMs',
@@ -494,6 +570,14 @@ function normalizeAnchorReplay(
     promotionCatchUpCaptureTimestampMs = finiteNonNegative(
       replay.promotionCatchUpCaptureTimestampMs,
       'anchorReplay.promotionCatchUpCaptureTimestampMs',
+    );
+    if (replay.promotionObserverMode !== LIVE_HAND_POSE_OBSERVER_MODE) {
+      throw new Error('anchor replay promotion must expose observer identity');
+    }
+    promotionObserverMode = LIVE_HAND_POSE_OBSERVER_MODE;
+    promotionObserverCaptureTimestampMs = finiteNonNegative(
+      replay.promotionObserverCaptureTimestampMs,
+      'anchorReplay.promotionObserverCaptureTimestampMs',
     );
     if (candidateLastAcceptedCaptureTimestampMs !== lastAcceptedCaptureTimestampMs) {
       throw new Error('anchor replay candidate cutoff contradicts replay chronology');
@@ -504,9 +588,17 @@ function normalizeAnchorReplay(
     ) {
       throw new Error('anchor replay promotion catch-up chronology is invalid');
     }
+    if (
+      promotionObserverCaptureTimestampMs !== promotionCatchUpCaptureTimestampMs
+      || observerCaptureTimestampMs !== promotionObserverCaptureTimestampMs
+    ) {
+      throw new Error('anchor replay promotion observer chronology is invalid');
+    }
   } else if (
     replay.candidateLastAcceptedCaptureTimestampMs !== undefined
     || replay.promotionCatchUpCaptureTimestampMs !== undefined
+    || replay.promotionObserverMode !== undefined
+    || replay.promotionObserverCaptureTimestampMs !== undefined
   ) {
     throw new Error('anchor replay promotion catch-up provenance is incomplete');
   }
@@ -516,9 +608,13 @@ function normalizeAnchorReplay(
     observationCount,
     acceptedCount,
     lastAcceptedCaptureTimestampMs,
+    observerMode: LIVE_HAND_POSE_OBSERVER_MODE,
+    observerCaptureTimestampMs,
     candidateLastAcceptedCaptureTimestampMs,
     promotionCatchUpMode,
     promotionCatchUpCaptureTimestampMs,
+    promotionObserverMode,
+    promotionObserverCaptureTimestampMs,
     failure: null,
   };
 }
@@ -592,6 +688,12 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let poseSolverRobustInlierFraction: number | null = null;
   let poseSolverConstraintSaturation: number | null = null;
   let poseSolverDistalCouplingResidualRad: number | null = null;
+  let poseObserverMode: NormalizedManoFrame['poseObserverMode'] = null;
+  let poseObserverCaptureTimestampMs: number | null = null;
+  let poseObserverPredictionHorizonMs: number | null = null;
+  let poseObserverMaxInnovationRad: number | null = null;
+  let poseObserverMaxVelocityRadS: number | null = null;
+  let poseObserverChainAuthority: PoseObserverChainAuthority | null = null;
   let anchorReplay: AnchorReplayTruth | null = null;
   let fingerExtension: NormalizedManoFrame['fingerExtension'] = null;
   if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
@@ -728,6 +830,32 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       diagnostics.poseSolverDistalCouplingResidualRad,
       'poseSolverDistalCouplingResidualRad',
     );
+    if (diagnostics.poseObserverMode !== LIVE_HAND_POSE_OBSERVER_MODE) {
+      throw new Error('hybrid frame must expose the anatomical state observer');
+    }
+    poseObserverMode = LIVE_HAND_POSE_OBSERVER_MODE;
+    poseObserverCaptureTimestampMs = finiteNonNegative(
+      diagnostics.poseObserverCaptureTimestampMs,
+      'poseObserverCaptureTimestampMs',
+    );
+    if (poseObserverCaptureTimestampMs !== captureTimestampMs) {
+      throw new Error('pose observer capture must match visible frame capture');
+    }
+    poseObserverPredictionHorizonMs = finiteNonNegative(
+      diagnostics.poseObserverPredictionHorizonMs,
+      'poseObserverPredictionHorizonMs',
+    );
+    poseObserverMaxInnovationRad = finiteNonNegative(
+      diagnostics.poseObserverMaxInnovationRad,
+      'poseObserverMaxInnovationRad',
+    );
+    poseObserverMaxVelocityRadS = finiteNonNegative(
+      diagnostics.poseObserverMaxVelocityRadS,
+      'poseObserverMaxVelocityRadS',
+    );
+    poseObserverChainAuthority = normalizePoseObserverChainAuthority(
+      diagnostics.poseObserverChainAuthority,
+    );
     if (
       palmSolverInlierFraction > 1
       || poseSolverRobustInlierFraction > 1
@@ -838,6 +966,12 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     poseSolverRobustInlierFraction,
     poseSolverConstraintSaturation,
     poseSolverDistalCouplingResidualRad,
+    poseObserverMode,
+    poseObserverCaptureTimestampMs,
+    poseObserverPredictionHorizonMs,
+    poseObserverMaxInnovationRad,
+    poseObserverMaxVelocityRadS,
+    poseObserverChainAuthority,
     anchorReplay,
     fingerExtension,
   };

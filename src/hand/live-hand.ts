@@ -376,6 +376,12 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   poseSolverRobustInlierFraction: number | null;
   poseSolverConstraintSaturation: number | null;
   poseSolverDistalCouplingResidualRad: number | null;
+  poseObserverMode: NormalizedManoFrame['poseObserverMode'];
+  poseObserverCaptureTimestampMs: number | null;
+  poseObserverPredictionHorizonMs: number | null;
+  poseObserverMaxInnovationRad: number | null;
+  poseObserverMaxVelocityRadS: number | null;
+  poseObserverChainAuthority: NormalizedManoFrame['poseObserverChainAuthority'];
   anchorReplay: NormalizedManoFrame['anchorReplay'];
   fingerExtension: NormalizedManoFrame['fingerExtension'];
   fallbackState: null;
@@ -1420,6 +1426,12 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     poseSolverConstraintSaturation: frame.poseSolverConstraintSaturation,
     poseSolverDistalCouplingResidualRad:
       frame.poseSolverDistalCouplingResidualRad,
+    poseObserverMode: frame.poseObserverMode,
+    poseObserverCaptureTimestampMs: frame.poseObserverCaptureTimestampMs,
+    poseObserverPredictionHorizonMs: frame.poseObserverPredictionHorizonMs,
+    poseObserverMaxInnovationRad: frame.poseObserverMaxInnovationRad,
+    poseObserverMaxVelocityRadS: frame.poseObserverMaxVelocityRadS,
+    poseObserverChainAuthority: frame.poseObserverChainAuthority,
     anchorReplay: frame.anchorReplay,
     fingerExtension: frame.fingerExtension,
     fallbackState: null,

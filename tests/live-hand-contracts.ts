@@ -708,7 +708,7 @@ const hybridState = {
     mano: { ...state.frame.mano, diagnostic: 'native_mano_regeneration' },
     diagnostics: {
       ...state.frame.diagnostics,
-      fusionMode: 'wilor_anchor_mediapipe_mano_pose',
+      fusionMode: 'wilor_anchor_mediapipe_mano_state_observer',
       geometryMode: 'native_mano_regeneration',
       anchorSource: LIVE_HAND_ROUTE,
       anchorCaptureId: 'run-8-1000-1',
@@ -750,12 +750,26 @@ const hybridState = {
       poseSolverRobustInlierFraction: 0.8,
       poseSolverConstraintSaturation: 0.1,
       poseSolverDistalCouplingResidualRad: 0.12,
+      poseObserverMode: 'fixed_lag_anatomical_state_v1',
+      poseObserverCaptureTimestampMs: 1_099,
+      poseObserverPredictionHorizonMs: 0,
+      poseObserverMaxInnovationRad: 0.08,
+      poseObserverMaxVelocityRadS: 1.4,
+      poseObserverChainAuthority: {
+        thumb: 'weighted_measurement',
+        index: 'accepted_measurement',
+        middle: 'weighted_measurement',
+        ring: 'attenuated_large_innovation',
+        pinky: 'held_incoherent_measurement',
+      },
       anchorReplay: {
         mode: 'capture_time_fast_observation_replay_v1',
         anchorCaptureTimestampMs: 1_000,
         observationCount: 2,
         acceptedCount: 2,
         lastAcceptedCaptureTimestampMs: 1_066,
+        observerMode: 'fixed_lag_anatomical_state_v1',
+        observerCaptureTimestampMs: 1_066,
         failure: null,
       },
       fingerExtension: {
@@ -770,12 +784,25 @@ const hybridState = {
   },
 };
 const hybrid = normalizeLiveManoFrame(hybridState);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        poseObserverChainAuthority: undefined,
+      },
+    },
+  }),
+  'poseObserverChainAuthority is missing',
+);
 assert(hybrid.effectiveRoute === LIVE_HAND_HYBRID_ROUTE, 'accepts the explicit WiLoR-anchor/browser-fast hybrid route');
 assert(
-  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v2',
+  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v3',
   'the consumer accepts only the articulated MANO route',
 );
-assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_pose', 'preserves the parameter-space fusion mode');
+assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_state_observer', 'preserves the time-indexed state-observer fusion mode');
 assert(hybrid.geometryMode === 'native_mano_regeneration', 'requires native MANO surface regeneration');
 assert(hybrid.anchorCaptureId === 'run-8-1000-1', 'preserves the exact paired WiLoR/MediaPipe capture identity');
 assert(hybrid.fitResidualMean === 0.024, 'preserves the articulated fit residual');
@@ -841,6 +868,12 @@ assert(
   'preserves distal-chain coupling residual',
 );
 assert(
+  hybrid.poseObserverMode === 'fixed_lag_anatomical_state_v1'
+    && hybrid.poseObserverCaptureTimestampMs === 1_099
+    && hybrid.poseObserverChainAuthority?.pinky === 'held_incoherent_measurement',
+  'preserves observer identity, capture watermark, and per-chain authority',
+);
+assert(
   hybrid.anchorReplay?.mode === 'capture_time_fast_observation_replay_v1'
     && hybrid.anchorReplay.observationCount === 2
     && hybrid.anchorReplay.acceptedCount === 2
@@ -858,15 +891,20 @@ const transplantedReplayState = {
     },
     diagnostics: {
       ...hybridState.frame.diagnostics,
+      poseObserverCaptureTimestampMs: 1_726,
       anchorReplay: {
         mode: 'capture_time_fast_observation_replay_v1',
         anchorCaptureTimestampMs: 1_033,
         observationCount: 0,
         acceptedCount: 0,
         lastAcceptedCaptureTimestampMs: 1_033,
+        observerMode: 'fixed_lag_anatomical_state_v1',
+        observerCaptureTimestampMs: 1_693,
         candidateLastAcceptedCaptureTimestampMs: 1_033,
-        promotionCatchUpMode: 'accepted_pose_state_transplant_v1',
+        promotionCatchUpMode: 'accepted_pose_observer_state_transplant_v2',
         promotionCatchUpCaptureTimestampMs: 1_693,
+        promotionObserverMode: 'fixed_lag_anatomical_state_v1',
+        promotionObserverCaptureTimestampMs: 1_693,
         failure: null,
       },
     },
@@ -876,9 +914,9 @@ const transplantedReplayFrame = normalizeLiveManoFrame(transplantedReplayState);
 const transplantedReplay = transplantedReplayFrame.anchorReplay;
 assert(
   transplantedReplay?.candidateLastAcceptedCaptureTimestampMs === 1_033
-    && transplantedReplay.promotionCatchUpMode === 'accepted_pose_state_transplant_v1'
+    && transplantedReplay.promotionCatchUpMode === 'accepted_pose_observer_state_transplant_v2'
     && transplantedReplay.promotionCatchUpCaptureTimestampMs === 1_693,
-  'preserves candidate replay cutoff and accepted-pose transplant provenance',
+  'preserves candidate replay cutoff and accepted pose-observer transplant provenance',
 );
 assertThrows(
   () => normalizeLiveManoFrame({
