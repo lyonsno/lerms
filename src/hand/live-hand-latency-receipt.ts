@@ -1,5 +1,6 @@
 export interface LiveHandCaptureMetrics {
   capturedAtMs: number;
+  operatorMotionPhase: import('./live-hand-contract.js').LiveHandMotionPhase;
   captureAcquireMs: number;
   captureRoute: string;
   captureWorkerMs: number;

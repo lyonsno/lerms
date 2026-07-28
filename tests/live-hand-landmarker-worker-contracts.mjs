@@ -67,6 +67,26 @@ assert.match(liveHandSource, /postAnchorFrame\(runGeneration, captureId, capture
 assert.match(liveHandSource, /postLandmarkerFrame\(captureId, captureTimestampMs, sourceFrame/, 'the MediaPipe frame keeps the shared capture id');
 assert.match(liveHandSource, /runtimeFetch\('\/fast-landmarks'/, 'browser landmarks post to the runtime-owned fusion endpoint');
 assert.match(
+  liveHandHtml,
+  /data-motion-phase="natural_use"[\s\S]*data-motion-phase="standard_stress_probe"[\s\S]*data-motion-phase="extended_defect_probe"[\s\S]*data-motion-phase="recovery_check"/,
+  'operator smoke exposes the exact four phase identities without changing the route',
+);
+assert.match(
+  liveHandSource,
+  /pendingFastCaptureMetrics\.set\(captureId,[\s\S]{0,300}operatorMotionPhase: motionPhase/,
+  'phase identity freezes in capture metrics at camera admission',
+);
+assert.match(
+  liveHandSource,
+  /payload\.operatorMotionPhase = captureMetrics\.operatorMotionPhase/,
+  'the capture-frozen phase travels with the exact fast measurement',
+);
+assert.match(
+  liveHandSource,
+  /operatorMotionPhase: captureMetrics\.operatorMotionPhase/,
+  'viewer latency samples preserve the same capture-time operator phase',
+);
+assert.match(
   liveHandSource,
   /function handleLandmarkerResult[\s\S]*releaseLandmarkerInferenceSlot\([\s\S]*fastDeliveryMailbox\.enqueue/,
   'MediaPipe completion releases camera admission before the runtime delivery mailbox',

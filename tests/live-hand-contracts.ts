@@ -307,6 +307,7 @@ assert(earlyFrameReceipt === null, 'a state received before POST completion wait
 assert(receiptJoiner.snapshot().pendingFrameCount === 1, 'an unmatched live frame remains visible as pending evidence');
 const stateFirstJoin = receiptJoiner.registerCapture('capture-state-first', {
   capturedAtMs: 1_000,
+  operatorMotionPhase: 'natural_use',
   captureAcquireMs: 1.5,
   captureRoute: LIVE_HAND_CAPTURE_WORKER_ROUTE,
   captureWorkerMs: 4.5,
@@ -1336,6 +1337,7 @@ const sample = {
   runtimeOwner: 'hand-state-runtime',
   sourceAuthority: 'live_simulation',
   effectiveRoute: LIVE_HAND_ROUTE,
+  operatorMotionPhase: 'natural_use' as const,
   manoVertexCount: 778,
   manoFaceCount: 1538,
   modelLatencyMs: 61,

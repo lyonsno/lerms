@@ -10,6 +10,23 @@ export const LIVE_HAND_RUNTIME_OWNER = 'hand-state-runtime' as const;
 export const MANO_VERTEX_COUNT = 778 as const;
 export const MANO_FACE_COUNT = 1538 as const;
 export const MANO_DISPLAY_ORIENTATION = 'camera-mirrored-input-x-preserved-y-inverted-v1' as const;
+export const LIVE_HAND_MOTION_PHASES = [
+  'natural_use',
+  'standard_stress_probe',
+  'extended_defect_probe',
+  'recovery_check',
+] as const;
+export type LiveHandMotionPhase = typeof LIVE_HAND_MOTION_PHASES[number];
+
+export function normalizeLiveHandMotionPhase(value: unknown): LiveHandMotionPhase {
+  if (
+    typeof value !== 'string'
+    || !LIVE_HAND_MOTION_PHASES.includes(value as LiveHandMotionPhase)
+  ) {
+    throw new Error(`unsupported live hand motion phase: ${String(value)}`);
+  }
+  return value as LiveHandMotionPhase;
+}
 
 export interface RuntimeRouteTruth {
   runtimeOwner: typeof LIVE_HAND_RUNTIME_OWNER;
@@ -173,6 +190,7 @@ export interface LiveHandLatencySample {
   runtimeOwner: string;
   sourceAuthority: string;
   effectiveRoute: string;
+  operatorMotionPhase: LiveHandMotionPhase;
   manoVertexCount: number;
   manoFaceCount: number;
   modelLatencyMs: number;

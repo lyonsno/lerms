@@ -45,6 +45,30 @@
         color: #b9d9da;
         font: 10px inherit;
       }
+      #motion-phase-controls {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        width: 100%;
+        margin-bottom: 7px;
+        border: 1px solid #355f60;
+        border-radius: 5px;
+        overflow: hidden;
+      }
+      .motion-phase {
+        min-width: 0;
+        height: 29px;
+        padding: 0 3px;
+        border: 0;
+        border-right: 1px solid #294b4c;
+        border-radius: 0;
+        background: #0b1b1c;
+        color: #709394;
+        font: 8px inherit;
+        cursor: pointer;
+      }
+      .motion-phase:last-child { border-right: 0; }
+      .motion-phase:hover { background: #122526; color: #b9d9da; }
+      .motion-phase[aria-pressed="true"] { background: #21403a; color: #d9eeee; }
       #status { margin-top: 9px; color: #749697; font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
       #status[data-state="live"] { color: #83d7bc; }
       #status[data-state="error"] { color: #ef968b; }
@@ -70,6 +94,12 @@
         <option value="pure_wilor">Pure WiLoR</option>
         <option value="hybrid_mano">Hybrid MANO</option>
       </select>
+      <div id="motion-phase-controls" role="group" aria-label="Motion phase">
+        <button class="motion-phase" type="button" data-motion-phase="natural_use" aria-pressed="true">Natural</button>
+        <button class="motion-phase" type="button" data-motion-phase="standard_stress_probe" aria-pressed="false">Stress</button>
+        <button class="motion-phase" type="button" data-motion-phase="extended_defect_probe" aria-pressed="false">Extended</button>
+        <button class="motion-phase" type="button" data-motion-phase="recovery_check" aria-pressed="false">Recovery</button>
+      </div>
       <button id="hand-toggle" type="button">Start Hand</button>
       <div id="density-controls">
         <label class="density-control">Juice <input id="fluid-juice-budget" type="range" min="0" max="100" step="1" value="80" /><span id="fluid-juice-budget-value" class="density-value">80</span></label>

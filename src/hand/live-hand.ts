@@ -7,15 +7,18 @@ import {
 } from 'kaminos/finger-fluid-webgpu-core.js';
 import {
   LIVE_HAND_HYBRID_ROUTE,
+  LIVE_HAND_MOTION_PHASES,
   LIVE_HAND_ROUTE,
   MANO_DISPLAY_ORIENTATION,
   assertLiveRuntimeHealth,
   decideHeldHandSurface,
   normalizeLiveManoFrame,
+  normalizeLiveHandMotionPhase,
   normalizeManoSurface,
   normalizeTransientHybridFallback,
   summarizeLiveHandLatency,
   type LiveHandLatencySample,
+  type LiveHandMotionPhase,
   type NormalizedManoFrame,
   type NormalizedManoSurface,
   type PendingAnchorTruth,
@@ -150,6 +153,12 @@ const fluidCanvas = requiredElement<HTMLCanvasElement>('fluid-canvas');
 const video = requiredElement<HTMLVideoElement>('camera');
 const toggle = requiredElement<HTMLButtonElement>('hand-toggle');
 const routeModeControl = requiredElement<HTMLSelectElement>('hand-route-mode');
+const motionPhaseControls = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-motion-phase]'),
+);
+if (motionPhaseControls.length !== LIVE_HAND_MOTION_PHASES.length) {
+  throw new Error('live hand motion phase controls are incomplete');
+}
 const status = requiredElement<HTMLDivElement>('status');
 const routeTruth = requiredElement<HTMLDivElement>('route-truth');
 const juiceBudgetControl = requiredElement<HTMLInputElement>('fluid-juice-budget');
@@ -279,7 +288,11 @@ let articulatedFixtureStartedAt = 0;
 let articulatedFixtureFrameIndex = -1;
 let articulatedFixturePresentedFrameCount = 0;
 let sourceMode: LiveHandSourceMode = params.get('hand_route') === 'hybrid_mano' ? 'hybrid_mano' : 'pure_wilor';
+let operatorMotionPhase: LiveHandMotionPhase = params.has('motion_phase')
+  ? normalizeLiveHandMotionPhase(params.get('motion_phase'))
+  : 'natural_use';
 routeModeControl.value = sourceMode;
+syncMotionPhaseControls();
 const animationFrameIntervalsMs: number[] = [];
 const fluidSubmitIntervalsMs: number[] = [];
 const combinedCpuSubmitMs: number[] = [];
@@ -299,6 +312,7 @@ const landmarkerWorkerMs: number[] = [];
 const fastPathPostMs: number[] = [];
 const pendingFastCaptureMetrics = new Map<string, {
   capturedAtMs: number;
+  operatorMotionPhase: LiveHandMotionPhase;
   captureAcquireMs: number;
   anchorPairRequired: boolean;
 }>();
@@ -308,6 +322,7 @@ interface FastLandmarkDeliveryItem extends LiveHandFastDeliveryItem {
   payload: Record<string, unknown>;
   captureMetrics: {
     capturedAtMs: number;
+    operatorMotionPhase: LiveHandMotionPhase;
     captureAcquireMs: number;
     anchorPairRequired: boolean;
   };
@@ -972,6 +987,7 @@ async function deliverFastLandmarkResult(item: FastLandmarkDeliveryItem): Promis
   if (receipt.fallbackReason === null && receipt.effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
     const joinedReceipt = latencyReceiptJoiner.registerCapture(frameId, {
       capturedAtMs: item.captureMetrics.capturedAtMs,
+      operatorMotionPhase: item.captureMetrics.operatorMotionPhase,
       captureAcquireMs: item.captureMetrics.captureAcquireMs,
       captureRoute: LIVE_HAND_LANDMARKER_WORKER_ROUTE,
       captureWorkerMs: item.result.workerProcessingMs,
@@ -997,6 +1013,7 @@ function handleLandmarkerResult(worker: Worker, value: unknown): void {
     const captureMetrics = pendingFastCaptureMetrics.get(result.captureId);
     if (!captureMetrics) throw new Error(`missing fast capture metrics for ${result.captureId}`);
     const payload = createFastLandmarkPayload(result);
+    payload.operatorMotionPhase = captureMetrics.operatorMotionPhase;
     payload.delivery = {
       schema: 'hand-state.browser-fast-delivery.v0',
       anchorPairRequired: captureMetrics.anchorPairRequired,
@@ -1117,6 +1134,7 @@ function postLandmarkerFrame(
   height: number,
   captureAcquireMsValue: number,
   anchorPairRequired: boolean,
+  motionPhase: LiveHandMotionPhase,
 ): void {
   const worker = landmarkerWorker;
   if (!worker || !landmarkerWorkerReady || landmarkerInFlightCaptureId !== null) {
@@ -1126,6 +1144,7 @@ function postLandmarkerFrame(
   landmarkerInFlightCaptureId = captureId;
   pendingFastCaptureMetrics.set(captureId, {
     capturedAtMs: captureTimestampMs,
+    operatorMotionPhase: motionPhase,
     captureAcquireMs: captureAcquireMsValue,
     anchorPairRequired,
   });
@@ -1240,6 +1259,7 @@ async function postAnchorFrame(
   width: number,
   height: number,
   acquisitionMs: number,
+  motionPhase: LiveHandMotionPhase,
 ): Promise<void> {
   if (
     !isCaptureRunCurrent(runGeneration, captureRunGeneration, running)
@@ -1275,6 +1295,7 @@ async function postAnchorFrame(
     if (sourceMode === 'pure_wilor') {
       const joinedReceipt = latencyReceiptJoiner.registerCapture(captureId, {
         capturedAtMs,
+        operatorMotionPhase: motionPhase,
         captureAcquireMs: acquisitionMs,
         captureRoute: LIVE_HAND_CAPTURE_WORKER_ROUTE,
         captureWorkerMs: performance.now() - clientEncodeStartedAt,
@@ -1324,6 +1345,7 @@ function handleCameraFrame(runGeneration: number): void {
     const width = Math.min(sourceWidth, 640);
     const height = Math.round(width * Math.max(video.videoHeight || 480, 1) / sourceWidth);
     const captureTimestampMs = Date.now();
+    const captureMotionPhase = operatorMotionPhase;
     const captureId = `run-${runGeneration}-${captureTimestampMs}-${frameSequence += 1}`;
     const plan = planLiveHandSourceFrame({
       mode: sourceMode,
@@ -1345,12 +1367,12 @@ function handleCameraFrame(runGeneration: number): void {
       const anchorFrame = plan.submitAnchor ? sourceFrame.clone() : null;
       if (anchorFrame) {
         lastAnchorCaptureAtMs = captureTimestampMs;
-        void postAnchorFrame(runGeneration, captureId, captureTimestampMs, anchorFrame, width, height, acquisitionMs);
+        void postAnchorFrame(runGeneration, captureId, captureTimestampMs, anchorFrame, width, height, acquisitionMs, captureMotionPhase);
       }
-      postLandmarkerFrame(captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs, plan.submitAnchor);
+      postLandmarkerFrame(captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs, plan.submitAnchor, captureMotionPhase);
     } else if (plan.submitAnchor) {
       lastAnchorCaptureAtMs = captureTimestampMs;
-      void postAnchorFrame(runGeneration, captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs);
+      void postAnchorFrame(runGeneration, captureId, captureTimestampMs, sourceFrame, width, height, acquisitionMs, captureMotionPhase);
     } else {
       sourceFrame.close();
     }
@@ -1389,6 +1411,7 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     publishToViewerReceiveMs: Math.max(0, captureToViewerReceiveMs - frame.captureToSidecarPublishMs),
     captureToViewerReceiveMs,
     requestedSourceMode: sourceMode,
+    operatorMotionPhase: captureMetrics.operatorMotionPhase,
     fusionMode: frame.fusionMode,
     geometryMode: frame.geometryMode,
     anchorCaptureId: frame.anchorCaptureId,
@@ -1701,6 +1724,12 @@ for (const control of [
   control.addEventListener('input', updateFluidEconomicsFromControls);
 }
 juiceBudgetControl.addEventListener('input', applyJuiceBudgetFromControl);
+for (const control of motionPhaseControls) {
+  control.addEventListener('click', () => {
+    operatorMotionPhase = normalizeLiveHandMotionPhase(control.dataset.motionPhase);
+    syncMotionPhaseControls();
+  });
+}
 routeModeControl.addEventListener('change', () => {
   if (running) {
     routeModeControl.value = sourceMode;
@@ -1709,6 +1738,15 @@ routeModeControl.addEventListener('change', () => {
   sourceMode = routeModeControl.value === 'hybrid_mano' ? 'hybrid_mano' : 'pure_wilor';
   setRouteTruth();
 });
+
+function syncMotionPhaseControls(): void {
+  for (const control of motionPhaseControls) {
+    control.setAttribute(
+      'aria-pressed',
+      String(control.dataset.motionPhase === operatorMotionPhase),
+    );
+  }
+}
 
 function resize(): void {
   const width = Math.max(window.innerWidth, 1);
@@ -1920,6 +1958,7 @@ function collectLiveHandDebugState(): Record<string, unknown> {
       fluidAuthority: 'disabled',
     } : null,
     requestedHandRoute: sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE,
+    operatorMotionPhase,
     vertexCount: handGeometry.getAttribute('position')?.count || 0,
     faceCount: handGeometry.index ? handGeometry.index.count / 3 : 0,
     effectiveRoute: fluidAssayMode
