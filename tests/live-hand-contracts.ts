@@ -975,8 +975,8 @@ assert(
         fallbackState: 'stale_wilor_anchor',
       },
     },
-  }) === null,
-  'stale WiLoR authority cannot preserve prior presentation',
+  }) === 'stale_wilor_anchor',
+  'stale WiLoR authority may preserve only explicitly bounded stale presentation truth',
 );
 assert(
   transientHybridFallbackReason({
@@ -1028,6 +1028,26 @@ assert(
     maxAgeMs: 750,
   }).hold,
   'never invents a stale surface when no trustworthy surface is visible',
+);
+assert(
+  !decideHeldHandSurface({
+    hasVisibleSurface: true,
+    lastTrustworthyAtMs: 500,
+    nowMs: 651,
+    maxAgeMs: 750,
+    fallbackReason: 'stale_wilor_anchor',
+  } as Parameters<typeof decideHeldHandSurface>[0]).hold,
+  'stale-anchor presentation expires after its 150ms continuity bridge instead of inheriting the general 750ms hold',
+);
+assert(
+  decideHeldHandSurface({
+    hasVisibleSurface: true,
+    lastTrustworthyAtMs: 500,
+    nowMs: 650,
+    maxAgeMs: 750,
+    fallbackReason: 'stale_wilor_anchor',
+  } as Parameters<typeof decideHeldHandSurface>[0]).hold,
+  'stale-anchor presentation may bridge exactly 150ms while route truth and fluid authority remain invalid',
 );
 
 assertThrows(

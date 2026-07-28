@@ -273,6 +273,7 @@ let latestStoppedInference: Record<string, unknown> | null = null;
 let latestFastIngestReceipt: Record<string, unknown> | null = null;
 let latestFastDeliveryFailure: Record<string, unknown> | null = null;
 let latestSupersession: LiveHandFastDeliveryLineage | null = null;
+let heldSurfaceMaxAgeMs = 0;
 let articulatedFixture: ArticulatedFixture | null = null;
 let articulatedFixtureStartedAt = 0;
 let articulatedFixtureFrameIndex = -1;
@@ -512,7 +513,7 @@ function setRouteTruth(frame?: NormalizedManoFrame): void {
     : '';
   const sidecar = sidecarStatusTruth ? ` | WiLoR ${sidecarStatusTruth.modelReadiness}` : ' | WiLoR unverified';
   const held = heldSurfaceReason
-    ? ` | held stale surface ${Math.max(0, performance.now() - lastLiveAt).toFixed(0)}ms / ${maxFrameAgeMs}ms | reason ${heldSurfaceReason} | fluid authority disabled`
+    ? ` | held stale surface ${Math.max(0, performance.now() - lastLiveAt).toFixed(0)}ms / ${heldSurfaceMaxAgeMs}ms | reason ${heldSurfaceReason} | fluid authority disabled`
     : '';
   const pendingAnchor = latestPendingAnchorTruth.state !== 'none'
     ? ` | anchor pending ${latestPendingAnchorTruth.captureId} ${latestPendingAnchorTruth.state} ${latestPendingAnchorTruth.ageMs?.toFixed(0) ?? 'unknown'}ms`
@@ -571,6 +572,7 @@ function updateSurface(surface: NormalizedManoSurface): void {
   handMesh.visible = true;
   lastLiveAt = performance.now();
   heldSurfaceReason = null;
+  heldSurfaceMaxAgeMs = 0;
 }
 
 function publishFluidPacketForFrame(frame: NormalizedManoFrame): void {
@@ -658,6 +660,7 @@ function deactivateFluidInlets(reason: string, preserveSurface = false): void {
   if (!preserveSurface) {
     handMesh.visible = false;
     heldSurfaceReason = null;
+    heldSurfaceMaxAgeMs = 0;
     latestPresentedRouteFrame = null;
     latestPendingAnchorTruth = {
       captureId: null,
@@ -688,9 +691,11 @@ function holdLastTrustworthySurface(reason: string): boolean {
     lastTrustworthyAtMs: lastLiveAt,
     nowMs: performance.now(),
     maxAgeMs: maxFrameAgeMs,
+    fallbackReason: reason,
   });
   if (!decision.hold) return false;
   heldSurfaceReason = reason;
+  heldSurfaceMaxAgeMs = decision.maxAgeMs;
   deactivateFluidInlets(reason, true);
   return true;
 }
@@ -1744,11 +1749,13 @@ function animate(now: number): void {
       lastTrustworthyAtMs: lastLiveAt,
       nowMs: now,
       maxAgeMs: maxFrameAgeMs,
+      fallbackReason: heldSurfaceReason,
     }).hold
   ) {
     const expiredReason = heldSurfaceReason;
+    const expiredMaxAgeMs = heldSurfaceMaxAgeMs;
     deactivateFluidInlets('held_surface_expired');
-    setStatus(`waiting for live MANO | held surface expired after ${maxFrameAgeMs}ms | ${expiredReason}`);
+    setStatus(`waiting for live MANO | held surface expired after ${expiredMaxAgeMs}ms | ${expiredReason}`);
   }
   if (handMesh.visible && now - lastLiveAt > 1200 && running) handMaterial.emissive.setHex(0x101c1c);
   else handMaterial.emissive.setHex(0x000000);
@@ -1897,7 +1904,7 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     heldSurface: heldSurfaceReason ? {
       reason: heldSurfaceReason,
       ageMs: Math.max(0, performance.now() - lastLiveAt),
-      maxAgeMs: maxFrameAgeMs,
+      maxAgeMs: heldSurfaceMaxAgeMs,
       fluidAuthority: 'disabled',
     } : null,
     requestedHandRoute: sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE,

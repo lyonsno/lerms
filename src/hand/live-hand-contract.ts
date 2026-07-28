@@ -182,11 +182,14 @@ const TRANSIENT_HYBRID_FALLBACK_REASONS = new Set([
   'reanchor_step_trust_conflict',
   'articulated_pose_fit_failed',
   'articulated_fit_residual_too_large',
+  'stale_wilor_anchor',
 ]);
+export const STALE_WILOR_PRESENTATION_HOLD_MS = 150;
 
 export interface HeldHandSurfaceDecision {
   hold: boolean;
   ageMs: number;
+  maxAgeMs: number;
 }
 
 export interface PendingAnchorTruth {
@@ -268,19 +271,24 @@ export function decideHeldHandSurface(input: {
   lastTrustworthyAtMs: number;
   nowMs: number;
   maxAgeMs: number;
+  fallbackReason?: string;
 }): HeldHandSurfaceDecision {
   const ageMs = Math.max(0, input.nowMs - input.lastTrustworthyAtMs);
+  const maxAgeMs = input.fallbackReason === 'stale_wilor_anchor'
+    ? Math.min(input.maxAgeMs, STALE_WILOR_PRESENTATION_HOLD_MS)
+    : input.maxAgeMs;
   return {
     hold: (
       input.hasVisibleSurface
       && Number.isFinite(input.lastTrustworthyAtMs)
       && input.lastTrustworthyAtMs > 0
       && Number.isFinite(input.nowMs)
-      && Number.isFinite(input.maxAgeMs)
-      && input.maxAgeMs >= 0
-      && ageMs <= input.maxAgeMs
+      && Number.isFinite(maxAgeMs)
+      && maxAgeMs >= 0
+      && ageMs <= maxAgeMs
     ),
     ageMs,
+    maxAgeMs,
   };
 }
 
