@@ -892,6 +892,25 @@ assert(
     && stagedAnchorHybrid.pendingAnchorState === 'awaiting_fast_pair',
   'distinguishes the active trustworthy anchor from a successor awaiting its exact fast pair',
 );
+const calibratingAnchorHybrid = normalizeLiveManoFrame({
+  ...hybridState,
+  frame: {
+    ...hybridState.frame,
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      pendingAnchorCaptureId: 'run-8-1084-4',
+      pendingAnchorAgeMs: 22,
+      pendingAnchorState: 'calibrating_off_presentation_lock',
+      pendingAnchorError: null,
+    },
+  },
+});
+assert(
+  calibratingAnchorHybrid.pendingAnchorCaptureId === 'run-8-1084-4'
+    && calibratingAnchorHybrid.pendingAnchorAgeMs === 22
+    && calibratingAnchorHybrid.pendingAnchorState === 'calibrating_off_presentation_lock',
+  'preserves a successor calibrating while the prior follower remains presentable',
+);
 assertThrows(
   () => normalizeLiveManoFrame({
     ...hybridState,
@@ -948,6 +967,27 @@ assert(
     && failedPendingFallback.pendingAnchor.state === 'calibration_failed'
     && failedPendingFallback.pendingAnchor.error === 'paired palm calibration is reflected',
   'preserves validated pending-anchor failure truth through a held hybrid fallback',
+);
+const calibratingPendingFallback = normalizeTransientHybridFallback({
+  ...transientFallbackState,
+  frame: {
+    ...transientFallbackState.frame,
+    diagnostics: {
+      ...transientFallbackState.frame.diagnostics,
+      fallbackState: 'stale_wilor_anchor',
+      pendingAnchorCaptureId: 'run-8-1084-4',
+      pendingAnchorAgeMs: 27,
+      pendingAnchorState: 'calibrating_off_presentation_lock',
+      pendingAnchorError: null,
+    },
+  },
+});
+assert(
+  calibratingPendingFallback?.reason === 'stale_wilor_anchor'
+    && calibratingPendingFallback.pendingAnchor.captureId === 'run-8-1084-4'
+    && calibratingPendingFallback.pendingAnchor.state
+      === 'calibrating_off_presentation_lock',
+  'preserves calibrating pending-anchor identity through the bounded stale hold',
 );
 assert(
   transientHybridFallbackReason({

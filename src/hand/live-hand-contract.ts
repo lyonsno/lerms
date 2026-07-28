@@ -83,7 +83,11 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   anchorAgeMs: number | null;
   pendingAnchorCaptureId: string | null;
   pendingAnchorAgeMs: number | null;
-  pendingAnchorState: 'none' | 'awaiting_fast_pair' | 'calibration_failed';
+  pendingAnchorState:
+    | 'none'
+    | 'awaiting_fast_pair'
+    | 'calibrating_off_presentation_lock'
+    | 'calibration_failed';
   pendingAnchorError: string | null;
   fastPathSource: string | null;
   fastPathAgeMs: number | null;
@@ -209,6 +213,7 @@ function normalizePendingAnchorTruth(diagnostics: RecordLike): PendingAnchorTrut
   if (
     rawState !== 'none'
     && rawState !== 'awaiting_fast_pair'
+    && rawState !== 'calibrating_off_presentation_lock'
     && rawState !== 'calibration_failed'
   ) {
     throw new Error(`unsupported pendingAnchorState: ${rawState}`);
@@ -222,10 +227,11 @@ function normalizePendingAnchorTruth(diagnostics: RecordLike): PendingAnchorTrut
     throw new Error('inactive pending anchor must not carry staged-anchor diagnostics');
   }
   if (
-    rawState === 'awaiting_fast_pair'
+    (rawState === 'awaiting_fast_pair'
+      || rawState === 'calibrating_off_presentation_lock')
     && (captureId === null || ageMs === null || error !== null)
   ) {
-    throw new Error('pending anchor awaiting its fast pair must expose identity and age without a calibration error');
+    throw new Error('pending anchor awaiting or calibrating must expose identity and age without a calibration error');
   }
   if (
     rawState === 'calibration_failed'
