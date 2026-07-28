@@ -273,10 +273,13 @@ export function normalizeTransientHybridFallback(value: unknown): TransientHybri
     if (state.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER || state.status !== 'fallback') return null;
     const frame = record(state.frame, 'runtime fallback frame');
     const source = record(frame.source, 'runtime fallback source');
+    const authority = record(frame.authority, 'runtime fallback authority');
     if (
       source.effectiveRoute !== LIVE_HAND_HYBRID_FALLBACK_ROUTE
       || source.backend !== 'hybrid'
       || source.rawSchema !== LIVE_HAND_FAST_LANDMARK_SCHEMA
+      || authority.sourceAuthority !== 'fallback'
+      || authority.freshness !== 'stale'
     ) {
       return null;
     }

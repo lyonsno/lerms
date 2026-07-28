@@ -1051,6 +1051,10 @@ const transientFallbackState = {
   status: 'fallback',
   frame: {
     ...hybridState.frame,
+    authority: {
+      sourceAuthority: 'fallback',
+      freshness: 'stale',
+    },
     source: {
       ...hybridState.frame.source,
       effectiveRoute: LIVE_HAND_HYBRID_FALLBACK_ROUTE,
@@ -1062,6 +1066,17 @@ const transientFallbackState = {
     },
   },
 };
+const malformedFreshAuthorityFallback = {
+  ...transientFallbackState,
+  frame: {
+    ...transientFallbackState.frame,
+    authority: hybridState.frame.authority,
+  },
+};
+assert(
+  normalizeTransientHybridFallback(malformedFreshAuthorityFallback) === null,
+  'rejects fallback route identity that still claims fresh live-simulation authority',
+);
 assert(
   transientHybridFallbackReason(transientFallbackState) === 'reanchor_step_trust_conflict',
   'admits a source-identifiable transient hybrid fallback for stale-surface presentation',
