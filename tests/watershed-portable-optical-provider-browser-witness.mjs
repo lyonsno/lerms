@@ -8,6 +8,9 @@ import {
   resolveBrowserExecutable,
   writeFailureReceipt
 } from './wet-border-browser-launch.mjs';
+import {
+  assertHillParticleBrowserWitness
+} from './hill-particle-browser-witness-contract.mjs';
 
 const options = parseArguments(process.argv.slice(2));
 const profileDirectory = await mkdtemp(join(tmpdir(), 'wet-border-portable-optics-'));
@@ -47,7 +50,7 @@ try {
     error: String(error),
     requestedExecutable: options.chrome ?? null,
     effectiveExecutable: resolution?.effective ?? null
-  });
+  }, `${options.runId}-failure-receipt.json`);
   console.error(JSON.stringify({ ok: false, failurePath }));
   process.exitCode = 1;
 }
@@ -60,10 +63,16 @@ chrome.stderr.on('data', (chunk) => {
   chromeStderr = `${chromeStderr}${chunk}`.slice(-16_000);
 });
 
+let cdp;
+const browserEvents = [];
+let lastTrustworthyEvidence = {
+  phase: 'browser_spawned',
+  launch: launchReceipt,
+  debugState: null
+};
 try {
   const target = await waitForTarget(launchReceipt.requestedDebugPort, options.url, options.launchTimeoutMs);
-  const cdp = await createCdpClient(target.webSocketDebuggerUrl);
-  const browserEvents = [];
+  cdp = await createCdpClient(target.webSocketDebuggerUrl);
   cdp.onEvent((event) => {
     if (event.method === 'Runtime.exceptionThrown') {
       browserEvents.push({
@@ -82,7 +91,21 @@ try {
           .join(' ')
       });
     }
+    if (
+      event.method === 'Log.entryAdded' &&
+      ['error', 'warning'].includes(event.params.entry?.level)
+    ) {
+      const entry = event.params.entry;
+      browserEvents.push({
+        type: `browser-log-${entry.level}`,
+        source: entry.source ?? null,
+        text: entry.text ?? '',
+        url: entry.url ?? null,
+        lineNumber: entry.lineNumber ?? null
+      });
+    }
   });
+  await cdp.command('Log.enable');
   await cdp.command('Runtime.enable');
   await cdp.command('Page.enable');
 
@@ -96,11 +119,16 @@ try {
     options.timeoutMs,
     'pre-remap'
   );
+  lastTrustworthyEvidence = {
+    phase: 'pre_remap_observed',
+    launch: launchReceipt,
+    debugState: pre
+  };
   const preScreenshot = await captureScreenshot(cdp);
   const prePath = join(outputDirectory, `${options.runId}-pre-remap.png`);
   await writeFile(prePath, preScreenshot);
 
-  const post = await waitForDebugState(
+  let post = await waitForDebugState(
     cdp,
     (state) => (
       state.status === 'active' &&
@@ -110,6 +138,11 @@ try {
     options.timeoutMs,
     'post-remap'
   );
+  lastTrustworthyEvidence = {
+    phase: 'post_remap_observed',
+    launch: launchReceipt,
+    debugState: post
+  };
   const postScreenshot = await captureScreenshot(cdp);
   const postPath = join(outputDirectory, `${options.runId}-post-remap.png`);
   await writeFile(postPath, postScreenshot);
@@ -141,6 +174,50 @@ try {
     opticalOnlyBytes = opticalOnlyScreenshot.length;
     opticalObservedPixelCount = await countNonBlackPixels(cdp, opticalOnlyScreenshot);
     await writeFile(opticalOnlyPath, opticalOnlyScreenshot);
+    await cdp.command('Runtime.evaluate', {
+      expression: `(() => {
+        document.body.style.background = '';
+        for (const element of document.body.children) element.style.visibility = '';
+      })()`,
+      returnByValue: true
+    });
+  }
+  let particleOnlyPath = null;
+  let particleOnlyBytes = null;
+  let particleObservedPixelCount = null;
+  if (options.url.includes('watershedParticles=1')) {
+    await requestParticleDiagnostics(cdp);
+    post = await waitForDebugState(
+      cdp,
+      (state) => (
+        state.status === 'active' &&
+        state.sequenceStage === 'post_remap' &&
+        state.stepCount >= options.postStep &&
+        state.particleOverlay?.solver?.diagnostics?.readbackMode ===
+          'explicit_sparse_gpu_diagnostics_v0'
+      ),
+      options.timeoutMs,
+      'post-remap particle diagnostics'
+    );
+    lastTrustworthyEvidence = {
+      phase: 'particle_diagnostics_observed',
+      launch: launchReceipt,
+      debugState: post
+    };
+    await cdp.command('Runtime.evaluate', {
+      expression: `(() => {
+        document.body.style.background = '#000';
+        for (const element of document.body.children) {
+          if (element.id !== 'hill-fluid-particle-canvas') element.style.visibility = 'hidden';
+        }
+      })()`,
+      returnByValue: true
+    });
+    const particleOnlyScreenshot = await captureScreenshot(cdp);
+    particleOnlyPath = join(outputDirectory, `${options.runId}-particle-only.png`);
+    particleOnlyBytes = particleOnlyScreenshot.length;
+    particleObservedPixelCount = await countNonBlackPixels(cdp, particleOnlyScreenshot);
+    await writeFile(particleOnlyPath, particleOnlyScreenshot);
     await cdp.command('Runtime.evaluate', {
       expression: `(() => {
         document.body.style.background = '';
@@ -181,10 +258,12 @@ try {
       post: postPath,
       cameraMotion: cameraMotionPath,
       opticalOnly: opticalOnlyPath,
+      particleOnly: particleOnlyPath,
       preBytes: preScreenshot.length,
       postBytes: postScreenshot.length,
       cameraMotionBytes,
-      opticalOnlyBytes
+      opticalOnlyBytes,
+      particleOnlyBytes
     },
     cameraAttachmentProbe,
     regimeMatrix,
@@ -192,12 +271,18 @@ try {
       authority: 'browser_screenshot_pixel_readback',
       observedPixelCount: opticalObservedPixelCount,
       blank: opticalObservedPixelCount === 0
+    } : null,
+    particleObservation: particleOnlyPath ? {
+      authority: 'browser_screenshot_pixel_readback',
+      observedPixelCount: particleObservedPixelCount,
+      blank: particleObservedPixelCount === 0
     } : null
   };
   const reportPath = join(outputDirectory, `${options.runId}-receipt.json`);
   await writeFile(reportPath, `${JSON.stringify(receipt, null, 2)}\n`);
   try {
     assertReceipt(receipt);
+    assertHillParticleBrowserWitness(receipt);
     receipt.status = 'complete';
     await writeFile(reportPath, `${JSON.stringify(receipt, null, 2)}\n`);
   } catch (error) {
@@ -214,14 +299,44 @@ try {
     postPath,
     cameraMotionPath,
     opticalOnlyPath,
+    particleOnlyPath,
     preStep: pre.stepCount,
     postStep: post.stepCount,
     sourceHandleId: post.portableOpticalProvider.source.handleId,
     providerRevision: post.portableOpticalProvider.provider.revision,
     browserEventCount: browserEvents.length
   }));
-  cdp.close();
+} catch (error) {
+  let latestDebugState = lastTrustworthyEvidence.debugState;
+  if (cdp) {
+    try {
+      const result = await cdp.command('Runtime.evaluate', {
+        expression: 'window.__lermsHillKaminosDebugState ?? null',
+        returnByValue: true
+      });
+      latestDebugState = result.result?.value ?? latestDebugState;
+    } catch {
+      // Preserve the last already-observed state when the browser is gone.
+    }
+  }
+  const failurePath = await writeFailureReceipt(outputDirectory, {
+    phase: 'browser_witness',
+    error: error instanceof Error ? error.message : String(error),
+    requestedUrl: options.url,
+    requestedExecutable: options.chrome ?? null,
+    effectiveExecutable: resolution?.effective ?? null,
+    launch: launchReceipt,
+    browserEvents,
+    chromeStderr,
+    lastTrustworthyEvidence: {
+      ...lastTrustworthyEvidence,
+      debugState: latestDebugState
+    }
+  }, `${options.runId}-failure-receipt.json`);
+  console.error(JSON.stringify({ ok: false, failurePath }));
+  process.exitCode = 1;
 } finally {
+  cdp?.close();
   chrome.kill('SIGTERM');
   await Promise.race([
     new Promise((resolveExit) => chrome.once('exit', resolveExit)),
@@ -239,7 +354,7 @@ try {
     launchId: launchReceipt.launchId,
     effectiveExecutable: resolution.effective,
     pid: chrome.pid
-  }, 'browser-cleanup-receipt.json');
+  }, `${options.runId}-browser-cleanup-receipt.json`);
 }
 
 function parseArguments(argumentsList) {
@@ -448,6 +563,28 @@ async function exerciseOpticalCameraAttachment(cdp) {
   return probe;
 }
 
+async function requestParticleDiagnostics(cdp) {
+  const result = await cdp.command('Runtime.evaluate', {
+    expression: `window.__lermsRequestHillParticleDiagnostics?.()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  if (result.exceptionDetails) {
+    const detail = result.exceptionDetails.exception?.description
+      ?? result.exceptionDetails.text
+      ?? 'unknown browser exception';
+    throw new Error(`particle diagnostics browser exception: ${detail}`);
+  }
+  const overlay = result.result?.value;
+  if (
+    overlay?.effective?.status !== 'active' ||
+    overlay.solver?.diagnostics?.readbackMode !== 'explicit_sparse_gpu_diagnostics_v0'
+  ) {
+    throw new Error('particle diagnostics did not produce live GPU population evidence');
+  }
+  return overlay;
+}
+
 async function exerciseFluidRegimeMatrix(
   cdp,
   outputDirectory,
@@ -561,7 +698,7 @@ function assertReceipt(receipt) {
     (
       receipt.post.opticalCompositorStatus !== 'submitted-unobserved' ||
       receipt.post.opticalCompositor?.route?.effective !==
-        'lerms/hill-of-hills/c7-portable-macro-optical-compositor-v0' ||
+        'lerms/hill-of-hills/pinned-portable-macro-optical-compositor-v0' ||
       receipt.post.opticalCompositor.route.fallback !== null ||
       receipt.post.opticalCompositor.timing?.cadence !== 'display_cadenced_same_frame' ||
       receipt.post.opticalCompositor.timing.displayFrameGeneration !==
@@ -662,7 +799,7 @@ function assertReceipt(receipt) {
     throw new Error('browser witness did not preserve one advancing source handle');
   }
   if (
-    after.provider.revision !== 'c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35' ||
+    after.provider.revision !== '355572977cdfdb7c27958994ede61ec967ac4623' ||
     after.package.effective.version !== '0.3.0' ||
     after.sequenceStage !== 'post_remap' ||
     after.remap.status !== 'committed'

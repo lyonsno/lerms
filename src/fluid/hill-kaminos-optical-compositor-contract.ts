@@ -1,13 +1,13 @@
 export const HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE =
-  'lerms/hill-of-hills/c7-portable-macro-optical-compositor-v0' as const;
+  'lerms/hill-of-hills/pinned-portable-macro-optical-compositor-v0' as const;
 export const KAMINOS_PORTABLE_MACRO_OPTICAL_RENDERER_ROUTE =
   'kaminos/finger-fluid/portable-macro-screen-space-optics-v0' as const;
 export const KAMINOS_PORTABLE_MACRO_OPTICAL_SHADER_ROUTE =
   'wgsl-portable-macro-fresnel-refraction-absorption-v0' as const;
 export const HILL_OPTICAL_ATTACHMENT_CADENCE =
   'display_cadenced_same_frame' as const;
-export const KAMINOS_C7_REVISION =
-  'c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35' as const;
+export const KAMINOS_HILL_COMPOSED_REVISION =
+  '355572977cdfdb7c27958994ede61ec967ac4623' as const;
 
 interface HillOpticalAttachment {
   attachmentId: string;
@@ -107,7 +107,7 @@ export interface HillKaminosOpticalCompositorWitness {
     effective: typeof HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE;
     fallback: null;
   };
-  kaminosRevision: typeof KAMINOS_C7_REVISION;
+  kaminosRevision: typeof KAMINOS_HILL_COMPOSED_REVISION;
   rendererRoute: typeof KAMINOS_PORTABLE_MACRO_OPTICAL_RENDERER_ROUTE;
   shaderRoute: typeof KAMINOS_PORTABLE_MACRO_OPTICAL_SHADER_ROUTE;
   frameId: string;
@@ -127,7 +127,7 @@ export interface HillKaminosOpticalCompositorWitness {
     target: HillOpticalAttachment;
   };
   source: {
-    providerRevision: typeof KAMINOS_C7_REVISION;
+    providerRevision: typeof KAMINOS_HILL_COMPOSED_REVISION;
     terrainEpoch: number;
     fluidEpoch: number;
     fallbackStatus: 'none';
@@ -152,10 +152,10 @@ export function assertHillKaminosOpticalCompositorWitness(
     || witness.route?.requested !== HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE
     || witness.route.effective !== witness.route.requested
     || witness.route.fallback !== null
-    || witness.kaminosRevision !== KAMINOS_C7_REVISION
+    || witness.kaminosRevision !== KAMINOS_HILL_COMPOSED_REVISION
     || witness.rendererRoute !== KAMINOS_PORTABLE_MACRO_OPTICAL_RENDERER_ROUTE
     || witness.shaderRoute !== KAMINOS_PORTABLE_MACRO_OPTICAL_SHADER_ROUTE
-    || witness.source?.providerRevision !== KAMINOS_C7_REVISION
+    || witness.source?.providerRevision !== KAMINOS_HILL_COMPOSED_REVISION
     || witness.source.fallbackStatus !== 'none') {
     throw new Error('Hill optical compositor route or source identity is fallback or substituted');
   }

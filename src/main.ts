@@ -1,5 +1,12 @@
 import { Matrix4, OrthographicCamera, Vector3, WebGPUCoordinateSystem } from 'three';
 import {
+  KAMINOS_FINGER_FLUID_MOVING_HILL_SUPPORT_CONTACT_ROUTE,
+  createFingerFluidMovingHillSupportContactProvider,
+  createWebGPUFingerFluidSolver,
+  type FingerFluidMovingHillSupportContactProvider,
+  type FingerFluidSolver
+} from 'kaminos/finger-fluid-webgpu-core.js';
+import {
   createHillOfHillsLayerTileCache,
   createHillOfHillsTerrainBuffer,
   createHillOfHillsTerrainWithCache,
@@ -125,6 +132,13 @@ import {
   type HillFluidRegimeRequest,
   type HillFluidRegimeWitness
 } from './fluid/hill-fluid-regime-contract.js';
+import {
+  HILL_KAMINOS_PARTICLE_OWNERSHIP_ROUTE,
+  KAMINOS_HYDRO_COMPOSED_REVISION,
+  createHillKaminosParticleOwnershipMount,
+  type HillKaminosParticleOwnershipDescriptor,
+  type HillKaminosParticleOwnershipMount
+} from './fluid/hill-kaminos-particle-ownership-mount.js';
 
 const canvas = document.getElementById('lerms-canvas') as HTMLCanvasElement | null;
 
@@ -255,7 +269,16 @@ function withoutPreviewDitchFormation(nextParams: HillOfHillsTerrainParams): Hil
 const searchParams = new URLSearchParams(window.location.search);
 const watershedFluidEnabled = searchParams.get('watershedFluid') === '1';
 const watershedOpticsEnabled = watershedFluidEnabled && searchParams.get('watershedOptics') === '1';
+const watershedParticlesEnabled =
+  watershedFluidEnabled && searchParams.get('watershedParticles') === '1';
 const watershedOpticsDepthDiagnostic = watershedOpticsEnabled && searchParams.get('watershedOpticsDepth') === 'off';
+const requestedWatershedParticleCount = Number(searchParams.get('watershedParticleCount') ?? 2_400);
+if (
+  watershedParticlesEnabled
+  && (!Number.isSafeInteger(requestedWatershedParticleCount) || requestedWatershedParticleCount <= 0)
+) {
+  throw new Error('watershed particle count must be a positive safe integer');
+}
 const hillDiagnosticPreset = watershedFluidEnabled
   ? HILL_KAMINOS_PHASE_MORPH_RECIPE.preset
   : hillDiagnosticPresetFromSearch(window.location.search);
@@ -328,6 +351,11 @@ let hillOpticalCompositor: Awaited<ReturnType<typeof createHillKaminosOpticalCom
 let hillOpticalStatus = watershedOpticsEnabled ? 'loading' : 'disabled';
 let hillDisplayFrameGeneration = 0;
 let hillOpticalResult: HillKaminosOpticalRenderResult | null = null;
+const hillParticleCanvas = watershedParticlesEnabled ? document.createElement('canvas') : null;
+let hillParticleSolver: FingerFluidSolver | undefined;
+let hillParticleProvider: FingerFluidMovingHillSupportContactProvider | undefined;
+let hillParticleOwnershipMount: HillKaminosParticleOwnershipMount | null = null;
+let hillParticleStatus = watershedParticlesEnabled ? 'loading' : 'disabled';
 
 if (hillOpticalCanvas) {
   hillOpticalCanvas.id = 'hill-fluid-optical-canvas';
@@ -347,6 +375,24 @@ if (hillOpticalCanvas) {
     .catch((error: unknown) => {
       hillOpticalStatus = `failed: ${error instanceof Error ? error.message : String(error)}`;
     });
+}
+
+if (hillParticleCanvas) {
+  hillParticleCanvas.id = 'hill-fluid-particle-canvas';
+  hillParticleCanvas.setAttribute('aria-label', 'Kaminos full particle fluid overlay');
+  Object.assign(hillParticleCanvas.style, {
+    position: 'fixed',
+    inset: '0',
+    width: '100vw',
+    height: '100vh',
+    pointerEvents: 'none',
+    zIndex: '2'
+  });
+  document.body.append(hillParticleCanvas);
+  const target = window as typeof window & {
+    __lermsRequestHillParticleDiagnostics?: () => Promise<Record<string, unknown>>;
+  };
+  target.__lermsRequestHillParticleDiagnostics = requestHillParticleDiagnostics;
 }
 
 if (watershedFluidEnabled) {
@@ -373,6 +419,9 @@ async function mountHillKaminosRuntime(
 ): Promise<void> {
   const mountGeneration = hillRuntimeMountGeneration + 1;
   hillRuntimeMountGeneration = mountGeneration;
+  releaseHillParticleRuntime(
+    watershedParticlesEnabled ? 'waiting-for-hill-runtime' : 'disabled'
+  );
   hillKaminosRuntime?.releasePortableMacroSource();
   hillKaminosRuntime = undefined;
   hillOpticalResult = null;
@@ -390,11 +439,188 @@ async function mountHillKaminosRuntime(
     }
     hillKaminosRuntime = runtime;
     hillKaminosRuntimeStatus = 'active-pre-remap';
+    if (watershedParticlesEnabled) {
+      void mountHillParticleRuntime(runtime, mountGeneration);
+    }
   } catch (error) {
     if (mountGeneration !== hillRuntimeMountGeneration) return;
     hillKaminosRuntimeStatus =
       `failed-${regimeRequest.requested.mode}: ${error instanceof Error ? error.message : String(error)}`;
   }
+}
+
+async function mountHillParticleRuntime(
+  runtime: HillKaminosBrowserRuntime,
+  mountGeneration: number
+): Promise<void> {
+  if (!hillParticleCanvas) return;
+  releaseHillParticleRuntime('loading-provider');
+  let createdProvider: FingerFluidMovingHillSupportContactProvider | undefined;
+  let createdSolver: FingerFluidSolver | undefined;
+  try {
+    const solver = await createWebGPUFingerFluidSolver({
+      canvas: hillParticleCanvas,
+      particleCount: requestedWatershedParticleCount,
+      truthScene: 'live_hand_inlets',
+      rendererMode: 'screen_space_refraction',
+      colorMode: 'chemistry',
+      transparentBackground: true,
+      supportContactRoute: KAMINOS_FINGER_FLUID_MOVING_HILL_SUPPORT_CONTACT_ROUTE,
+      composedRevision: KAMINOS_HYDRO_COMPOSED_REVISION,
+      movingHillSupportContactProviderFactory({ device }: { device: object }) {
+        const support = runtime.movingParticleSupport;
+        createdProvider = createFingerFluidMovingHillSupportContactProvider({
+          device,
+          terrainFrame: support.terrainFrame,
+          identity: support.identity
+        });
+        return createdProvider;
+      }
+    });
+    createdSolver = solver;
+    if (mountGeneration !== hillRuntimeMountGeneration) {
+      solver.destroy();
+      return;
+    }
+    if (!solver.available) {
+      throw new Error(solver.reason || 'Kaminos moving-Hill particle solver unavailable');
+    }
+    if (!createdProvider) {
+      solver.destroy();
+      throw new Error('Kaminos moving-Hill particle provider was not created');
+    }
+
+    const currentSupport = runtime.movingParticleSupport;
+    if (createdProvider.terrainEpoch < currentSupport.identity.terrainEpoch) {
+      createdProvider.update({
+        terrainFrame: currentSupport.terrainFrame,
+        identity: currentSupport.identity
+      });
+    }
+    solver.setLiveInletPacket(createHillParticleSmokePacket(runtime));
+    solver.step(0.012);
+    const ownershipMount = createCurrentHillParticleOwnershipMount(
+      solver,
+      createdProvider,
+      mountGeneration,
+      0
+    );
+    hillParticleProvider = createdProvider;
+    hillParticleSolver = solver;
+    hillParticleOwnershipMount = ownershipMount;
+    hillParticleStatus = 'active';
+  } catch (error) {
+    createdSolver?.destroy();
+    if (!createdSolver) createdProvider?.release();
+    if (mountGeneration !== hillRuntimeMountGeneration) return;
+    hillParticleSolver = undefined;
+    hillParticleProvider = undefined;
+    hillParticleOwnershipMount = null;
+    hillParticleStatus = `failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function createCurrentHillParticleOwnershipMount(
+  solver: FingerFluidSolver,
+  provider: FingerFluidMovingHillSupportContactProvider,
+  mountGeneration: number,
+  minimumWriteTick: number
+): HillKaminosParticleOwnershipMount {
+  const descriptor =
+    solver.getParticleOwnershipDescriptor() as HillKaminosParticleOwnershipDescriptor;
+  return createHillKaminosParticleOwnershipMount(
+    {
+      requestId: `hill-particle-ownership-${mountGeneration}-${provider.remapEpoch}`,
+      requestedRoute: HILL_KAMINOS_PARTICLE_OWNERSHIP_ROUTE,
+      requestedKaminosRevision: KAMINOS_HYDRO_COMPOSED_REVISION,
+      requestedMode: 'particle_only',
+      minimumWriteTick,
+      hostReadbackVisibility: false
+    },
+    descriptor,
+    {
+      device: provider.device,
+      queue: provider.queue,
+      particleBuffer: descriptor.buffer,
+      support: {
+        sourceId: provider.sourceId,
+        provider,
+        terrainId: provider.terrainId,
+        terrainEpoch: provider.terrainEpoch,
+        supportEpoch: provider.supportEpoch,
+        remapEpoch: provider.remapEpoch
+      }
+    }
+  );
+}
+
+function releaseHillParticleRuntime(nextStatus: string): void {
+  const solver = hillParticleSolver;
+  const provider = hillParticleProvider;
+  hillParticleSolver = undefined;
+  hillParticleProvider = undefined;
+  hillParticleOwnershipMount = null;
+  hillParticleStatus = nextStatus;
+  solver?.destroy();
+  if (!solver) provider?.release();
+}
+
+function createHillParticleSmokePacket(runtime: HillKaminosBrowserRuntime): Record<string, unknown> {
+  const support = runtime.movingParticleSupport;
+  const frame = support.terrainFrame;
+  const centerX = Math.floor(frame.grid.width / 2);
+  const centerZ = Math.floor(frame.grid.height / 2);
+  const centerIndex = centerZ * frame.grid.width + centerX;
+  const activeBudget = Math.min(requestedWatershedParticleCount, 1_440);
+  const timestampMs = Date.now();
+  return {
+    packet_id: `lerms-hill-particle-smoke-${timestampMs}`,
+    route_identity: 'lerms/hill-of-hills/operator-particle-smoke-v0',
+    adapter_contract: 'hand-state-distal-axis-full-extension-emitters-v1',
+    source_route: 'lerms/hill-of-hills/operator-particle-smoke-v0',
+    source_frame_id: frame.source.effective,
+    timestamp_ms: timestampMs,
+    sample_age_ms: 0,
+    simulation_authority: 'live_simulation',
+    authority: {
+      simulation_safe: true,
+      stale: false,
+      reason: 'operator_smoke_fixture_not_live_hand'
+    },
+    economics: {
+      requestedParticleCount: requestedWatershedParticleCount,
+      effectiveParticleCount: requestedWatershedParticleCount,
+      requestedActiveParticleBudget: activeBudget,
+      effectiveActiveParticleBudget: null,
+      sourceFluxParticlesPerSecond: 960,
+      opticalDensityScale: 1.7,
+      reconstructionRadiusScale: 2.5,
+      lifetimeSeconds: 10,
+      defaultSubstitution: false,
+      fallbackActive: false,
+      fallbackReason: null
+    },
+    emitters: [{
+      id: 'hill-operator-smoke',
+      origin_world: [
+        frame.fields.worldPosition[centerIndex * 3],
+        frame.fields.bedHeight[centerIndex] + 2.4,
+        frame.fields.worldPosition[centerIndex * 3 + 2] - 1.6
+      ],
+      aim_world: [0, -0.58, 0.8146],
+      extension: 1,
+      emission_state: 'jet',
+      chemistry: 'knockback',
+      radius: 0.11,
+      strength: 2.2,
+      source_flux_particles_per_second: 960,
+      active_budget_particles: activeBudget,
+      optical_density_scale: 1.7,
+      reconstruction_radius_scale: 2.5,
+      lifetime_seconds: 10,
+      active: true
+    }]
+  };
 }
 
 try {
@@ -585,6 +811,7 @@ function render(timestampMs: number): void {
     drawKaminosFluidFeedback(terrainBuffer, hillKaminosRuntime, width, height);
   }
   renderHillOptics(hillDisplayFrameGeneration);
+  renderHillParticles();
   if (previewSettings.mode !== 'neutral_geometry' && previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
@@ -618,6 +845,22 @@ function remapWatershedTerrainIfReady(): void {
       maximumBedDisplacement: HILL_KAMINOS_PHASE_MORPH_RECIPE.maximumBedDisplacement,
       maximumSupportSpeed: HILL_KAMINOS_PHASE_MORPH_RECIPE.maximumSupportSpeed
     });
+    if (hillParticleProvider) {
+      const support = hillKaminosRuntime.movingParticleSupport;
+      hillParticleProvider.update({
+        terrainFrame: support.terrainFrame,
+        identity: support.identity
+      });
+      if (!hillParticleSolver?.available || !hillParticleOwnershipMount) {
+        throw new Error('Hill particle ownership runtime disappeared during remap');
+      }
+      hillParticleOwnershipMount = createCurrentHillParticleOwnershipMount(
+        hillParticleSolver,
+        hillParticleProvider,
+        hillRuntimeMountGeneration,
+        hillParticleOwnershipMount.ownership.writeTick
+      );
+    }
     terrainBuffer = nextTerrainBuffer;
     params = createHillKaminosPhaseMorphRecipeParams('current');
     hillKaminosRuntimeStatus = 'active-remapped';
@@ -665,6 +908,9 @@ function flushQueuedTerrainRequest(): void {
 
 resize();
 window.addEventListener('resize', resize);
+window.addEventListener('beforeunload', () => {
+  releaseHillParticleRuntime('released-before-unload');
+});
 window.requestAnimationFrame(render);
 
 function drawTerrain(currentBuffer: HillOfHillsTerrainBuffer, width: number, height: number): void {
@@ -2244,12 +2490,62 @@ function publishHillKaminosDebugState(): void {
           ? hillDisplayFrameGeneration - hillOpticalResult.timing.displayFrameGeneration
           : null,
         opticalCompositorStatus: hillOpticalStatus,
-        opticalCompositor: hillOpticalResult
+        opticalCompositor: hillOpticalResult,
+        particleOverlay: createHillParticleDebugState()
       }
     : {
         schema: 'lerms.hill-of-hills.kaminos-browser-witness.v2',
-        status: hillKaminosRuntimeStatus
+        status: hillKaminosRuntimeStatus,
+        particleOverlay: createHillParticleDebugState()
       };
+}
+
+function createHillParticleDebugState(): Record<string, unknown> {
+  const support = hillParticleProvider
+    ? {
+        route: hillParticleProvider.route,
+        owner: hillParticleProvider.owner,
+        sourceId: hillParticleProvider.sourceId,
+        terrainId: hillParticleProvider.terrainId,
+        terrainEpoch: hillParticleProvider.terrainEpoch,
+        supportEpoch: hillParticleProvider.supportEpoch,
+        remapEpoch: hillParticleProvider.remapEpoch,
+        stale: hillParticleProvider.stale,
+        fallbackRoute: hillParticleProvider.fallbackRoute,
+        execution: hillParticleProvider.execution,
+        visibilityAuthority: hillParticleProvider.visibilityAuthority,
+        hostReadbackVisibility: hillParticleProvider.hostReadbackVisibility
+      }
+    : null;
+  return {
+    requested: {
+      enabled: watershedParticlesEnabled,
+      kaminosRevision: KAMINOS_HYDRO_COMPOSED_REVISION,
+      supportRoute: KAMINOS_FINGER_FLUID_MOVING_HILL_SUPPORT_CONTACT_ROUTE,
+      particleCount: requestedWatershedParticleCount,
+      sourceRoute: 'lerms/hill-of-hills/operator-particle-smoke-v0'
+    },
+    effective: {
+      status: hillParticleStatus,
+      kaminosRevision: hillParticleOwnershipMount?.kaminosRevision.effective ?? null,
+      supportRoute: support?.route ?? null,
+      fallbackRoute: support?.fallbackRoute ?? null,
+      defaultSubstitution: hillParticleOwnershipMount?.mode.defaultSubstitution ?? null
+    },
+    sourceAuthority: 'operator_smoke_fixture_not_live_hand',
+    ownershipMount: hillParticleOwnershipMount,
+    support,
+    solver: hillParticleSolver?.available ? hillParticleSolver.getDebugState() : null
+  };
+}
+
+async function requestHillParticleDiagnostics(): Promise<Record<string, unknown>> {
+  if (!hillParticleSolver?.available || hillParticleStatus !== 'active') {
+    throw new Error(`Hill particle diagnostics unavailable while status is ${hillParticleStatus}`);
+  }
+  await hillParticleSolver.requestDiagnostics();
+  publishHillKaminosDebugState();
+  return createHillParticleDebugState();
 }
 
 function updateHillOpticalCamera(width: number, height: number): void {
@@ -2323,6 +2619,39 @@ function renderHillOptics(displayFrameGeneration: number): void {
   } catch (error) {
     hillOpticalStatus = `failed: ${error instanceof Error ? error.message : String(error)}`;
     hillOpticalResult = null;
+  }
+}
+
+function renderHillParticles(): void {
+  if (!watershedParticlesEnabled || !hillParticleSolver?.available || !hillKaminosRuntime) {
+    return;
+  }
+  try {
+    hillParticleSolver.step(0.012);
+    const terrainFrame = hillKaminosRuntime.movingParticleSupport.terrainFrame;
+    const centerX = (terrainFrame.grid.width - 1) * 0.5;
+    const centerZ = (terrainFrame.grid.height - 1) * 0.5;
+    const target: readonly [number, number, number] = [
+      terrainFrame.grid.origin[0] + centerX * terrainFrame.grid.spacing[0] + viewState.panX * 8,
+      0.6,
+      terrainFrame.grid.origin[2] + centerZ * terrainFrame.grid.spacing[1] + viewState.panY * 8
+    ];
+    const pitch = Math.atan2(7.4 + viewState.tilt * 10, 20);
+    hillParticleSolver.render({
+      width: window.innerWidth,
+      height: window.innerHeight,
+      pixelRatio: Math.min(window.devicePixelRatio || 1, 1.25),
+      yaw: viewState.yaw,
+      pitch,
+      distance: 18.4 / viewState.zoom,
+      target,
+      colorMode: 'chemistry',
+      rendererMode: 'screen_space_refraction'
+    });
+  } catch (error) {
+    const failureStatus =
+      `failed-render: ${error instanceof Error ? error.message : String(error)}`;
+    releaseHillParticleRuntime(failureStatus);
   }
 }
 

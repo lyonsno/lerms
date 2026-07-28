@@ -42,7 +42,7 @@ const witness = {
     effective: HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE,
     fallback: null,
   },
-  kaminosRevision: 'c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35',
+  kaminosRevision: '355572977cdfdb7c27958994ede61ec967ac4623',
   rendererRoute: 'kaminos/finger-fluid/portable-macro-screen-space-optics-v0',
   shaderRoute: 'wgsl-portable-macro-fresnel-refraction-absorption-v0',
   frameId: identity.frameId,
@@ -62,7 +62,7 @@ const witness = {
     target: host.target,
   },
   source: {
-    providerRevision: 'c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35',
+    providerRevision: '355572977cdfdb7c27958994ede61ec967ac4623',
     terrainEpoch: 1,
     fluidEpoch: 87,
     fallbackStatus: 'none',

@@ -71,6 +71,7 @@ export interface HillKaminosBrowserRuntime {
   readonly representation: KaminosFluidRepresentationFrame;
   readonly portableOpticalGeometry: HillPortableMacroOpticalGeometryAdapterFrame;
   readonly portableOpticalProvider: HillPortableMacroOpticalProviderMount;
+  readonly movingParticleSupport: HillKaminosMovingParticleSupport;
   firstSupportImpact(options: {
     queryId: string;
     start: readonly [number, number, number];
@@ -79,6 +80,19 @@ export interface HillKaminosBrowserRuntime {
   releasePortableMacroSource(): boolean;
   readonly regime: HillFluidRegimeWitness;
   readonly witness: HillKaminosBrowserWitness;
+}
+
+export interface HillKaminosMovingParticleSupport {
+  terrainFrame: KaminosTerrainFluidFrame;
+  identity: {
+    sourceId: string;
+    terrainId: string;
+    terrainEpoch: number;
+    supportEpoch: number;
+    remapEpoch: number;
+    stale: false;
+    fallbackRoute: null;
+  };
 }
 
 export interface HillPortableMacroOpticalGeometryWitness {
@@ -503,6 +517,20 @@ export async function createHillKaminosBrowserRuntime(
     },
     get portableOpticalProvider(): HillPortableMacroOpticalProviderMount {
       return portableOpticalProvider;
+    },
+    get movingParticleSupport(): HillKaminosMovingParticleSupport {
+      return {
+        terrainFrame,
+        identity: {
+          sourceId: terrainFrame.source.effective,
+          terrainId: terrainFrame.terrainId,
+          terrainEpoch: terrainFrame.currentEpoch,
+          supportEpoch: adapterFrame.terrain.supportEpoch,
+          remapEpoch: remapCount,
+          stale: false,
+          fallbackRoute: null
+        }
+      };
     },
     firstSupportImpact(impactOptions): HillMovingSupportFirstImpactResult {
       firstImpact = findHillMovingSupportFirstImpact(

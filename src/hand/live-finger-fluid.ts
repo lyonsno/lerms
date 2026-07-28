@@ -5,7 +5,7 @@ import {
 } from './live-hand-contract.js';
 
 export const LIVE_FINGER_FLUID_ADAPTER_CONTRACT = 'hand-state-distal-axis-full-extension-emitters-v1' as const;
-export const KAMINOS_FLUID_REVISION = 'c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35' as const;
+export const KAMINOS_FLUID_REVISION = '355572977cdfdb7c27958994ede61ec967ac4623' as const;
 export const FULL_EXTENSION_THRESHOLD = 0.86 as const;
 export const LERMS_LIVE_FLUID_PARTICLE_COUNT = 2_400 as const;
 export const LIVE_FLUID_CAMERA = Object.freeze({

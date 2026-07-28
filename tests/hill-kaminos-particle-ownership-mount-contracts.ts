@@ -34,8 +34,22 @@ function assertThrows(fn: () => void, expected: RegExp): void {
 const device = {};
 const queue = {};
 const particleBuffer = {};
-const runtime = {};
-const supportProvider = {};
+const supportProvider = {
+  device,
+  queue,
+  route: HILL_KAMINOS_PARTICLE_SUPPORT_ROUTE,
+  owner: 'lerms_hill_of_hills',
+  sourceId: 'hill-support-frame-42',
+  terrainId: 'hill-of-hills',
+  terrainEpoch: 2,
+  supportEpoch: 7,
+  remapEpoch: 1,
+  stale: false,
+  fallbackRoute: null,
+  execution: 'gpu_same_device_moving_hill_signed_distance_v0',
+  visibilityAuthority: KAMINOS_PARTICLE_VISIBILITY_AUTHORITY,
+  hostReadbackVisibility: false,
+};
 
 const request: HillKaminosParticleOwnershipMountRequest = {
   requestId: 'hill-hydro-mount-1',
@@ -53,7 +67,6 @@ const descriptor: HillKaminosParticleOwnershipDescriptor = {
     repository: 'kaminos',
     composedRevision: KAMINOS_HYDRO_COMPOSED_REVISION,
     runtimeRoute: KAMINOS_PARTICLE_RUNTIME_ROUTE,
-    runtime,
   },
   device,
   queue,
@@ -73,8 +86,6 @@ const descriptor: HillKaminosParticleOwnershipDescriptor = {
     route: HILL_KAMINOS_PARTICLE_SUPPORT_ROUTE,
     owner: 'lerms_hill_of_hills',
     sourceId: 'hill-support-frame-42',
-    provider: supportProvider,
-    device,
     terrainId: 'hill-of-hills',
     terrainEpoch: 2,
     supportEpoch: 7,
@@ -89,11 +100,9 @@ const expected = {
   device,
   queue,
   particleBuffer,
-  runtime,
   support: {
     sourceId: descriptor.supportContact.sourceId,
     provider: supportProvider,
-    device,
     terrainId: descriptor.supportContact.terrainId,
     terrainEpoch: descriptor.supportContact.terrainEpoch,
     supportEpoch: descriptor.supportContact.supportEpoch,
@@ -272,10 +281,16 @@ assertThrows(
 assertThrows(
   () => createHillKaminosParticleOwnershipMount(
     request,
-    mutated(value => { value.source.runtime = {}; }),
-    expected,
+    descriptor,
+    {
+      ...expected,
+      support: {
+        ...expected.support,
+        provider: { ...supportProvider, sourceId: 'substituted-provider' },
+      },
+    },
   ),
-  /source identity/i,
+  /support provider/i,
 );
 assertThrows(
   () => createHillKaminosParticleOwnershipMount(
@@ -296,16 +311,28 @@ assertThrows(
 assertThrows(
   () => createHillKaminosParticleOwnershipMount(
     request,
-    mutated(value => { value.supportContact.provider = {}; }),
-    expected,
+    descriptor,
+    {
+      ...expected,
+      support: {
+        ...expected.support,
+        provider: { ...supportProvider, device: {} },
+      },
+    },
   ),
-  /support provider/i,
+  /support.*device/i,
 );
 assertThrows(
   () => createHillKaminosParticleOwnershipMount(
     request,
-    mutated(value => { value.supportContact.device = {}; }),
-    expected,
+    descriptor,
+    {
+      ...expected,
+      support: {
+        ...expected.support,
+        provider: { ...supportProvider, queue: {} },
+      },
+    },
   ),
   /support.*device/i,
 );

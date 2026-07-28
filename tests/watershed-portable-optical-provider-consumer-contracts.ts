@@ -52,6 +52,37 @@ const runtime = await createHillKaminosBrowserRuntime(previousBuffer, {
 for (let step = 0; step < 4; step += 1) {
   runtime.advance(1000 + step * 80);
 }
+const particleSupportBefore = (runtime as unknown as {
+  movingParticleSupport?: {
+    terrainFrame: {
+      schema: string;
+      source: { requested: string; effective: string };
+      terrainId: string;
+      currentEpoch: number;
+    };
+    identity: {
+      sourceId: string;
+      terrainId: string;
+      terrainEpoch: number;
+      supportEpoch: number;
+      remapEpoch: number;
+      stale: boolean;
+      fallbackRoute: string | null;
+    };
+  };
+}).movingParticleSupport;
+assert(
+  particleSupportBefore?.terrainFrame.schema === 'kaminos.fluid.terrain-fluid-frame.v1',
+  'browser runtime exposes the canonical terrain frame for the particle provider'
+);
+assert(
+  particleSupportBefore.identity.sourceId === particleSupportBefore.terrainFrame.source.effective &&
+    particleSupportBefore.identity.terrainId === particleSupportBefore.terrainFrame.terrainId &&
+    particleSupportBefore.identity.terrainEpoch === particleSupportBefore.terrainFrame.currentEpoch &&
+    particleSupportBefore.identity.stale === false &&
+    particleSupportBefore.identity.fallbackRoute === null,
+  'pre-remap particle support identity is current, source-owned, and fail-closed'
+);
 const before = runtime.witness.portableOpticalProvider;
 assert(before.status === 'active', 'canonical provider is active before the Hill remap');
 assert(before.sequenceStage === 'pre_remap', 'provider records the pre-remap stage');
@@ -103,6 +134,25 @@ runtime.remapTerrain(currentBuffer, {
 });
 runtime.advance(2000);
 
+const particleSupportAfter = (runtime as unknown as {
+  movingParticleSupport: typeof particleSupportBefore;
+}).movingParticleSupport;
+assert(
+  particleSupportAfter?.identity.sourceId === particleSupportBefore.identity.sourceId &&
+    particleSupportAfter.identity.terrainId === particleSupportBefore.identity.terrainId,
+  'one canonical particle support source survives the Hill remap'
+);
+assert(
+  particleSupportAfter.identity.terrainEpoch > particleSupportBefore.identity.terrainEpoch &&
+    particleSupportAfter.identity.supportEpoch >= particleSupportBefore.identity.supportEpoch &&
+    particleSupportAfter.identity.remapEpoch === particleSupportBefore.identity.remapEpoch + 1,
+  'particle support publishes monotonic terrain, support, and remap epochs'
+);
+assert(
+  particleSupportAfter.terrainFrame.currentEpoch === particleSupportAfter.identity.terrainEpoch &&
+    particleSupportAfter.terrainFrame.source.effective === particleSupportAfter.identity.sourceId,
+  'post-remap particle support identity matches the exact canonical frame'
+);
 const after = runtime.witness.portableOpticalProvider;
 assert(after.sequenceStage === 'post_remap', 'provider records the post-remap stage');
 assert(after.source.handleId === retainedHandleId, 'one source handle survives the Hill remap');

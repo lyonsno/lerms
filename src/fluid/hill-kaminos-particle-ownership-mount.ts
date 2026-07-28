@@ -8,7 +8,7 @@ export const HILL_KAMINOS_PARTICLE_SUPPORT_ROUTE =
   'lerms/hill-of-hills/gpu-moving-support-contact-v0' as const;
 
 export const KAMINOS_HYDRO_COMPOSED_REVISION =
-  'd85795cfb47bba5547fd8cccab3b2ad2dd414616' as const;
+  '355572977cdfdb7c27958994ede61ec967ac4623' as const;
 
 export const KAMINOS_PARTICLE_OWNERSHIP_CONTRACT =
   'gpu-spatial-first-support-contact-ownership-v0' as const;
@@ -23,7 +23,7 @@ export const KAMINOS_PARTICLE_RUNTIME_ROUTE =
   'kaminos/finger-fluid/webgpu-core-v0' as const;
 
 export const KAMINOS_PARTICLE_VISIBILITY_AUTHORITY =
-  'gpu_descriptor_buffer_without_host_readback' as const;
+  'gpu_descriptor_texture_without_host_readback' as const;
 
 export type HillFluidComparisonMode =
   | 'particle_only'
@@ -45,7 +45,6 @@ export interface HillKaminosParticleOwnershipDescriptor {
     repository: string;
     composedRevision: string;
     runtimeRoute: string;
-    runtime: object;
   };
   device: object;
   queue: object;
@@ -65,8 +64,6 @@ export interface HillKaminosParticleOwnershipDescriptor {
     route: string;
     owner: string;
     sourceId: string;
-    provider: object;
-    device: object;
     terrainId: string;
     terrainEpoch: number;
     supportEpoch: number;
@@ -75,6 +72,23 @@ export interface HillKaminosParticleOwnershipDescriptor {
     fallbackRoute: string | null;
     execution: string;
   };
+}
+
+export interface HillKaminosMovingSupportProvider {
+  device: object;
+  queue: object;
+  route: string;
+  owner: string;
+  sourceId: string;
+  terrainId: string;
+  terrainEpoch: number;
+  supportEpoch: number;
+  remapEpoch: number;
+  stale: boolean;
+  fallbackRoute: string | null;
+  execution: string;
+  visibilityAuthority: string;
+  hostReadbackVisibility: boolean;
 }
 
 export interface HillKaminosParticleOwnershipMount {
@@ -128,11 +142,9 @@ export function createHillKaminosParticleOwnershipMount(
     device: object;
     queue: object;
     particleBuffer: object;
-    runtime: object;
     support: {
       sourceId: string;
-      provider: object;
-      device: object;
+      provider: HillKaminosMovingSupportProvider;
       terrainId: string;
       terrainEpoch: number;
       supportEpoch: number;
@@ -174,9 +186,6 @@ export function createHillKaminosParticleOwnershipMount(
     descriptor.source?.repository !== 'kaminos'
     || descriptor.source.composedRevision !== KAMINOS_HYDRO_COMPOSED_REVISION
     || descriptor.source.runtimeRoute !== KAMINOS_PARTICLE_RUNTIME_ROUTE
-    || !expected?.runtime
-    || typeof expected.runtime !== 'object'
-    || descriptor.source.runtime !== expected.runtime
   ) {
     fail('Kaminos source identity is missing, stale, or substituted');
   }
@@ -245,15 +254,13 @@ export function createHillKaminosParticleOwnershipMount(
     || typeof expected.support !== 'object'
     || !expected.support.provider
     || typeof expected.support.provider !== 'object'
-    || support.provider !== expected.support.provider
   ) {
     fail('Hill support provider identity is missing or substituted');
   }
+  const provider = expected.support.provider;
   if (
-    !expected.support.device
-    || typeof expected.support.device !== 'object'
-    || expected.support.device !== expected.device
-    || support.device !== expected.support.device
+    provider.device !== expected.device
+    || provider.queue !== expected.queue
   ) {
     fail('Hill support device is not the solver and renderer GPU device');
   }
@@ -313,6 +320,22 @@ export function createHillKaminosParticleOwnershipMount(
   }
   if (support.execution !== 'gpu_same_device_moving_hill_signed_distance_v0') {
     fail('Hill support contact execution is not same-device GPU moving-support truth');
+  }
+  if (
+    provider.route !== support.route
+    || provider.owner !== support.owner
+    || provider.sourceId !== sourceId
+    || provider.terrainId !== terrainId
+    || provider.terrainEpoch !== terrainEpoch
+    || provider.supportEpoch !== supportEpoch
+    || provider.remapEpoch !== remapEpoch
+    || provider.stale !== false
+    || provider.fallbackRoute !== null
+    || provider.execution !== support.execution
+    || provider.visibilityAuthority !== descriptor.visibilityAuthority
+    || provider.hostReadbackVisibility !== false
+  ) {
+    fail('Hill support provider identity is missing or substituted');
   }
 
   return {

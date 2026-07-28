@@ -5,7 +5,7 @@ import {
 import {
   HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE,
   HILL_OPTICAL_ATTACHMENT_CADENCE,
-  KAMINOS_C7_REVISION,
+  KAMINOS_HILL_COMPOSED_REVISION,
   createHillKaminosOpticalHostFrame,
 } from './hill-kaminos-optical-compositor-contract.js';
 import type { HillPortableMacroOpticalProviderMount } from './hill-kaminos-portable-optical-provider.js';
@@ -29,7 +29,7 @@ export interface HillKaminosOpticalRenderResult {
     effective: typeof HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE;
     fallback: null;
   };
-  kaminosRevision: typeof KAMINOS_C7_REVISION;
+  kaminosRevision: typeof KAMINOS_HILL_COMPOSED_REVISION;
   frameId: string;
   timing: {
     cadence: typeof HILL_OPTICAL_ATTACHMENT_CADENCE;
@@ -261,9 +261,9 @@ export async function createHillKaminosOpticalCompositor(
       || snapshot.sourceHandleId !== witness.source.handleId
       || snapshot.terrainEpoch !== witness.epochs.terrain
       || snapshot.fluidEpoch !== witness.epochs.fluid
-      || witness.provider.revision !== KAMINOS_C7_REVISION
+      || witness.provider.revision !== KAMINOS_HILL_COMPOSED_REVISION
       || witness.source.fallbackStatus !== 'none') {
-      throw new Error('Hill optical source snapshot differs from the mounted c7 provider witness');
+      throw new Error('Hill optical source snapshot differs from the mounted pinned provider witness');
     }
     const plan = createFingerFluidPortableMacroOpticalRenderPlan({
       snapshot,
@@ -352,7 +352,7 @@ export async function createHillKaminosOpticalCompositor(
         effective: HILL_KAMINOS_OPTICAL_COMPOSITOR_ROUTE,
         fallback: null,
       },
-      kaminosRevision: KAMINOS_C7_REVISION,
+      kaminosRevision: KAMINOS_HILL_COMPOSED_REVISION,
       frameId,
       timing: {
         cadence: HILL_OPTICAL_ATTACHMENT_CADENCE,

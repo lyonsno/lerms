@@ -38,10 +38,10 @@ export const KAMINOS_PORTABLE_MACRO_SOURCE_CAPABILITY =
 
 export const KAMINOS_PORTABLE_MACRO_PROVIDER_PIN = Object.freeze({
   packageName: 'kaminos',
-  dependencySpecifier: 'https://github.com/lyonsno/kaminos/archive/c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35.tar.gz',
-  resolved: 'https://github.com/lyonsno/kaminos/archive/c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35.tar.gz',
+  dependencySpecifier: 'https://github.com/lyonsno/kaminos/archive/355572977cdfdb7c27958994ede61ec967ac4623.tar.gz',
+  resolved: 'https://github.com/lyonsno/kaminos/archive/355572977cdfdb7c27958994ede61ec967ac4623.tar.gz',
   moduleSpecifier: 'kaminos/finger-fluid-webgpu-core.js',
-  revision: 'c7b3fdc1f761db3ab45eae5f25a72cb95f4c2d35',
+  revision: '355572977cdfdb7c27958994ede61ec967ac4623',
   exportName: 'createFingerFluidPortableMacroGeometryProvider',
   schema: 'kaminos.finger-fluid.portable-macro-geometry-provider.v1',
   route: 'kaminos/finger-fluid/portable-macro-geometry-provider'
