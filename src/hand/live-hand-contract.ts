@@ -499,7 +499,7 @@ function normalizeAnchorReplay(
       throw new Error('anchor replay candidate cutoff contradicts replay chronology');
     }
     if (
-      promotionCatchUpCaptureTimestampMs < candidateLastAcceptedCaptureTimestampMs
+      promotionCatchUpCaptureTimestampMs <= candidateLastAcceptedCaptureTimestampMs
       || promotionCatchUpCaptureTimestampMs > frameCaptureTimestampMs
     ) {
       throw new Error('anchor replay promotion catch-up chronology is invalid');

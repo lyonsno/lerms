@@ -912,6 +912,22 @@ assertThrows(
   }),
   'anchorReplay.promotionCatchUpCaptureTimestampMs is missing or invalid',
 );
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...transplantedReplayState,
+    frame: {
+      ...transplantedReplayState.frame,
+      diagnostics: {
+        ...transplantedReplayState.frame.diagnostics,
+        anchorReplay: {
+          ...transplantedReplayState.frame.diagnostics.anchorReplay,
+          promotionCatchUpCaptureTimestampMs: 1_033,
+        },
+      },
+    },
+  }),
+  'anchor replay promotion catch-up chronology is invalid',
+);
 assert(
   hybrid.fingerExtension?.target.index === 1
     && hybrid.fingerExtension.output.index === 0.97,
