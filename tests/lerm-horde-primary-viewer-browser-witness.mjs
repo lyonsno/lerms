@@ -23,6 +23,10 @@ const EXPECTED_PRESENTATION =
   'lerms/lerm-horde/indexed-textured-axial-gpu-v0';
 const EXPECTED_RUNTIME =
   'lerms/lerm-horde/primary-viewer-live-worker-v0';
+const EXPECTED_EPISODE_RUNTIME =
+  'lerms/lerm-horde/history-conditioned-two-episode-runtime-v0';
+const EXPECTED_POLICY =
+  'lerms/lerm-horde/seek-less-traversed-continuation-v0';
 const EXPECTED_QUERY = 'actor=lerm-horde-live';
 const CHROME =
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -52,15 +56,30 @@ const report = {
   cameraInteractionVerified: false,
   cameraInputState: null,
   terrainChangedDuringTraversal: false,
+  episodeAChoiceVerified: false,
+  episodeASettleVisible: false,
+  reseedFreshnessVerified: false,
+  episodeBChoiceVerified: false,
+  episodeBSettleVisible: false,
+  samePolicyVerified: false,
+  sameCandidateSetVerified: false,
+  retainedHillCausalityVerified: false,
   retainedTrafficAfterDeparture: false,
   primaryOutputWritten: false,
   present: null,
   moved: null,
+  episodeASettle: null,
+  reseed: null,
+  episodeBPresent: null,
+  episodeBSettle: null,
   departed: null,
   performance: null,
   screenshots: {
     present: options.presentScreenshot,
     moved: options.movedScreenshot,
+    episodeASettle: options.episodeASettleScreenshot,
+    episodeBPresent: options.episodeBPresentScreenshot,
+    episodeBSettle: options.episodeBSettleScreenshot,
     departed: options.departedScreenshot,
   },
 };
@@ -243,6 +262,20 @@ async function runWitness() {
       Number.isFinite(
         present.presentation?.cpuSubmitMilliseconds,
       );
+    report.episodeAChoiceVerified =
+      present.episodeController?.route ===
+        EXPECTED_EPISODE_RUNTIME &&
+      present.episodeController?.stage === 'traversing' &&
+      present.episodeController?.activeEpisodeIndex === 0 &&
+      present.episodeController?.activeActorInstanceId ===
+        'lerm-episode-a' &&
+      present.episodeController?.actorPrivateStateSource ===
+        'fresh' &&
+      present.episodeController?.decisions?.length === 1 &&
+      present.episodeController.decisions[0]?.selectedId ===
+        'left-longitudinal' &&
+      present.episodeController.decisions[0]?.policy?.route ===
+        EXPECTED_POLICY;
     report.actorPixelsPresent =
       presentPixels.rootCropSpeciesPixels >= 20 &&
       presentPixels.nonBackgroundPixels >= 1_000;
@@ -286,6 +319,11 @@ async function runWitness() {
       report.indexedPresentationVerified,
       true,
       'effective indexed textured presentation identity was missing or substituted',
+    );
+    assert.equal(
+      report.episodeAChoiceVerified,
+      true,
+      'Episode A did not publish the exact fresh-actor left-branch decision',
     );
     assert.equal(
       report.actorPixelsPresent,
@@ -354,6 +392,178 @@ async function runWitness() {
       'textured actor disappeared from its reported root before runtime departure',
     );
 
+    report.phase = 'verifying-episode-a-settle';
+    const episodeASettle = await waitForState(
+      browser,
+      (state) =>
+        state.episodeController?.stage === 'settling' &&
+        state.episodeController?.activeEpisodeIndex === 0 &&
+        state.episodeController?.activeActorInstanceId ===
+          'lerm-episode-a' &&
+        state.lifecycle?.visible === true,
+      20_000,
+      'Episode A visible settle',
+    );
+    const episodeASettlePixels = await canvasPixels(
+      browser,
+      episodeASettle.presentation?.rootScreen,
+    );
+    const episodeASettleShot = await captureScreenshot(
+      browser,
+      options.episodeASettleScreenshot,
+    );
+    report.episodeASettleVisible =
+      episodeASettlePixels.rootCropSpeciesPixels >= 20 &&
+      episodeASettle.actor?.sourceDistance ===
+        episodeASettle.presentation?.sourceDistance;
+    report.episodeASettle = {
+      state: episodeASettle,
+      pixels: episodeASettlePixels,
+      screenshotSha256: episodeASettleShot.sha256,
+    };
+    assert.equal(
+      report.episodeASettleVisible,
+      true,
+      'Episode A arrival did not remain visibly settled on the current Hill',
+    );
+
+    report.phase = 'verifying-fresh-actor-reseed';
+    const reseed = await waitForState(
+      browser,
+      (state) =>
+        state.episodeController?.stage === 'reseeding' &&
+        state.episodeController?.activeEpisodeIndex === null &&
+        state.episodeController?.activeActorInstanceId === null &&
+        state.lifecycle?.visible === false,
+      10_000,
+      'actor-absent reseed boundary',
+    );
+    report.reseedFreshnessVerified =
+      reseed.episodeController?.previousActorPrivateStateCarried ===
+        false &&
+      reseed.episodeController?.decisions?.length === 1 &&
+      reseed.terrain?.trafficChecksum !==
+        present.terrain?.trafficChecksum;
+    report.reseed = { state: reseed };
+    assert.equal(
+      report.reseedFreshnessVerified,
+      true,
+      'the between-episode boundary retained actor state or lost Episode A Hill history',
+    );
+
+    report.phase = 'verifying-history-conditioned-episode-b';
+    const episodeBPresent = await waitForState(
+      browser,
+      (state) =>
+        state.episodeController?.stage === 'traversing' &&
+        state.episodeController?.activeEpisodeIndex === 1 &&
+        state.episodeController?.activeActorInstanceId ===
+          'lerm-episode-b' &&
+        state.episodeController?.actorPrivateStateSource ===
+          'fresh' &&
+        state.episodeController?.decisions?.length === 2 &&
+        state.actor?.rootWorld?.x > 0 &&
+        state.lifecycle?.visible === true,
+      12_000,
+      'Episode B live right-branch actor',
+    );
+    const episodeBPixels = await canvasPixels(
+      browser,
+      episodeBPresent.presentation?.rootScreen,
+    );
+    const episodeBShot = await captureScreenshot(
+      browser,
+      options.episodeBPresentScreenshot,
+    );
+    const [decisionA, decisionB] =
+      episodeBPresent.episodeController.decisions;
+    report.episodeBChoiceVerified =
+      decisionA.selectedId === 'left-longitudinal' &&
+      decisionB.selectedId === 'right-longitudinal' &&
+      decisionB.selectedReason ===
+        'minimum-local-retained-traffic' &&
+      episodeBPixels.rootCropSpeciesPixels >= 20;
+    report.samePolicyVerified =
+      decisionA.policy?.route === EXPECTED_POLICY &&
+      decisionB.policy?.route === decisionA.policy?.route &&
+      decisionB.policy?.revision === decisionA.policy?.revision;
+    report.sameCandidateSetVerified =
+      decisionB.policy?.candidateSetChecksum ===
+        decisionA.policy?.candidateSetChecksum &&
+      decisionB.candidates.map(({ id }) => id).join('|') ===
+        decisionA.candidates.map(({ id }) => id).join('|');
+    const firstBranchBefore =
+      decisionA.candidates.find(
+        ({ id }) => id === decisionA.selectedId,
+      )?.localExposure;
+    const firstBranchAfter =
+      decisionB.candidates.find(
+        ({ id }) => id === decisionA.selectedId,
+      )?.localExposure;
+    const secondBranchAfter =
+      decisionB.candidates.find(
+        ({ id }) => id === decisionB.selectedId,
+      )?.localExposure;
+    report.retainedHillCausalityVerified =
+      decisionB.hill?.producerTrafficFieldChecksum ===
+        reseed.terrain?.trafficChecksum &&
+      decisionB.hill?.producerTrafficFieldChecksum !==
+        decisionA.hill?.producerTrafficFieldChecksum &&
+      firstBranchAfter > firstBranchBefore &&
+      firstBranchAfter > secondBranchAfter;
+    report.episodeBPresent = {
+      state: episodeBPresent,
+      pixels: episodeBPixels,
+      screenshotSha256: episodeBShot.sha256,
+    };
+    for (const [claim, value] of Object.entries({
+      episodeBChoiceVerified: report.episodeBChoiceVerified,
+      samePolicyVerified: report.samePolicyVerified,
+      sameCandidateSetVerified:
+        report.sameCandidateSetVerified,
+      retainedHillCausalityVerified:
+        report.retainedHillCausalityVerified,
+    })) {
+      assert.equal(
+        value,
+        true,
+        `${claim} did not survive the canonical live route`,
+      );
+    }
+
+    report.phase = 'verifying-episode-b-settle';
+    const episodeBSettle = await waitForState(
+      browser,
+      (state) =>
+        state.episodeController?.stage === 'settling' &&
+        state.episodeController?.activeEpisodeIndex === 1 &&
+        state.episodeController?.activeActorInstanceId ===
+          'lerm-episode-b' &&
+        state.lifecycle?.visible === true,
+      20_000,
+      'Episode B visible settle',
+    );
+    const episodeBSettlePixels = await canvasPixels(
+      browser,
+      episodeBSettle.presentation?.rootScreen,
+    );
+    const episodeBSettleShot = await captureScreenshot(
+      browser,
+      options.episodeBSettleScreenshot,
+    );
+    report.episodeBSettleVisible =
+      episodeBSettlePixels.rootCropSpeciesPixels >= 20;
+    report.episodeBSettle = {
+      state: episodeBSettle,
+      pixels: episodeBSettlePixels,
+      screenshotSha256: episodeBSettleShot.sha256,
+    };
+    assert.equal(
+      report.episodeBSettleVisible,
+      true,
+      'Episode B arrival did not remain visibly settled on the current Hill',
+    );
+
     report.phase = 'verifying-departure-and-retained-history';
     const departed = await waitForState(
       browser,
@@ -365,7 +575,7 @@ async function runWitness() {
           state.lifecycle.completionElapsedMs &&
         state.host?.registeredLayerCount === 1 &&
         state.host?.drawnLayerCount === 0,
-      20_000,
+      10_000,
       'actor departure',
     );
     const departedPixels = await canvasPixels(
@@ -380,14 +590,13 @@ async function runWitness() {
     const settled = await currentState(browser);
     report.actorPixelsAbsentAfterDeparture =
       departed.host?.drawnLayerCount === 0 &&
+      departed.host?.visibleLayerCount === 0 &&
       departed.lifecycle?.visible === false &&
-      departedPixels.rootCropSpeciesPixels <=
-        Math.max(
-          12,
-          Math.floor(
-            presentPixels.rootCropSpeciesPixels * 0.05,
-          ),
-        );
+      departed.episodeController?.stage === 'complete' &&
+      departed.episodeController?.activeActorInstanceId === null &&
+      departedPixels.rootCropSpeciesPixels <
+        episodeBSettlePixels.rootCropSpeciesPixels &&
+      departedShot.sha256 !== episodeBSettleShot.sha256;
     report.retainedTrafficAfterDeparture =
       departed.terrain.trafficChecksum !==
         present.terrain.trafficChecksum &&
@@ -810,6 +1019,18 @@ function parseArgs(args) {
     movedScreenshot: resolve(
       values.get('moved-screenshot') ??
         `${tmpdir()}/lerms-primary-viewer-${label}-moved.png`,
+    ),
+    episodeASettleScreenshot: resolve(
+      values.get('episode-a-settle-screenshot') ??
+        `${tmpdir()}/lerms-primary-viewer-${label}-episode-a-settle.png`,
+    ),
+    episodeBPresentScreenshot: resolve(
+      values.get('episode-b-present-screenshot') ??
+        `${tmpdir()}/lerms-primary-viewer-${label}-episode-b-present.png`,
+    ),
+    episodeBSettleScreenshot: resolve(
+      values.get('episode-b-settle-screenshot') ??
+        `${tmpdir()}/lerms-primary-viewer-${label}-episode-b-settle.png`,
     ),
     departedScreenshot: resolve(
       values.get('departed-screenshot') ??

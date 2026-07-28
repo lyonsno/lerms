@@ -21,6 +21,9 @@ import {
   type HillOfHillsTerrainBuffer,
   type HillOfHillsTerrainParams,
 } from './terrain/hill-of-hills.js';
+import type {
+  LermHordeHistoryConditionedDecision,
+} from './lerm-horde-history-conditioned-decision.js';
 
 export const LERM_HORDE_LIVE_RUNTIME_SCHEMA =
   'lerms.horde-live-runtime-composition.v0' as const;
@@ -120,6 +123,24 @@ export interface LermHordeLiveRuntimeState {
       topologyChecksum: string;
     };
   } | null;
+  episodeController?: {
+    schema: 'lerms.horde-history-conditioned-runtime.v0';
+    route:
+      'lerms/lerm-horde/history-conditioned-two-episode-runtime-v0';
+    stage:
+      | 'traversing'
+      | 'settling'
+      | 'reseeding'
+      | 'complete';
+    activeEpisodeIndex: 0 | 1 | null;
+    activeActorInstanceId:
+      | 'lerm-episode-a'
+      | 'lerm-episode-b'
+      | null;
+    actorPrivateStateSource: 'fresh' | null;
+    previousActorPrivateStateCarried: false;
+    decisions: readonly LermHordeHistoryConditionedDecision[];
+  };
 }
 
 export interface LermHordeLiveRuntimeReceipt {
@@ -191,6 +212,10 @@ export interface CreateLermHordeLiveRuntimeOptions {
   producerReceipt: LermHordeProducerHistoryCompositionReceipt;
   railSampler(sourceDistance: number): LermHordeLiveRailSample;
   hillRevision: string;
+  terrainCache?: HillOfHillsLayerTileCache;
+  initialTerrain?: HillOfHillsTerrain;
+  sourceTimeOffsetMs?: number;
+  episodeIdPrefix?: string;
 }
 
 export function createLermHordeLiveRuntime(
@@ -201,12 +226,24 @@ export function createLermHordeLiveRuntime(
   const durationMs = receipt.historySummary.lastTimestampMs;
   const firstDistance = receipt.historySummary.firstSourceDistance;
   const lastDistance = receipt.historySummary.lastSourceDistance;
-  const cache = createHillOfHillsLayerTileCache();
-  const initialTerrain = createHillOfHillsTerrainWithCache(
-    cache,
-    LIVE_TERRAIN_PARAMS,
-    sourceAt('horde-live-runtime-000000', 0),
-  );
+  const sourceTimeOffsetMs = options.sourceTimeOffsetMs ?? 0;
+  const cache =
+    options.terrainCache ?? createHillOfHillsLayerTileCache();
+  const initialTerrain =
+    options.initialTerrain ??
+    createHillOfHillsTerrainWithCache(
+      cache,
+      {
+        ...LIVE_TERRAIN_PARAMS,
+        topologyPhaseTimeMs: sourceTimeOffsetMs,
+      },
+      sourceAt(
+        `horde-live-runtime-${Math.round(sourceTimeOffsetMs)
+          .toString()
+          .padStart(6, '0')}`,
+        sourceTimeOffsetMs,
+      ),
+    );
   const initialRail = sampleRail(options, firstDistance);
   let currentState: LermHordeLiveRuntimeState = {
     schema: LERM_HORDE_LIVE_RUNTIME_SCHEMA,
@@ -251,6 +288,7 @@ export function createLermHordeLiveRuntime(
           durationMs,
           firstDistance,
           lastDistance,
+          sourceTimeOffsetMs,
         );
         if (
           currentState.elapsedMs >= durationMs &&
@@ -371,6 +409,7 @@ function advanceInterval(
   durationMs: number,
   firstDistance: number,
   lastDistance: number,
+  sourceTimeOffsetMs: number,
 ): LermHordeLiveRuntimeState {
   const startMs = previousState.elapsedMs;
   const startDistance = distanceAt(
@@ -387,7 +426,7 @@ function advanceInterval(
   );
   const traversingInterval = startMs < durationMs;
   const episodeId =
-    `motion-ready-719024:live-runtime:` +
+    `${options.episodeIdPrefix ?? 'motion-ready-719024:live-runtime'}:` +
     `${previousState.admittedIntervalCount.toString().padStart(6, '0')}`;
   const history = traversingInterval
     ? createIntervalHistory(
@@ -396,6 +435,7 @@ function advanceInterval(
         episodeId,
         startMs,
         endMs,
+        sourceTimeOffsetMs,
         sampleRail(options, startDistance),
         sampleRail(options, endDistance),
       )
@@ -404,14 +444,14 @@ function advanceInterval(
     cache,
     {
       ...LIVE_TERRAIN_PARAMS,
-      topologyPhaseTimeMs: endMs,
+      topologyPhaseTimeMs: sourceTimeOffsetMs + endMs,
     },
     {
       ...sourceAt(
-        `horde-live-runtime-${Math.round(endMs)
+        `horde-live-runtime-${Math.round(sourceTimeOffsetMs + endMs)
           .toString()
           .padStart(6, '0')}`,
-        endMs,
+        sourceTimeOffsetMs + endMs,
       ),
       ...(history ? { producerContactHistory: history } : {}),
     },
@@ -429,7 +469,10 @@ function advanceInterval(
   const lastAdmission = history
     ? {
         episodeId,
-        elapsed: { startMs, endMs },
+        elapsed: {
+          startMs: sourceTimeOffsetMs + startMs,
+          endMs: sourceTimeOffsetMs + endMs,
+        },
         sourceDistance: { start: startDistance, end: endDistance },
         targetHill: {
           frameId: previousState.terrain.source.frameId,
@@ -465,13 +508,26 @@ function createIntervalHistory(
   episodeId: string,
   startMs: number,
   endMs: number,
+  sourceTimeOffsetMs: number,
   start: LermHordeLiveRailSample,
   end: LermHordeLiveRailSample,
 ): HillOfHillsProducerContactHistory {
   const receipt = options.producerReceipt;
   const samples: HillOfHillsProducerContactHistorySample[] = [
-    supportedHistorySample(options, targetHill, start, 0, startMs),
-    supportedHistorySample(options, targetHill, end, 1, endMs),
+    supportedHistorySample(
+      options,
+      targetHill,
+      start,
+      0,
+      sourceTimeOffsetMs + startMs,
+    ),
+    supportedHistorySample(
+      options,
+      targetHill,
+      end,
+      1,
+      sourceTimeOffsetMs + endMs,
+    ),
   ];
   return {
     schema: HILL_OF_HILLS_PRODUCER_CONTACT_HISTORY_SCHEMA,
@@ -724,6 +780,18 @@ function validateOptions(
   ) {
     throw new Error(
       'live runtime requires a source rail sampler and exact Hill revision',
+    );
+  }
+  if (
+    (options.initialTerrain !== undefined &&
+      options.terrainCache === undefined) ||
+    !Number.isFinite(options.sourceTimeOffsetMs ?? 0) ||
+    (options.sourceTimeOffsetMs ?? 0) < 0 ||
+    (options.episodeIdPrefix !== undefined &&
+      !options.episodeIdPrefix.trim())
+  ) {
+    throw new Error(
+      'live runtime continuation requires a cache-bound initial Hill, nonnegative time offset, and episode identity prefix',
     );
   }
 }

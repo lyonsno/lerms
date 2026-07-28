@@ -93,6 +93,11 @@ export interface LermHordePrimaryViewerLiveCompositionReceipt {
     phase: LermHordeLiveRuntimeState['phase'];
     visible: boolean;
   };
+  episodeController:
+    | NonNullable<
+        LermHordePrimaryViewerActorFrame['episodeController']
+      >
+    | null;
   actor: {
     elapsedMs: number;
     tickCount: number;
@@ -270,6 +275,8 @@ export function createLermHordePrimaryViewerLiveComposition(
           phase: actorFrame.lifecycle.phase,
           visible: actorFrame.lifecycle.visible,
         },
+        episodeController:
+          actorFrame.episodeController ?? null,
         actor: actorFrame.pose
           ? {
               elapsedMs: actorFrame.lifecycle.elapsedMs,
@@ -417,6 +424,8 @@ function createLermHordePrimaryViewerWorkerComposition(
           phase: actorFrame.lifecycle.phase,
           visible: actorFrame.lifecycle.visible,
         },
+        episodeController:
+          actorFrame.episodeController ?? null,
         actor: actorFrame.pose
           ? {
               elapsedMs: actorFrame.lifecycle.elapsedMs,

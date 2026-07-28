@@ -16,6 +16,8 @@ for (const requiredIdentity of [
   'lerms/lerm-horde/primary-viewer-actor-frame-v0',
   'lerms/lerm-horde/primary-viewer-live-worker-v0',
   'lerms/lerm-horde/indexed-textured-axial-gpu-v0',
+  'lerms/lerm-horde/history-conditioned-two-episode-runtime-v0',
+  'lerms/lerm-horde/seek-less-traversed-continuation-v0',
   'actor=lerm-horde-live',
 ]) {
   assert.match(
@@ -38,6 +40,14 @@ for (const falseClosureProbe of [
   'actorPixelsAbsentAfterDeparture',
   'cameraInteractionVerified',
   'terrainChangedDuringTraversal',
+  'episodeAChoiceVerified',
+  'episodeASettleVisible',
+  'reseedFreshnessVerified',
+  'episodeBChoiceVerified',
+  'episodeBSettleVisible',
+  'samePolicyVerified',
+  'sameCandidateSetVerified',
+  'retainedHillCausalityVerified',
   'retainedTrafficAfterDeparture',
   'primaryOutputWritten',
   'failurePhase',

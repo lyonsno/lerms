@@ -20,6 +20,9 @@ import {
   type LermHordeLiveBodySample,
   type LermHordeLiveRuntimeState,
 } from './lerm-horde-live-runtime-composition.js';
+import type {
+  LermHordeHistoryConditionedDecision,
+} from './lerm-horde-history-conditioned-decision.js';
 
 export const LERM_HORDE_PRIMARY_VIEWER_ACTOR_FRAME_SCHEMA =
   'lerms.horde-primary-viewer-actor-frame.v0' as const;
@@ -70,6 +73,38 @@ export interface LermHordePrimaryViewerActorFrame {
     elapsedMs: number;
     tickCount: number;
   };
+  episodeController?: {
+    schema: 'lerms.horde-history-conditioned-runtime.v0';
+    route:
+      'lerms/lerm-horde/history-conditioned-two-episode-runtime-v0';
+    stage:
+      | 'traversing'
+      | 'settling'
+      | 'reseeding'
+      | 'complete';
+    activeEpisodeIndex: 0 | 1 | null;
+    activeActorInstanceId:
+      | 'lerm-episode-a'
+      | 'lerm-episode-b'
+      | null;
+    actorPrivateStateSource: 'fresh' | null;
+    previousActorPrivateStateCarried: false;
+    decisions: readonly {
+      episodeIndex: 0 | 1;
+      selectedId:
+        | 'left-longitudinal'
+        | 'right-longitudinal';
+      selectedReason: 'minimum-local-retained-traffic';
+      selectedExposure: number;
+      hill: LermHordeHistoryConditionedDecision['hill'];
+      policy: LermHordeHistoryConditionedDecision['policy'];
+      candidates: readonly {
+        id: 'left-longitudinal' | 'right-longitudinal';
+        lawful: boolean;
+        localExposure: number;
+      }[];
+    }[];
+  } | null;
   pose: {
     sourceDistance: number;
     motionPhase: number;
@@ -149,6 +184,42 @@ export function createLermHordePrimaryViewerActorFrame(
       elapsedMs: state.elapsedMs,
       tickCount: state.tickCount,
     },
+    episodeController: state.episodeController
+      ? {
+          schema: state.episodeController.schema,
+          route: state.episodeController.route,
+          stage: state.episodeController.stage,
+          activeEpisodeIndex:
+            state.episodeController.activeEpisodeIndex,
+          activeActorInstanceId:
+            state.episodeController.activeActorInstanceId,
+          actorPrivateStateSource:
+            state.episodeController.actorPrivateStateSource,
+          previousActorPrivateStateCarried:
+            state.episodeController
+              .previousActorPrivateStateCarried,
+          decisions:
+            state.episodeController.decisions.map(
+              (decision) => ({
+                episodeIndex: decision.episodeIndex,
+                selectedId: decision.selected.id,
+                selectedReason: decision.selected.reason,
+                selectedExposure:
+                  decision.selected.selectedExposure,
+                hill: { ...decision.hill },
+                policy: { ...decision.policy },
+                candidates: decision.candidates.map(
+                  (candidate) => ({
+                    id: candidate.id,
+                    lawful: candidate.lawful,
+                    localExposure:
+                      candidate.affordance.memory.localExposure,
+                  }),
+                ),
+              }),
+            ),
+        }
+      : null,
     pose,
     terrain: {
       frameId: state.terrainBuffer.source.frameId,

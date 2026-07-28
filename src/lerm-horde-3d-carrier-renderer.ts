@@ -48,6 +48,11 @@ import {
   type LermHordeLiveRuntimeReceipt,
   type LermHordeLiveRuntimeState,
 } from './lerm-horde-live-runtime-composition.js';
+import {
+  createLermHordeHistoryConditionedRuntime,
+  type LermHordeHistoryConditionedRuntime,
+  type LermHordeHistoryConditionedRuntimeReceipt,
+} from './lerm-horde-history-conditioned-runtime.js';
 import type {
   HillPrimaryViewerActorDrawFrame,
 } from './terrain/hill-primary-viewer-actor-host.js';
@@ -176,7 +181,9 @@ export interface ExactCarrierLiveSource {
       typeof createLermHordePrimaryViewerActorFrame
     >,
   ): void;
-  createRuntimeReceipt(): LermHordeLiveRuntimeReceipt;
+  createRuntimeReceipt():
+    | LermHordeLiveRuntimeReceipt
+    | LermHordeHistoryConditionedRuntimeReceipt;
 }
 
 interface ExactCarrierLiveSourceInternal
@@ -218,13 +225,20 @@ export interface ExactCarrierLiveRuntimeReceipt {
     operatorPlayCount: 1;
     autoplayObserved: false;
   };
-  runtime: LermHordeLiveRuntimeReceipt;
+  runtime:
+    | LermHordeLiveRuntimeReceipt
+    | LermHordeHistoryConditionedRuntimeReceipt;
 }
 
 export async function createExactCarrierLiveSource(
   includeIndexedPresenter = true,
+  runtimeMode: 'single-episode' | 'history-conditioned' =
+    'single-episode',
 ): Promise<ExactCarrierLiveSource> {
-  return loadExactCarrierLiveSource(includeIndexedPresenter);
+  return loadExactCarrierLiveSource(
+    includeIndexedPresenter,
+    runtimeMode,
+  );
 }
 
 export async function createExactCarrierRenderer(
@@ -475,6 +489,8 @@ export async function createExactCarrierRenderer(
 
 async function loadExactCarrierLiveSource(
   includeIndexedPresenter: boolean,
+  runtimeMode: 'single-episode' | 'history-conditioned' =
+    'single-episode',
 ): Promise<ExactCarrierLiveSourceInternal> {
   const [
     bodyResponse,
@@ -579,19 +595,28 @@ async function loadExactCarrierLiveSource(
   const producerReceipt =
     railHistory as unknown as LermHordeProducerHistoryCompositionReceipt;
   const reviewedRail = rehydrateReviewedRail(railHistory);
-  const createRuntime = (): LermHordeLiveRuntime =>
-    createLermHordeLiveRuntime({
-      producerReceipt,
-      railSampler: (sourceDistance) =>
-        railCore.sampleCreatureScaleLocomotionRail(
-          reviewedRail,
-          sourceDistance,
-        ),
-      hillRevision: LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
-    });
+  const runtimeOptions = {
+    producerReceipt,
+    railSampler: (sourceDistance: number) =>
+      railCore.sampleCreatureScaleLocomotionRail(
+        reviewedRail,
+        sourceDistance,
+      ),
+    hillRevision: LERM_HORDE_REVIEWED_LIVE_HILL_REVISION,
+  };
+  const createRuntime = ():
+    | LermHordeLiveRuntime
+    | LermHordeHistoryConditionedRuntime =>
+    runtimeMode === 'history-conditioned'
+      ? createLermHordeHistoryConditionedRuntime(runtimeOptions)
+      : createLermHordeLiveRuntime(runtimeOptions);
   let runtime = createRuntime();
   const durationMs = producerReceipt.historySummary.lastTimestampMs;
-  const completionElapsedMs = durationMs + 900;
+  const completionElapsedMs =
+    runtimeMode === 'history-conditioned'
+      ? (runtime as LermHordeHistoryConditionedRuntime)
+          .completionElapsedMs
+      : durationMs + 900;
   return {
     get state() {
       return runtime.state;

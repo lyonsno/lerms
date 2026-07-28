@@ -438,13 +438,20 @@ let previewSettings: HillPreviewSettings = loadHillPreviewSettings(safePreviewSe
 previewSettings = applyHillDiagnosticPreviewPreset(previewSettings, hillDiagnosticPreset);
 const previewDebugControls = createPreviewDebugControls();
 const witnessPanel = createWitnessPanel();
+const lermEpisodeReadout = createLermEpisodeReadout();
 const retainedActorTargets =
   createHillPrimaryViewerRetainedActorTargetFactory({
     createCanvas: () => document.createElement('canvas'),
     compositeContext: ctx
   });
 
-document.body.append(controls.element, viewControls.element, previewDebugControls.element, witnessPanel);
+document.body.append(
+  controls.element,
+  viewControls.element,
+  previewDebugControls.element,
+  witnessPanel,
+  lermEpisodeReadout
+);
 installCameraDrag();
 
 function resize(): void {
@@ -2066,6 +2073,8 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
     `Horde composition: ${lermHordePrimaryViewerStatus} ${latestLermHordeCompositionReceipt?.route.effective ?? 'none'}`,
     `Horde runtime: ${latestLermHordeCompositionReceipt?.route.runtime ?? 'none'} ${latestLermHordeCompositionReceipt?.route.runtimeBackend ?? 'none'} ${latestLermHordeCompositionReceipt?.route.staleStatus ?? 'none'}`,
     `Horde actor: ${latestLermHordeCompositionReceipt?.route.actor ?? 'none'} ${latestLermHordeCompositionReceipt?.lifecycle.phase ?? 'absent'}`,
+    `Horde episode: ${latestLermHordeCompositionReceipt?.episodeController?.stage ?? 'none'} ${latestLermHordeCompositionReceipt?.episodeController?.activeActorInstanceId ?? 'no actor'}`,
+    `Horde choice: ${lermHordeChoiceSummary(latestLermHordeCompositionReceipt?.episodeController ?? null)}`,
     `Horde error: ${lermHordePrimaryViewerError}`,
     `route ${witness.topologyRanges.routePressure.max.toFixed(2)} ditch ${witness.topologyRanges.ditchPotential.max.toFixed(2)} growth ${witness.topologyRanges.growthPotential.max.toFixed(2)}`,
     `floor ${witness.effectiveParams.floorWidth.toFixed(1)} radius ${witness.effectiveParams.channelRadius.toFixed(1)} wall ${witness.effectiveParams.wallHeight.toFixed(1)}`,
@@ -2106,6 +2115,9 @@ interface LermHordePrimaryViewerWindowState {
   } | null;
   actor:
     | LermHordePrimaryViewerLiveCompositionReceipt['actor']
+    | null;
+  episodeController:
+    | LermHordePrimaryViewerLiveCompositionReceipt['episodeController']
     | null;
   presentation:
     | LermHordePrimaryViewerLiveCompositionReceipt['presentation']
@@ -2175,6 +2187,21 @@ function publishLermHordePrimaryViewerState(): void {
           )
         }
       : null,
+    episodeController: receipt?.episodeController
+      ? {
+          ...receipt.episodeController,
+          decisions: receipt.episodeController.decisions.map(
+            (decision) => ({
+              ...decision,
+              hill: { ...decision.hill },
+              policy: { ...decision.policy },
+              candidates: decision.candidates.map(
+                (candidate) => ({ ...candidate })
+              )
+            })
+          )
+        }
+      : null,
     presentation: receipt
       ? {
           ...receipt.presentation,
@@ -2219,8 +2246,89 @@ function publishLermHordePrimaryViewerState(): void {
     receipt?.route.actor ?? '';
   appCanvas.dataset.lermHordeActorPhase =
     receipt?.lifecycle.phase ?? '';
+  appCanvas.dataset.lermHordeEpisodeStage =
+    receipt?.episodeController?.stage ?? '';
+  appCanvas.dataset.lermHordeActorInstance =
+    receipt?.episodeController?.activeActorInstanceId ?? '';
+  appCanvas.dataset.lermHordeSelectedContinuation =
+    receipt?.episodeController?.decisions.at(-1)?.selectedId ?? '';
   appCanvas.dataset.lermHordeTerrainFrame =
     receipt?.terrain.frameId ?? '';
+  updateLermEpisodeReadout(receipt?.episodeController ?? null);
+}
+
+function lermHordeChoiceSummary(
+  controller:
+    | LermHordePrimaryViewerLiveCompositionReceipt['episodeController']
+    | null,
+): string {
+  const decision = controller?.decisions.at(-1);
+  if (!decision) return 'waiting for current-Hill affordance';
+  const exposures = decision.candidates
+    .map(
+      ({ id, localExposure }) =>
+        `${id.replace('-longitudinal', '')} ${localExposure.toFixed(3)}`
+    )
+    .join(' / ');
+  return `${decision.selectedId.replace('-longitudinal', '')} because retained traffic is lower (${exposures})`;
+}
+
+function createLermEpisodeReadout(): HTMLElement {
+  const element = document.createElement('div');
+  element.className = 'lerm-episode-readout';
+  element.hidden = true;
+  element.setAttribute('aria-live', 'polite');
+  return element;
+}
+
+function updateLermEpisodeReadout(
+  controller:
+    | LermHordePrimaryViewerLiveCompositionReceipt['episodeController']
+    | null,
+): void {
+  if (!controller) {
+    lermEpisodeReadout.hidden = true;
+    lermEpisodeReadout.replaceChildren();
+    return;
+  }
+  const decision = controller.decisions.at(-1);
+  const episode =
+    controller.activeEpisodeIndex === null
+      ? controller.stage
+      : `episode ${controller.activeEpisodeIndex === 0 ? 'A' : 'B'} · ${controller.actorPrivateStateSource} actor · ${controller.stage}`;
+  const choice = decision
+    ? `chosen ${decision.selectedId.replace('-longitudinal', '')} · less retained traffic`
+    : 'reading current Hill';
+  const exposure = decision
+    ? decision.candidates
+        .map(
+          ({ id, localExposure }) =>
+            `${id.replace('-longitudinal', '')} ${localExposure.toFixed(3)}`
+        )
+        .join(' · ')
+    : '';
+  const policy = decision
+    ? `${decision.policy.revision} · unchanged candidate set`
+    : '';
+  lermEpisodeReadout.replaceChildren(
+    readoutLine(episode, 'lerm-episode-readout__stage'),
+    readoutLine(choice, 'lerm-episode-readout__choice'),
+    readoutLine(
+      [exposure, policy].filter(Boolean).join(' · '),
+      'lerm-episode-readout__evidence'
+    )
+  );
+  lermEpisodeReadout.hidden = false;
+}
+
+function readoutLine(
+  text: string,
+  className: string,
+): HTMLElement {
+  const line = document.createElement('div');
+  line.className = className;
+  line.textContent = text;
+  return line;
 }
 
 function pressureFieldWitnessSummary(witness: HillOfHillsTerrainBuffer['witness']): string {
@@ -2497,6 +2605,34 @@ function createControls(): { element: HTMLElement } {
       font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
       backdrop-filter: blur(8px);
     }
+    .lerm-episode-readout {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      width: min(500px, calc(100vw - 900px));
+      min-width: 360px;
+      transform: translateX(-50%);
+      padding: 10px 14px;
+      border-top: 1px solid rgba(242, 211, 95, 0.58);
+      border-bottom: 1px solid rgba(136, 224, 186, 0.35);
+      background: rgba(3, 9, 8, 0.82);
+      color: #d7f7e8;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-align: center;
+      pointer-events: none;
+      backdrop-filter: blur(8px);
+    }
+    .lerm-episode-readout__stage {
+      color: #f2d35f;
+      text-transform: uppercase;
+    }
+    .lerm-episode-readout__choice {
+      color: #f4e3b0;
+      font-size: 14px;
+    }
+    .lerm-episode-readout__evidence {
+      color: #88e0ba;
+    }
     @media (max-width: 780px) {
       .terrain-controls {
         top: 12px;
@@ -2522,6 +2658,11 @@ function createControls(): { element: HTMLElement } {
         top: 108px;
         max-width: calc(100vw - 24px);
         max-height: 150px;
+      }
+      .lerm-episode-readout {
+        top: 270px;
+        width: calc(100vw - 24px);
+        min-width: 0;
       }
     }
   `;
