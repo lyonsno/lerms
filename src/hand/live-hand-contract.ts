@@ -53,6 +53,9 @@ export interface AnchorReplayTruth {
   observationCount: number;
   acceptedCount: number;
   lastAcceptedCaptureTimestampMs: number;
+  candidateLastAcceptedCaptureTimestampMs: number | null;
+  promotionCatchUpMode: 'accepted_pose_state_transplant_v1' | null;
+  promotionCatchUpCaptureTimestampMs: number | null;
   failure: null;
 }
 
@@ -475,12 +478,47 @@ function normalizeAnchorReplay(
   if (replay.failure !== null) {
     throw new Error('fresh hybrid frame cannot carry a failed anchor replay');
   }
+  const hasPromotionCatchUp = replay.promotionCatchUpMode !== undefined;
+  let candidateLastAcceptedCaptureTimestampMs: number | null = null;
+  let promotionCatchUpMode: AnchorReplayTruth['promotionCatchUpMode'] = null;
+  let promotionCatchUpCaptureTimestampMs: number | null = null;
+  if (hasPromotionCatchUp) {
+    if (replay.promotionCatchUpMode !== 'accepted_pose_state_transplant_v1') {
+      throw new Error('unsupported anchor replay promotion catch-up mode');
+    }
+    promotionCatchUpMode = 'accepted_pose_state_transplant_v1';
+    candidateLastAcceptedCaptureTimestampMs = finiteNonNegative(
+      replay.candidateLastAcceptedCaptureTimestampMs,
+      'anchorReplay.candidateLastAcceptedCaptureTimestampMs',
+    );
+    promotionCatchUpCaptureTimestampMs = finiteNonNegative(
+      replay.promotionCatchUpCaptureTimestampMs,
+      'anchorReplay.promotionCatchUpCaptureTimestampMs',
+    );
+    if (candidateLastAcceptedCaptureTimestampMs !== lastAcceptedCaptureTimestampMs) {
+      throw new Error('anchor replay candidate cutoff contradicts replay chronology');
+    }
+    if (
+      promotionCatchUpCaptureTimestampMs < candidateLastAcceptedCaptureTimestampMs
+      || promotionCatchUpCaptureTimestampMs > frameCaptureTimestampMs
+    ) {
+      throw new Error('anchor replay promotion catch-up chronology is invalid');
+    }
+  } else if (
+    replay.candidateLastAcceptedCaptureTimestampMs !== undefined
+    || replay.promotionCatchUpCaptureTimestampMs !== undefined
+  ) {
+    throw new Error('anchor replay promotion catch-up provenance is incomplete');
+  }
   return {
     mode: 'capture_time_fast_observation_replay_v1',
     anchorCaptureTimestampMs,
     observationCount,
     acceptedCount,
     lastAcceptedCaptureTimestampMs,
+    candidateLastAcceptedCaptureTimestampMs,
+    promotionCatchUpMode,
+    promotionCatchUpCaptureTimestampMs,
     failure: null,
   };
 }

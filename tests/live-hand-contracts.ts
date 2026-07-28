@@ -847,6 +847,71 @@ assert(
     && hybrid.anchorReplay.lastAcceptedCaptureTimestampMs === 1_066,
   'preserves delayed-anchor replay identity and chronological accounting',
 );
+const transplantedReplayState = {
+  ...hybridState,
+  frame: {
+    ...hybridState.frame,
+    frame: {
+      ...hybridState.frame.frame,
+      frameId: 'fast:run-8-1726-24',
+      captureTimestampMs: 1_726,
+    },
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      anchorReplay: {
+        mode: 'capture_time_fast_observation_replay_v1',
+        anchorCaptureTimestampMs: 1_033,
+        observationCount: 0,
+        acceptedCount: 0,
+        lastAcceptedCaptureTimestampMs: 1_033,
+        candidateLastAcceptedCaptureTimestampMs: 1_033,
+        promotionCatchUpMode: 'accepted_pose_state_transplant_v1',
+        promotionCatchUpCaptureTimestampMs: 1_693,
+        failure: null,
+      },
+    },
+  },
+};
+const transplantedReplayFrame = normalizeLiveManoFrame(transplantedReplayState);
+const transplantedReplay = transplantedReplayFrame.anchorReplay;
+assert(
+  transplantedReplay?.candidateLastAcceptedCaptureTimestampMs === 1_033
+    && transplantedReplay.promotionCatchUpMode === 'accepted_pose_state_transplant_v1'
+    && transplantedReplay.promotionCatchUpCaptureTimestampMs === 1_693,
+  'preserves candidate replay cutoff and accepted-pose transplant provenance',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...transplantedReplayState,
+    frame: {
+      ...transplantedReplayState.frame,
+      diagnostics: {
+        ...transplantedReplayState.frame.diagnostics,
+        anchorReplay: {
+          ...transplantedReplayState.frame.diagnostics.anchorReplay,
+          candidateLastAcceptedCaptureTimestampMs: 1_066,
+        },
+      },
+    },
+  }),
+  'anchor replay candidate cutoff contradicts replay chronology',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...transplantedReplayState,
+    frame: {
+      ...transplantedReplayState.frame,
+      diagnostics: {
+        ...transplantedReplayState.frame.diagnostics,
+        anchorReplay: {
+          ...transplantedReplayState.frame.diagnostics.anchorReplay,
+          promotionCatchUpCaptureTimestampMs: undefined,
+        },
+      },
+    },
+  }),
+  'anchorReplay.promotionCatchUpCaptureTimestampMs is missing or invalid',
+);
 assert(
   hybrid.fingerExtension?.target.index === 1
     && hybrid.fingerExtension.output.index === 0.97,
