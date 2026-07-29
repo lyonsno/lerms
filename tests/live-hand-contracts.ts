@@ -92,6 +92,14 @@ const health = {
     lastWrittenSequence: 12,
     failure: null,
   },
+  persistenceFailures: {
+    fast_landmark_report: {
+      count: 2,
+      failurePhase: 'fast_report_persistence',
+      lastError: 'OSError: No space left on device',
+      lastFailureAtMs: 1_234,
+    },
+  },
 };
 const healthTruth = assertLiveRuntimeHealth(health);
 assert(healthTruth.burstMode === 'chunked', 'preserves chunked route identity');
@@ -104,6 +112,12 @@ assert(
   healthTruth.emittedStateChronology.writtenCount === 12
     && healthTruth.emittedStateChronology.lastWrittenSequence === 12,
   'preserves emitted-state chronology progress',
+);
+assert(
+  healthTruth.persistenceFailures.fast_landmark_report?.count === 2
+    && healthTruth.persistenceFailures.fast_landmark_report.failurePhase
+      === 'fast_report_persistence',
+  'preserves named non-load-bearing persistence degradation',
 );
 
 assertThrows(
@@ -709,7 +723,7 @@ const hybridState = {
     mano: { ...state.frame.mano, diagnostic: 'native_mano_regeneration' },
     diagnostics: {
       ...state.frame.diagnostics,
-      fusionMode: 'wilor_anchor_mediapipe_mano_state_observer',
+      fusionMode: 'wilor_anchor_mediapipe_mano_temporal_authority_observer',
       geometryMode: 'native_mano_regeneration',
       anchorSource: LIVE_HAND_ROUTE,
       anchorCaptureId: 'run-8-1000-1',
@@ -729,7 +743,10 @@ const hybridState = {
       calibrationResidualMax: 0.007,
       fastWorldBasisTransform: 'mediapipe_to_wilor_flip_z_v1',
       maxJointCorrectionRad: 0.18,
-      maxAnchorJointDeviationRad: 0.42,
+      maxAnchorJointDeviationRad: 1.42,
+      anchorTrustState: 'paying_successor_continuity_debt',
+      anchorTrustExcessRad: 0.07,
+      visibleCorrectionState: 'bounded_correction_debt',
       jointStepIntervalMs: 16.667,
       jointStepLimitRad: 0.08,
       maxJointStepAppliedRad: 0.073,
@@ -751,7 +768,7 @@ const hybridState = {
       poseSolverRobustInlierFraction: 0.8,
       poseSolverConstraintSaturation: 0.1,
       poseSolverDistalCouplingResidualRad: 0.12,
-      poseObserverMode: 'fixed_lag_anatomical_state_v1',
+      poseObserverMode: 'fixed_lag_anatomical_state_v2',
       poseObserverCaptureTimestampMs: 1_099,
       poseObserverPredictionHorizonMs: 0,
       poseObserverMaxInnovationRad: 0.08,
@@ -759,9 +776,9 @@ const hybridState = {
       poseObserverChainAuthority: {
         thumb: 'weighted_measurement',
         index: 'accepted_measurement',
-        middle: 'weighted_measurement',
-        ring: 'attenuated_large_innovation',
-        pinky: 'held_incoherent_measurement',
+        middle: 'attenuated_large_innovation',
+        ring: 'held_incoherent_measurement',
+        pinky: 'held_temporal_ambiguity',
       },
       anchorReplay: {
         mode: 'capture_time_fast_observation_replay_v1',
@@ -769,7 +786,7 @@ const hybridState = {
         observationCount: 2,
         acceptedCount: 2,
         lastAcceptedCaptureTimestampMs: 1_066,
-        observerMode: 'fixed_lag_anatomical_state_v1',
+        observerMode: 'fixed_lag_anatomical_state_v2',
         observerCaptureTimestampMs: 1_066,
         failure: null,
       },
@@ -800,10 +817,10 @@ assertThrows(
 );
 assert(hybrid.effectiveRoute === LIVE_HAND_HYBRID_ROUTE, 'accepts the explicit WiLoR-anchor/browser-fast hybrid route');
 assert(
-  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v3',
+  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v4',
   'the consumer accepts only the articulated MANO route',
 );
-assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_state_observer', 'preserves the time-indexed state-observer fusion mode');
+assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_temporal_authority_observer', 'preserves the time-indexed state-observer fusion mode');
 assert(hybrid.geometryMode === 'native_mano_regeneration', 'requires native MANO surface regeneration');
 assert(hybrid.anchorCaptureId === 'run-8-1000-1', 'preserves the exact paired WiLoR/MediaPipe capture identity');
 assert(hybrid.fitResidualMean === 0.024, 'preserves the articulated fit residual');
@@ -812,7 +829,16 @@ assert(hybrid.calibrationDeterminant === 1, 'preserves the paired calibration or
 assert(hybrid.calibrationResidualMean === 0.004, 'preserves paired calibration quality');
 assert(hybrid.fastWorldBasisTransform === 'mediapipe_to_wilor_flip_z_v1', 'preserves the explicit model basis transform');
 assert(hybrid.fastPathLatencyMs === 8.5, 'preserves MediaPipe inference timing separately from WiLoR anchor timing');
-assert(hybrid.maxAnchorJointDeviationRad === 0.42, 'preserves absolute anchor-relative joint authority');
+assert(hybrid.maxAnchorJointDeviationRad === 1.42, 'preserves absolute anchor-relative joint authority');
+assert(
+  hybrid.anchorTrustState === 'paying_successor_continuity_debt'
+    && hybrid.anchorTrustExcessRad === 0.07,
+  'preserves explicit bounded successor-anchor trust debt',
+);
+assert(
+  hybrid.visibleCorrectionState === 'bounded_correction_debt',
+  'distinguishes visible correction lag from ideal measurement authority',
+);
 assert(hybrid.jointStepIntervalMs === 16.667, 'preserves the observed fast-path correction interval');
 assert(hybrid.jointStepLimitRad === 0.08, 'preserves the cadence-scaled correction limit');
 assert(hybrid.maxJointStepAppliedRad === 0.073, 'preserves the correction actually applied to the visible mesh');
@@ -869,10 +895,11 @@ assert(
   'preserves distal-chain coupling residual',
 );
 assert(
-  hybrid.poseObserverMode === 'fixed_lag_anatomical_state_v1'
+  hybrid.poseObserverMode === 'fixed_lag_anatomical_state_v2'
     && hybrid.poseObserverCaptureTimestampMs === 1_099
-    && hybrid.poseObserverChainAuthority?.pinky === 'held_incoherent_measurement',
-  'preserves observer identity, capture watermark, and per-chain authority',
+    && hybrid.poseObserverChainAuthority?.ring === 'held_incoherent_measurement'
+    && hybrid.poseObserverChainAuthority?.pinky === 'held_temporal_ambiguity',
+  'preserves observer identity, capture watermark, and spatial/temporal chain authority',
 );
 assert(
   hybrid.anchorReplay?.mode === 'capture_time_fast_observation_replay_v1'
@@ -899,12 +926,12 @@ const transplantedReplayState = {
         observationCount: 0,
         acceptedCount: 0,
         lastAcceptedCaptureTimestampMs: 1_033,
-        observerMode: 'fixed_lag_anatomical_state_v1',
+        observerMode: 'fixed_lag_anatomical_state_v2',
         observerCaptureTimestampMs: 1_693,
         candidateLastAcceptedCaptureTimestampMs: 1_033,
         promotionCatchUpMode: 'accepted_pose_observer_state_transplant_v2',
         promotionCatchUpCaptureTimestampMs: 1_693,
-        promotionObserverMode: 'fixed_lag_anatomical_state_v1',
+        promotionObserverMode: 'fixed_lag_anatomical_state_v2',
         promotionObserverCaptureTimestampMs: 1_693,
         failure: null,
       },
@@ -918,6 +945,34 @@ assert(
     && transplantedReplay.promotionCatchUpMode === 'accepted_pose_observer_state_transplant_v2'
     && transplantedReplay.promotionCatchUpCaptureTimestampMs === 1_693,
   'preserves candidate replay cutoff and accepted pose-observer transplant provenance',
+);
+const continuityGraftState = {
+  ...hybridState,
+  frame: {
+    ...hybridState.frame,
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      anchorReplay: {
+        ...hybridState.frame.diagnostics.anchorReplay,
+        candidateLastAcceptedCaptureTimestampMs: 1_066,
+        promotionCatchUpMode:
+          'accepted_pose_candidate_measurement_continuity_graft_v1',
+        promotionCatchUpCaptureTimestampMs: 1_066,
+        promotionVisibleStateSourceCaptureTimestampMs: 1_033,
+        promotionObserverMode: 'fixed_lag_anatomical_state_v2',
+        promotionObserverCaptureTimestampMs: 1_066,
+      },
+    },
+  },
+};
+const continuityGraft = normalizeLiveManoFrame(
+  continuityGraftState,
+).anchorReplay;
+assert(
+  continuityGraft?.promotionCatchUpMode
+    === 'accepted_pose_candidate_measurement_continuity_graft_v1'
+    && continuityGraft.promotionVisibleStateSourceCaptureTimestampMs === 1_033,
+  'preserves candidate measurement chronology and visible-pose continuity provenance',
 );
 assertThrows(
   () => normalizeLiveManoFrame({

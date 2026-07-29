@@ -1,10 +1,10 @@
 export const LIVE_HAND_ROUTE = 'native_wilor_mini_mlx_detector_sidecar_live' as const;
-export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v3' as const;
+export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v4' as const;
 export const LIVE_HAND_HYBRID_FALLBACK_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano/fallback' as const;
 export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_live' as const;
-export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_state_observer' as const;
+export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_temporal_authority_observer' as const;
 export const LIVE_HAND_HYBRID_GEOMETRY_MODE = 'native_mano_regeneration' as const;
-export const LIVE_HAND_POSE_OBSERVER_MODE = 'fixed_lag_anatomical_state_v1' as const;
+export const LIVE_HAND_POSE_OBSERVER_MODE = 'fixed_lag_anatomical_state_v2' as const;
 export const LIVE_HAND_FAST_LANDMARK_SCHEMA = 'hand-state.browser-fast-landmarks.v1' as const;
 export const LIVE_HAND_RUNTIME_OWNER = 'hand-state-runtime' as const;
 export const MANO_VERTEX_COUNT = 778 as const;
@@ -47,6 +47,12 @@ export interface RuntimeHealthTruth extends RuntimeRouteTruth {
     lastWrittenSequence: number | null;
     failure: null;
   };
+  persistenceFailures: Record<string, {
+    count: number;
+    failurePhase: string;
+    lastError: string;
+    lastFailureAtMs: number;
+  }>;
 }
 
 export type RuntimeSidecarModelReadiness = 'warming' | 'ready' | 'failed_before_ready' | 'stopped';
@@ -69,7 +75,8 @@ export type PoseObserverChainAuthorityMode =
   | 'accepted_measurement'
   | 'weighted_measurement'
   | 'attenuated_large_innovation'
-  | 'held_incoherent_measurement';
+  | 'held_incoherent_measurement'
+  | 'held_temporal_ambiguity';
 
 export type PoseObserverChainAuthority = Record<
   LiveHandFinger,
@@ -85,8 +92,12 @@ export interface AnchorReplayTruth {
   observerMode: typeof LIVE_HAND_POSE_OBSERVER_MODE;
   observerCaptureTimestampMs: number | null;
   candidateLastAcceptedCaptureTimestampMs: number | null;
-  promotionCatchUpMode: 'accepted_pose_observer_state_transplant_v2' | null;
+  promotionCatchUpMode:
+    | 'accepted_pose_observer_state_transplant_v2'
+    | 'accepted_pose_candidate_measurement_continuity_graft_v1'
+    | null;
   promotionCatchUpCaptureTimestampMs: number | null;
+  promotionVisibleStateSourceCaptureTimestampMs: number | null;
   promotionObserverMode: typeof LIVE_HAND_POSE_OBSERVER_MODE | null;
   promotionObserverCaptureTimestampMs: number | null;
   failure: null;
@@ -137,6 +148,15 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   fastWorldBasisTransform: string | null;
   maxJointCorrectionRad: number | null;
   maxAnchorJointDeviationRad: number | null;
+  anchorTrustState:
+    | 'inside_anchor_trust_region'
+    | 'paying_successor_continuity_debt'
+    | null;
+  anchorTrustExcessRad: number | null;
+  visibleCorrectionState:
+    | 'within_fit_residual'
+    | 'bounded_correction_debt'
+    | null;
   jointStepIntervalMs: number | null;
   jointStepLimitRad: number | null;
   maxJointStepAppliedRad: number | null;
@@ -402,6 +422,28 @@ export function assertLiveRuntimeHealth(value: unknown): RuntimeHealthTruth {
   const lastWrittenSequence = chronology.lastWrittenSequence === null
     ? null
     : finiteNonNegative(chronology.lastWrittenSequence, 'chronology last written sequence');
+  const rawPersistenceFailures = record(
+    health.persistenceFailures,
+    'runtime persistence failures',
+  );
+  const persistenceFailures = Object.fromEntries(
+    Object.entries(rawPersistenceFailures).map(([surface, value]) => {
+      const failure = record(value, `persistence failure ${surface}`);
+      const count = finiteNonNegative(failure.count, `${surface} failure count`);
+      if (!Number.isSafeInteger(count) || count < 1) {
+        throw new Error(`${surface} failure count must be a positive integer`);
+      }
+      return [surface, {
+        count,
+        failurePhase: text(failure.failurePhase, `${surface} failure phase`),
+        lastError: text(failure.lastError, `${surface} last error`),
+        lastFailureAtMs: finiteNonNegative(
+          failure.lastFailureAtMs,
+          `${surface} last failure timestamp`,
+        ),
+      }];
+    }),
+  );
   return {
     runtimeOwner: LIVE_HAND_RUNTIME_OWNER,
     burstMode,
@@ -418,6 +460,7 @@ export function assertLiveRuntimeHealth(value: unknown): RuntimeHealthTruth {
       lastWrittenSequence,
       failure: null,
     },
+    persistenceFailures,
   };
 }
 
@@ -472,6 +515,7 @@ const POSE_OBSERVER_CHAIN_AUTHORITY_MODES = new Set<PoseObserverChainAuthorityMo
   'weighted_measurement',
   'attenuated_large_innovation',
   'held_incoherent_measurement',
+  'held_temporal_ambiguity',
 ]);
 
 function normalizeFingerExtensions(value: unknown, label: string): FingerExtensionTruth {
@@ -574,16 +618,19 @@ function normalizeAnchorReplay(
   let candidateLastAcceptedCaptureTimestampMs: number | null = null;
   let promotionCatchUpMode: AnchorReplayTruth['promotionCatchUpMode'] = null;
   let promotionCatchUpCaptureTimestampMs: number | null = null;
+  let promotionVisibleStateSourceCaptureTimestampMs: number | null = null;
   let promotionObserverMode: AnchorReplayTruth['promotionObserverMode'] = null;
   let promotionObserverCaptureTimestampMs: number | null = null;
   if (hasPromotionCatchUp) {
+    const rawPromotionMode = replay.promotionCatchUpMode;
     if (
-      replay.promotionCatchUpMode
-      !== 'accepted_pose_observer_state_transplant_v2'
+      rawPromotionMode !== 'accepted_pose_observer_state_transplant_v2'
+      && rawPromotionMode
+        !== 'accepted_pose_candidate_measurement_continuity_graft_v1'
     ) {
       throw new Error('unsupported anchor replay promotion catch-up mode');
     }
-    promotionCatchUpMode = 'accepted_pose_observer_state_transplant_v2';
+    promotionCatchUpMode = rawPromotionMode;
     candidateLastAcceptedCaptureTimestampMs = finiteNonNegative(
       replay.candidateLastAcceptedCaptureTimestampMs,
       'anchorReplay.candidateLastAcceptedCaptureTimestampMs',
@@ -596,28 +643,48 @@ function normalizeAnchorReplay(
       throw new Error('anchor replay promotion must expose observer identity');
     }
     promotionObserverMode = LIVE_HAND_POSE_OBSERVER_MODE;
-    promotionObserverCaptureTimestampMs = finiteNonNegative(
-      replay.promotionObserverCaptureTimestampMs,
-      'anchorReplay.promotionObserverCaptureTimestampMs',
-    );
+    promotionObserverCaptureTimestampMs =
+      replay.promotionObserverCaptureTimestampMs === null
+        ? null
+        : finiteNonNegative(
+          replay.promotionObserverCaptureTimestampMs,
+          'anchorReplay.promotionObserverCaptureTimestampMs',
+        );
     if (candidateLastAcceptedCaptureTimestampMs !== lastAcceptedCaptureTimestampMs) {
       throw new Error('anchor replay candidate cutoff contradicts replay chronology');
     }
-    if (
-      promotionCatchUpCaptureTimestampMs <= candidateLastAcceptedCaptureTimestampMs
-      || promotionCatchUpCaptureTimestampMs > frameCaptureTimestampMs
-    ) {
-      throw new Error('anchor replay promotion catch-up chronology is invalid');
+    if (promotionCatchUpCaptureTimestampMs > frameCaptureTimestampMs) {
+      throw new Error('anchor replay promotion exceeds visible chronology');
     }
-    if (
-      promotionObserverCaptureTimestampMs !== promotionCatchUpCaptureTimestampMs
-      || observerCaptureTimestampMs !== promotionObserverCaptureTimestampMs
-    ) {
+    if (rawPromotionMode === 'accepted_pose_observer_state_transplant_v2') {
+      if (
+        promotionCatchUpCaptureTimestampMs
+          <= candidateLastAcceptedCaptureTimestampMs
+        || replay.promotionVisibleStateSourceCaptureTimestampMs !== undefined
+      ) {
+        throw new Error('anchor replay promotion catch-up chronology is invalid');
+      }
+    } else {
+      promotionVisibleStateSourceCaptureTimestampMs = finiteNonNegative(
+        replay.promotionVisibleStateSourceCaptureTimestampMs,
+        'anchorReplay.promotionVisibleStateSourceCaptureTimestampMs',
+      );
+      if (
+        promotionCatchUpCaptureTimestampMs
+          !== candidateLastAcceptedCaptureTimestampMs
+        || promotionVisibleStateSourceCaptureTimestampMs
+          > promotionCatchUpCaptureTimestampMs
+      ) {
+        throw new Error('anchor replay continuity-graft chronology is invalid');
+      }
+    }
+    if (observerCaptureTimestampMs !== promotionObserverCaptureTimestampMs) {
       throw new Error('anchor replay promotion observer chronology is invalid');
     }
   } else if (
     replay.candidateLastAcceptedCaptureTimestampMs !== undefined
     || replay.promotionCatchUpCaptureTimestampMs !== undefined
+    || replay.promotionVisibleStateSourceCaptureTimestampMs !== undefined
     || replay.promotionObserverMode !== undefined
     || replay.promotionObserverCaptureTimestampMs !== undefined
   ) {
@@ -634,6 +701,7 @@ function normalizeAnchorReplay(
     candidateLastAcceptedCaptureTimestampMs,
     promotionCatchUpMode,
     promotionCatchUpCaptureTimestampMs,
+    promotionVisibleStateSourceCaptureTimestampMs,
     promotionObserverMode,
     promotionObserverCaptureTimestampMs,
     failure: null,
@@ -688,6 +756,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let fastWorldBasisTransform: string | null = null;
   let maxJointCorrectionRad: number | null = null;
   let maxAnchorJointDeviationRad: number | null = null;
+  let anchorTrustState: NormalizedManoFrame['anchorTrustState'] = null;
+  let anchorTrustExcessRad: number | null = null;
+  let visibleCorrectionState:
+    NormalizedManoFrame['visibleCorrectionState'] = null;
   let jointStepIntervalMs: number | null = null;
   let jointStepLimitRad: number | null = null;
   let maxJointStepAppliedRad: number | null = null;
@@ -755,6 +827,42 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       diagnostics.maxAnchorJointDeviationRad,
       'maxAnchorJointDeviationRad',
     );
+    const rawAnchorTrustState = text(
+      diagnostics.anchorTrustState,
+      'anchorTrustState',
+    );
+    if (
+      rawAnchorTrustState !== 'inside_anchor_trust_region'
+      && rawAnchorTrustState !== 'paying_successor_continuity_debt'
+    ) {
+      throw new Error(`unsupported anchorTrustState: ${rawAnchorTrustState}`);
+    }
+    anchorTrustState = rawAnchorTrustState;
+    anchorTrustExcessRad = finiteNonNegative(
+      diagnostics.anchorTrustExcessRad,
+      'anchorTrustExcessRad',
+    );
+    if (
+      (anchorTrustState === 'inside_anchor_trust_region'
+        && anchorTrustExcessRad > 1e-8)
+      || (anchorTrustState === 'paying_successor_continuity_debt'
+        && anchorTrustExcessRad <= 0)
+    ) {
+      throw new Error('anchor trust state contradicts its excess');
+    }
+    const rawVisibleCorrectionState = text(
+      diagnostics.visibleCorrectionState,
+      'visibleCorrectionState',
+    );
+    if (
+      rawVisibleCorrectionState !== 'within_fit_residual'
+      && rawVisibleCorrectionState !== 'bounded_correction_debt'
+    ) {
+      throw new Error(
+        `unsupported visibleCorrectionState: ${rawVisibleCorrectionState}`,
+      );
+    }
+    visibleCorrectionState = rawVisibleCorrectionState;
     jointStepIntervalMs = finiteNonNegative(diagnostics.jointStepIntervalMs, 'jointStepIntervalMs');
     jointStepLimitRad = finiteNonNegative(diagnostics.jointStepLimitRad, 'jointStepLimitRad');
     maxJointStepAppliedRad = finiteNonNegative(
@@ -966,6 +1074,9 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     fastWorldBasisTransform,
     maxJointCorrectionRad,
     maxAnchorJointDeviationRad,
+    anchorTrustState,
+    anchorTrustExcessRad,
+    visibleCorrectionState,
     jointStepIntervalMs,
     jointStepLimitRad,
     maxJointStepAppliedRad,

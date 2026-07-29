@@ -370,6 +370,9 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   fastWorldBasisTransform: string | null;
   maxJointCorrectionRad: number | null;
   maxAnchorJointDeviationRad: number | null;
+  anchorTrustState: NormalizedManoFrame['anchorTrustState'];
+  anchorTrustExcessRad: number | null;
+  visibleCorrectionState: NormalizedManoFrame['visibleCorrectionState'];
   jointStepIntervalMs: number | null;
   jointStepLimitRad: number | null;
   maxJointStepAppliedRad: number | null;
@@ -1000,6 +1003,23 @@ async function deliverFastLandmarkResult(item: FastLandmarkDeliveryItem): Promis
   latencyReceiptJoiner.prune(Date.now(), 10_000);
   applySequencedRuntimeState(receipt.state, 'fast_ingest_response');
   setRouteTruth();
+  const evidencePersistence = receipt.evidencePersistence;
+  if (
+    evidencePersistence
+    && typeof evidencePersistence === 'object'
+    && !Array.isArray(evidencePersistence)
+  ) {
+    const persistence = evidencePersistence as Record<string, unknown>;
+    if (persistence.status === 'degraded') {
+      const failedSurfaces = Array.isArray(persistence.failedSurfaces)
+        ? persistence.failedSurfaces.map(String)
+        : [];
+      setStatus(
+        `hand evidence persistence degraded | ${failedSurfaces.join(', ') || 'unknown surface'}`,
+        'error',
+      );
+    }
+  }
 }
 
 function handleLandmarkerResult(worker: Worker, value: unknown): void {
@@ -1427,6 +1447,9 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     fastWorldBasisTransform: frame.fastWorldBasisTransform,
     maxJointCorrectionRad: frame.maxJointCorrectionRad,
     maxAnchorJointDeviationRad: frame.maxAnchorJointDeviationRad,
+    anchorTrustState: frame.anchorTrustState,
+    anchorTrustExcessRad: frame.anchorTrustExcessRad,
+    visibleCorrectionState: frame.visibleCorrectionState,
     jointStepIntervalMs: frame.jointStepIntervalMs,
     jointStepLimitRad: frame.jointStepLimitRad,
     maxJointStepAppliedRad: frame.maxJointStepAppliedRad,
