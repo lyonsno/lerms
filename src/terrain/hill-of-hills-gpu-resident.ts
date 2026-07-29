@@ -14,6 +14,7 @@ export const HILL_GPU_RESIDENT_RECEIPT_SCHEMA =
   'lerms.hill-gpu-resident-receipt.v0' as const;
 export const HILL_GPU_SUPPORT_ROUTE =
   'lerms/hill-of-hills/gpu-resident-support-v0' as const;
+export const HILL_GPU_RETAINED_TRAFFIC_DECAY_RATE = 0.08 as const;
 
 export interface HillGpuRouteIdentity {
   requested: typeof HILL_GPU_RESIDENT_ROUTE;
@@ -355,7 +356,9 @@ export function advanceHillGpuCpuOracle(
   const nextHeights = new Float32Array(
     state.initialization.sampleCount,
   );
-  const retainedDecay = Math.exp(-0.45 * deltaSeconds);
+  const retainedDecay = Math.exp(
+    -HILL_GPU_RETAINED_TRAFFIC_DECAY_RATE * deltaSeconds,
+  );
   for (
     let index = 0;
     index < state.initialization.sampleCount;

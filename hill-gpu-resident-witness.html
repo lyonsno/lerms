@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>Hill GPU Resident Causal-State Witness</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          "SFMono-Regular", "Cascadia Code", ui-monospace,
+          monospace;
+        background: #06100d;
+        color: #d6dfb3;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #06100d;
+      }
+
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+
+      #receipt,
+      #legend {
+        position: fixed;
+        z-index: 2;
+        border: 1px solid rgb(133 180 144 / 32%);
+        background: rgb(2 10 8 / 86%);
+        box-shadow: 0 18px 50px rgb(0 0 0 / 30%);
+        backdrop-filter: blur(8px);
+      }
+
+      #receipt {
+        top: 24px;
+        left: 24px;
+        min-width: 420px;
+        padding: 18px 20px;
+      }
+
+      #legend {
+        right: 24px;
+        bottom: 24px;
+        width: 360px;
+        padding: 15px 18px;
+      }
+
+      h1 {
+        margin: 0 0 11px;
+        color: #f0e6b0;
+        font-size: 17px;
+        letter-spacing: 0.04em;
+      }
+
+      p {
+        margin: 4px 0;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .route {
+        color: #83c3ac;
+      }
+
+      .good {
+        color: #c7e77c;
+      }
+
+      .warm {
+        color: #e9ca68;
+      }
+
+      .failure {
+        color: #ff8b7c;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="hill-gpu-witness"></canvas>
+    <section id="receipt" aria-live="polite">
+      <h1>Hill GPU resident causal-state witness</h1>
+      <p id="status">requesting WebGPU route…</p>
+      <p id="generation"></p>
+      <p id="episode"></p>
+      <p id="transfer"></p>
+    </section>
+    <section id="legend">
+      <p class="warm">brown = retained producer traffic</p>
+      <p>geometry depression = traffic-caused height compaction</p>
+      <p>episode A traverses, departs, then episode B traverses elsewhere</p>
+      <p>this surface exercises terrain state/presentation; it is not yet the Horde body compositor</p>
+    </section>
+    <script
+      type="module"
+      src="/src/hill-gpu-resident-witness.ts"
+    ></script>
+  </body>
+</html>

@@ -1,4 +1,5 @@
 import {
+  HILL_GPU_RETAINED_TRAFFIC_DECAY_RATE,
   HILL_GPU_RESIDENT_ROUTE,
   type HillGpuInitialization,
   type HillGpuProducerEventBatch,
@@ -78,7 +79,7 @@ fn advance_hill_state(@builtin(global_invocation_id) invocation: vec3<u32>) {
 
   let decayed =
     previous_retained_traffic[index] *
-    exp(-0.45 * params.delta_seconds);
+    exp(-${HILL_GPU_RETAINED_TRAFFIC_DECAY_RATE} * params.delta_seconds);
   let admitted =
     1.0 - (1.0 - decayed) * exp(-deposition);
   let bounded = clamp(admitted, 0.0, 1.0);
