@@ -138,6 +138,9 @@ export function createLermHordeHistoryConditionedRuntime(
     chooseLermHordeHistoryConditionedContinuation(
       bootstrap.state.terrain,
       0,
+      {
+        highestAdmittedEventSequence: -1,
+      },
     );
   const first = decisionA.selected.lateralOffset === 0
     ? bootstrap
@@ -193,6 +196,10 @@ export function createLermHordeHistoryConditionedRuntime(
       chooseLermHordeHistoryConditionedContinuation(
         retained.terrain,
         1,
+        {
+          highestAdmittedEventSequence:
+            options.producerReceipt.history.samples.length - 1,
+        },
       );
     second = createLermHordeLiveRuntime({
       ...baseOptions(options),

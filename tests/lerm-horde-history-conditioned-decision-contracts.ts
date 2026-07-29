@@ -30,6 +30,9 @@ const runtime = createLermHordeLiveRuntime({
 const first = chooseLermHordeHistoryConditionedContinuation(
   runtime.state.terrain,
   0,
+  {
+    highestAdmittedEventSequence: -1,
+  },
 );
 assert.equal(first.schema, LERM_HORDE_HISTORY_DECISION_SCHEMA);
 assert.equal(first.policy.route, LERM_HORDE_HISTORY_DECISION_POLICY);
@@ -56,6 +59,10 @@ runtime.advanceTo(receipt.historySummary.lastTimestampMs + 900);
 const second = chooseLermHordeHistoryConditionedContinuation(
   runtime.state.terrain,
   1,
+  {
+    highestAdmittedEventSequence:
+      receipt.history.samples.length - 1,
+  },
 );
 assert.equal(second.policy.route, first.policy.route);
 assert.equal(second.policy.revision, first.policy.revision);
@@ -88,6 +95,10 @@ assert.throws(
     chooseLermHordeHistoryConditionedContinuation(
       runtime.state.terrain,
       2,
+      {
+        highestAdmittedEventSequence:
+          receipt.history.samples.length - 1,
+      },
     ),
   /episode index.*0 or 1/i,
   'the bounded controller cannot silently grow a third episode',

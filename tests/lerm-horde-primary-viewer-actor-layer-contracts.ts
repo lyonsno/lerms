@@ -222,6 +222,7 @@ function createActorFrame(): LermHordePrimaryViewerActorFrame {
         sampledHillSourceId: terrain.frameId,
         renderedHillSourceId: terrain.frameId,
         hillRevision: 'f6458e5',
+        presentationBinding: null,
       },
       squirm: {
         amplitude: 0.082,
