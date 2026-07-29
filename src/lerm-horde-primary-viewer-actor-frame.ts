@@ -233,6 +233,8 @@ export function createLermHordePrimaryViewerActorFrame(
           state.terrainBuffer.source.route &&
         supportBinding.current?.identity?.frameId ===
           state.terrainBuffer.source.frameId &&
+        supportBinding.current?.generation ===
+          state.terrainBuffer.witness.cacheGeneration &&
         supportBinding.current?.identity?.topologyChecksum ===
           state.terrainBuffer.topologyChecksum &&
         supportBinding.current?.identity?.supportFrameChecksum ===

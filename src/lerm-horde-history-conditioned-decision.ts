@@ -1,4 +1,5 @@
 import type {
+  HillOfHillsSupportShockClass,
   HillOfHillsTerrain,
 } from './terrain/hill-of-hills.js';
 import {
@@ -38,7 +39,7 @@ export interface LermHordeGpuRouteChoiceCandidate {
   ];
   source: LermHordeHillQuerySourceIdentity;
   localExposure: number;
-  shock: string;
+  shock: HillOfHillsSupportShockClass;
   directionalPermeability: number;
 }
 
@@ -251,7 +252,9 @@ export function createLermHordeCpuRouteChoiceQuery(
       requestedWorldPosition: [...candidate.worldPosition],
       source: compactSourceIdentity(affordance.source),
       localExposure: affordance.memory.localExposure,
-      shock: affordance.support.shock,
+      shock: requireSupportShockClass(
+        affordance.support.shock,
+      ),
       directionalPermeability:
         affordance.traversal.directionalPermeability,
     };
@@ -489,7 +492,8 @@ export function evaluateLermHordeGpuRouteChoiceQuery(
           Number.isFinite(candidate.localExposure) &&
           candidate.localExposure >= 0 &&
           candidate.localExposure <= 1 &&
-          nonblank(candidate.shock) &&
+          (candidate.shock === 'none' ||
+            candidate.shock === 'shock_reset') &&
           Number.isFinite(
             candidate.directionalPermeability,
           ) &&
@@ -670,6 +674,17 @@ function hasExactKeys(
 
 function nonblank(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
+}
+
+function requireSupportShockClass(
+  value: string,
+): HillOfHillsSupportShockClass {
+  if (value === 'none' || value === 'shock_reset') {
+    return value;
+  }
+  throw new Error(
+    'route-choice CPU adapter received an unsupported shock class',
+  );
 }
 
 function encodedByteLength(value: unknown): number {

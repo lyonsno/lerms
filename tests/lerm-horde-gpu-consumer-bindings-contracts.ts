@@ -216,6 +216,12 @@ for (const [label, mutate] of [
       candidate.directionalPermeability = 0;
     },
   ],
+  [
+    'invented shock label',
+    (candidate: Record<string, unknown>) => {
+      candidate.shock = 'producer-invented-shock';
+    },
+  ],
 ] as const) {
   const malformed = structuredClone(exactTieQuery) as {
     candidates: Record<string, unknown>[];
@@ -648,6 +654,17 @@ assert.throws(
       forgedCurrentSupport,
     ),
   /support|identity|rendered Hill/i,
+);
+
+const forgedCurrentGeneration = structuredClone(binding);
+forgedCurrentGeneration.current.generation += 999;
+assert.throws(
+  () =>
+    futureActorApi.createLermHordePrimaryViewerActorFrame(
+      presentationState,
+      forgedCurrentGeneration,
+    ),
+  /generation|rendered Hill/i,
 );
 
 const detachedStations = structuredClone(binding);
