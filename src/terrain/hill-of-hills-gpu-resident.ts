@@ -13,8 +13,9 @@ export const HILL_GPU_PRODUCER_EVENT_SCHEMA =
 export const HILL_GPU_RESIDENT_RECEIPT_SCHEMA =
   'lerms.hill-gpu-resident-receipt.v0' as const;
 export const HILL_GPU_SUPPORT_ROUTE =
-  'lerms/hill-of-hills/gpu-resident-support-v0' as const;
+  'lerms/hill-of-hills/cpu-oracle-support-v0' as const;
 export const HILL_GPU_RETAINED_TRAFFIC_DECAY_RATE = 0.08 as const;
+export const HILL_GPU_MIN_GAUSSIAN_DENOMINATOR = 0.000001 as const;
 
 export interface HillGpuRouteIdentity {
   requested: typeof HILL_GPU_RESIDENT_ROUTE;
@@ -375,7 +376,10 @@ export function advanceHillGpuCpuOracle(
       const dz = worldZ - event.worldZ;
       const normalizedDistance =
         (dx * dx + dz * dz) /
-        (2 * event.radius * event.radius);
+        Math.max(
+          2 * event.radius * event.radius,
+          HILL_GPU_MIN_GAUSSIAN_DENOMINATOR,
+        );
       const contactDurationSeconds =
         (event.endMs - event.startMs) / 1_000;
       deposition +=
@@ -472,7 +476,7 @@ export function createHillGpuSupportBinding(
     route: {
       requested: HILL_GPU_SUPPORT_ROUTE,
       effective: HILL_GPU_SUPPORT_ROUTE,
-      backend: 'webgpu',
+      backend: 'cpu-oracle',
       fallbackStatus: 'none',
       staleStatus: 'fresh',
     },

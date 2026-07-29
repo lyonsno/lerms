@@ -1,4 +1,5 @@
 import {
+  HILL_GPU_MIN_GAUSSIAN_DENOMINATOR,
   HILL_GPU_RETAINED_TRAFFIC_DECAY_RATE,
   HILL_GPU_RESIDENT_ROUTE,
   type HillGpuInitialization,
@@ -69,7 +70,10 @@ fn advance_hill_state(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let displacement = world_position - event.position;
     let normalized_distance =
       dot(displacement, displacement) /
-      max(2.0 * event.radius * event.radius, 0.000001);
+      max(
+        2.0 * event.radius * event.radius,
+        ${HILL_GPU_MIN_GAUSSIAN_DENOMINATOR}
+      );
     deposition +=
       exp(-normalized_distance) *
       event.contact_weight *

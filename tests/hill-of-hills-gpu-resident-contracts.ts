@@ -230,10 +230,15 @@ const supportBinding = createHillGpuSupportBinding(
   supportRequest,
   presentation.presentationAlpha,
 );
-assert.equal(supportBinding.route.backend, 'webgpu');
+assert.equal(supportBinding.route.backend, 'cpu-oracle');
 assert.equal(
   supportBinding.route.requested,
   supportBinding.route.effective,
+);
+assert.match(
+  supportBinding.route.effective,
+  /cpu-oracle/,
+  'support receipt names its actual CPU reference authority',
 );
 assert.equal(supportBinding.route.fallbackStatus, 'none');
 assert.equal(supportBinding.route.staleStatus, 'fresh');

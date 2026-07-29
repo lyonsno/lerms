@@ -1,4 +1,5 @@
 import {
+  HILL_GPU_RESIDENT_ROUTE,
   advanceHillGpuCpuOracle,
   createHillGpuCpuOracleState,
   createHillGpuInitialization,
@@ -199,7 +200,7 @@ async function start(): Promise<void> {
       );
       status.className = 'route';
       status.textContent =
-        'requested = effective WebGPU · fallback none · stale fresh';
+        'terrain requested = effective WebGPU · support = CPU oracle · fallback none · stale fresh';
       generation.textContent =
         `generation ${runtime.previousGeneration} → ${runtime.generation}` +
         ` · alpha ${alpha.toFixed(2)} · support stations ${support.terrainSupportProfile.length}`;
@@ -208,8 +209,7 @@ async function start(): Promise<void> {
       episode.textContent = phase.label;
       transfer.textContent =
         'full terrain CPU uploads 1 · post-init worker transfers 0 · full-field readbacks 0';
-      canvas.dataset.route =
-        'lerms/hill-of-hills/gpu/resident-causal-state-v0';
+      canvas.dataset.route = HILL_GPU_RESIDENT_ROUTE;
       canvas.dataset.backend = 'webgpu';
       canvas.dataset.fallback = 'none';
       canvas.dataset.stale = 'fresh';
@@ -224,9 +224,9 @@ async function start(): Promise<void> {
         }
       ).__hillGpuResidentWitness = {
         requested:
-          'lerms/hill-of-hills/gpu/resident-causal-state-v0',
+          HILL_GPU_RESIDENT_ROUTE,
         effective:
-          'lerms/hill-of-hills/gpu/resident-causal-state-v0',
+          HILL_GPU_RESIDENT_ROUTE,
         backend: 'webgpu',
         fallbackStatus: 'none',
         staleStatus: 'fresh',
@@ -235,6 +235,9 @@ async function start(): Promise<void> {
         phase,
         supportStationCount:
           support.terrainSupportProfile.length,
+        supportRoute:
+          'lerms/hill-of-hills/cpu-oracle-support-v0',
+        supportBackend: 'cpu-oracle',
         fullTerrainCpuUploads: 1,
         fullFieldWorkerTransfersAfterInitialization: 0,
         fullFieldReadbacksAfterInitialization: 0,
