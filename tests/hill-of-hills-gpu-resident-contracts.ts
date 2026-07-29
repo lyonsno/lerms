@@ -54,7 +54,12 @@ assert.equal(initialization.generation, 0);
 assert.equal(initialization.sampleCount, terrainBuffer.sampleCount);
 assert.equal(
   initialization.addressingKey,
-  '12:16:18:13.6',
+  [
+    terrainBuffer.gridResolution.x,
+    terrainBuffer.gridResolution.z,
+    terrainBuffer.params.length,
+    terrainBuffer.params.width,
+  ].join(':'),
   'GPU addressing identity binds grid and domain dimensions',
 );
 assert.equal(initialization.upload.fullTerrainUploadOrdinal, 1);
