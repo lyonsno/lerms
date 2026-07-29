@@ -108,6 +108,7 @@ assert.equal(
 type FutureDecisionApi = {
   evaluateLermHordeGpuRouteChoiceQuery(
     query: unknown,
+    expectedHighestAdmittedEventSequence: number,
   ): {
     decisionStable: boolean;
   };
@@ -133,7 +134,10 @@ const ambiguous = futureDecisionApi.createLermHordeCpuRouteChoiceQuery(
   },
 );
 assert.equal(
-  futureDecisionApi.evaluateLermHordeGpuRouteChoiceQuery(ambiguous)
+  futureDecisionApi.evaluateLermHordeGpuRouteChoiceQuery(
+    ambiguous,
+    producerReceipt.history.samples.length - 1,
+  )
     .decisionStable,
   false,
   'a candidate margin inside the measured envelope cannot close causality',
@@ -148,7 +152,7 @@ assert.throws(
         fallbackStatus: 'fallback',
         staleStatus: 'fresh',
       },
-    }),
+    }, producerReceipt.history.samples.length - 1),
   /fallback|effective route/i,
 );
 assert.throws(
@@ -163,9 +167,149 @@ assert.throws(
         ).generation,
         complete: false,
       },
-    }),
+    }, producerReceipt.history.samples.length - 1),
   /complete/i,
 );
+
+const exactTieQuery =
+  futureDecisionApi.createLermHordeCpuRouteChoiceQuery(
+    before,
+    0,
+    {
+      highestAdmittedEventSequence: -1,
+    },
+  ) as Record<string, unknown>;
+const candidateDrift = structuredClone(exactTieQuery) as {
+  candidates: Record<string, unknown>[];
+};
+candidateDrift.candidates[0].stableOrder = 1;
+candidateDrift.candidates[0].lateralOffset = 2.5;
+candidateDrift.candidates[1].stableOrder = 0;
+candidateDrift.candidates[1].lateralOffset = 0;
+assert.throws(
+  () =>
+    futureDecisionApi.evaluateLermHordeGpuRouteChoiceQuery(
+      candidateDrift,
+      -1,
+    ),
+  /candidate|policy|field/i,
+  'producer fields cannot redefine the canonical exact-tie order',
+);
+
+for (const [label, mutate] of [
+  [
+    'negative exposure',
+    (candidate: Record<string, unknown>) => {
+      candidate.localExposure = -1;
+    },
+  ],
+  [
+    'off-policy world position',
+    (candidate: Record<string, unknown>) => {
+      candidate.requestedWorldPosition = [999, 0, 999];
+    },
+  ],
+  [
+    'unlawful traversal',
+    (candidate: Record<string, unknown>) => {
+      candidate.shock = 'shock_reset';
+      candidate.directionalPermeability = 0;
+    },
+  ],
+] as const) {
+  const malformed = structuredClone(exactTieQuery) as {
+    candidates: Record<string, unknown>[];
+  };
+  mutate(malformed.candidates[1]);
+  assert.throws(
+    () =>
+      futureDecisionApi.evaluateLermHordeGpuRouteChoiceQuery(
+        malformed,
+        -1,
+      ),
+    /candidate|exposure|position|lawful|traversal/i,
+    `${label} must fail before route selection`,
+  );
+}
+
+assert.equal(
+  'affordance' in (
+    exactTieQuery as {
+      candidates: Record<string, unknown>[];
+    }
+  ).candidates[0],
+  false,
+  'the GPU-facing candidate ABI cannot embed the CPU traversal-affordance object',
+);
+
+for (const [label, malformed] of [
+  [
+    'empty query timing',
+    {
+      ...exactTieQuery,
+      timing: {},
+    },
+  ],
+  [
+    'blank and mislabeled query route',
+    {
+      ...exactTieQuery,
+      route: {
+        requested: '',
+        effective: '',
+        backend: 'not-a-backend',
+        fallbackStatus: 'none',
+        staleStatus: 'fresh',
+      },
+    },
+  ],
+  [
+    'forged query hill identity',
+    {
+      ...exactTieQuery,
+      hill: {
+        ...(
+          exactTieQuery.hill as Record<string, unknown>
+        ),
+        frameId: 'forged-hill-frame',
+      },
+    },
+  ],
+  [
+    'forged query generation identity',
+    {
+      ...exactTieQuery,
+      generation: {
+        ...(
+          exactTieQuery.generation as Record<string, unknown>
+        ),
+        frameId: 'forged-generation-frame',
+      },
+    },
+  ],
+  [
+    'episode A admission mismatch',
+    {
+      ...exactTieQuery,
+      generation: {
+        ...(
+          exactTieQuery.generation as Record<string, unknown>
+        ),
+        highestAdmittedEventSequence: 14,
+      },
+    },
+  ],
+] as const) {
+  assert.throws(
+    () =>
+      futureDecisionApi.evaluateLermHordeGpuRouteChoiceQuery(
+        malformed,
+        -1,
+      ),
+    /route|timing|frame|identity|admitted|sequence/i,
+    label,
+  );
+}
 
 type FutureActorApi = {
   createLermHordePrimaryViewerActorFrame(
@@ -211,14 +355,32 @@ type FutureActorApi = {
     presentationAlpha: number,
   ): {
     route: {
+      requested: string;
       effective: string;
+      backend: string;
       fallbackStatus: string;
       staleStatus: string;
+    };
+    request: {
+      rootWorld: {
+        x: number;
+        z: number;
+      };
+      stations: readonly {
+        t: number;
+        worldX: number;
+        worldZ: number;
+      }[];
     };
     presentationAlpha: number;
     previous: {
       generation: number;
       identity: {
+        route: string;
+        frameId: string;
+        topologyChecksum: string;
+        supportFrameChecksum: string;
+        producerTrafficFieldChecksum: string;
         addressingKey: string;
       };
       stations: readonly { t: number; height: number }[];
@@ -226,6 +388,11 @@ type FutureActorApi = {
     current: {
       generation: number;
       identity: {
+        route: string;
+        frameId: string;
+        topologyChecksum: string;
+        supportFrameChecksum: string;
+        producerTrafficFieldChecksum: string;
         addressingKey: string;
       };
       stations: readonly { t: number; height: number }[];
@@ -439,7 +606,7 @@ assert.throws(
       },
       legacyPose.rootFrame,
     ),
-  /incompatible addressing/i,
+  /incompatible.*addressing/i,
 );
 assert.throws(
   () =>
@@ -457,6 +624,71 @@ assert.throws(
       legacyPose.rootFrame,
     ),
   /nonblank identity/i,
+);
+
+const foreignPreviousRoute = structuredClone(binding);
+foreignPreviousRoute.previous.identity.route =
+  'foreign-hill-route';
+assert.throws(
+  () =>
+    futureActorApi.createLermHordePrimaryViewerActorFrame(
+      presentationState,
+      foreignPreviousRoute,
+    ),
+  /route|identity|generation/i,
+);
+
+const forgedCurrentSupport = structuredClone(binding);
+forgedCurrentSupport.current.identity.supportFrameChecksum =
+  'forged-support-frame';
+assert.throws(
+  () =>
+    futureActorApi.createLermHordePrimaryViewerActorFrame(
+      presentationState,
+      forgedCurrentSupport,
+    ),
+  /support|identity|rendered Hill/i,
+);
+
+const detachedStations = structuredClone(binding);
+detachedStations.request.stations[0].worldX += 1000;
+detachedStations.request.stations[0].worldZ -= 1000;
+assert.throws(
+  () =>
+    futureActorApi.createLermHordePrimaryViewerActorFrame(
+      presentationState,
+      detachedStations,
+    ),
+  /station|actor|axis|request/i,
+);
+
+assert.throws(
+  () =>
+    futureActorApi.resolveLermHordePresentationSupportBinding(
+      {
+        ...binding,
+        timing: {},
+      },
+      legacyPose.rootFrame,
+    ),
+  /timing|synchronous/i,
+);
+assert.throws(
+  () =>
+    futureActorApi.resolveLermHordePresentationSupportBinding(
+      {
+        ...binding,
+        route: {
+          requested: '',
+          effective: '',
+          backend: 'not-a-backend',
+          fallbackStatus: 'none',
+          staleStatus: 'fresh',
+        },
+      },
+      legacyPose.rootFrame,
+    ),
+  /route|backend/i,
 );
 
 console.log('lerm horde GPU consumer binding contracts ok');

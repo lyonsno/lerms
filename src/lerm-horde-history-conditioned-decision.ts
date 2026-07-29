@@ -3,7 +3,6 @@ import type {
 } from './terrain/hill-of-hills.js';
 import {
   sampleHillOfHillsTraversalAffordance,
-  type HillOfHillsTraversalAffordance,
 } from './terrain/hill-of-hills-traversal-affordance.js';
 
 export const LERM_HORDE_HISTORY_DECISION_SCHEMA =
@@ -21,13 +20,58 @@ export type LermHordeHistoryCandidateId =
   | 'left-longitudinal'
   | 'right-longitudinal';
 
+export interface LermHordeHillQuerySourceIdentity {
+  route: string;
+  frameId: string;
+  sampleChecksum: string;
+  topologyChecksum: string;
+  supportFrameChecksum: string;
+  producerTrafficFieldChecksum: string;
+}
+
+export interface LermHordeGpuRouteChoiceCandidate {
+  id: LermHordeHistoryCandidateId;
+  requestedWorldPosition: readonly [
+    number,
+    number,
+    number,
+  ];
+  source: LermHordeHillQuerySourceIdentity;
+  localExposure: number;
+  shock: string;
+  directionalPermeability: number;
+}
+
 export interface LermHordeHistoryCandidate {
   id: LermHordeHistoryCandidateId;
   stableOrder: 0 | 1;
   lateralOffset: 0 | 2.5;
-  affordance: HillOfHillsTraversalAffordance;
+  requestedWorldPosition: readonly [
+    number,
+    number,
+    number,
+  ];
+  source: LermHordeHillQuerySourceIdentity;
+  localExposure: number;
+  shock: string;
+  directionalPermeability: number;
   lawful: boolean;
 }
+
+const LERM_HORDE_HISTORY_CANDIDATE_SPECS = [
+  {
+    id: 'left-longitudinal',
+    stableOrder: 0,
+    lateralOffset: 0,
+    worldPosition: [-1.25, 0, -0.8],
+  },
+  {
+    id: 'right-longitudinal',
+    stableOrder: 1,
+    lateralOffset: 2.5,
+    worldPosition: [1.25, 0, -0.8],
+  },
+] as const;
 
 export interface LermHordeHistoryConditionedDecision {
   schema: typeof LERM_HORDE_HISTORY_DECISION_SCHEMA;
@@ -93,8 +137,8 @@ export interface LermHordeGpuRouteChoiceQuery {
   };
   hill: LermHordeHistoryConditionedDecision['hill'];
   candidates: readonly [
-    LermHordeHistoryCandidate,
-    LermHordeHistoryCandidate,
+    LermHordeGpuRouteChoiceCandidate,
+    LermHordeGpuRouteChoiceCandidate,
   ];
   nondeterminismEnvelope: number;
   timing: {
@@ -107,6 +151,10 @@ export interface LermHordeGpuRouteChoiceQuery {
 }
 
 export interface LermHordeGpuRouteChoiceEvaluation {
+  candidates: readonly [
+    LermHordeHistoryCandidate,
+    LermHordeHistoryCandidate,
+  ];
   selected: LermHordeHistoryCandidate;
   runnerUp: LermHordeHistoryCandidate;
   selectedExposure: number;
@@ -135,7 +183,10 @@ export function chooseLermHordeHistoryConditionedContinuation(
     episodeIndex,
     options,
   );
-  const evaluation = evaluateLermHordeGpuRouteChoiceQuery(query);
+  const evaluation = evaluateLermHordeGpuRouteChoiceQuery(
+    query,
+    options.highestAdmittedEventSequence,
+  );
   if (!evaluation.decisionStable) {
     throw new Error(
       'history-conditioned route choice lies inside the nondeterminism envelope',
@@ -154,7 +205,7 @@ export function chooseLermHordeHistoryConditionedContinuation(
         LERM_HORDE_HISTORY_CANDIDATE_SET_CHECKSUM,
     },
     hill: { ...query.hill },
-    candidates: query.candidates,
+    candidates: evaluation.candidates,
     query,
     selected: {
       id: selected.id,
@@ -186,21 +237,10 @@ export function createLermHordeCpuRouteChoiceQuery(
       'history-conditioned episode index must be 0 or 1',
     );
   }
-  const candidateSpecs = [
-    {
-      id: 'left-longitudinal',
-      stableOrder: 0,
-      lateralOffset: 0,
-      worldPosition: [-1.25, 0, -0.8],
-    },
-    {
-      id: 'right-longitudinal',
-      stableOrder: 1,
-      lateralOffset: 2.5,
-      worldPosition: [1.25, 0, -0.8],
-    },
-  ] as const;
-  const candidates = candidateSpecs.map((candidate) => {
+  const adaptCandidate = (
+    candidate:
+      (typeof LERM_HORDE_HISTORY_CANDIDATE_SPECS)[number],
+  ): LermHordeGpuRouteChoiceCandidate => {
     const affordance = sampleHillOfHillsTraversalAffordance(
       terrain,
       candidate.worldPosition,
@@ -208,27 +248,31 @@ export function createLermHordeCpuRouteChoiceQuery(
     );
     return {
       id: candidate.id,
-      stableOrder: candidate.stableOrder,
-      lateralOffset: candidate.lateralOffset,
-      affordance,
-      lawful:
-        affordance.support.shock !== 'shock_reset' &&
-        affordance.traversal.directionalPermeability > 0,
+      requestedWorldPosition: [...candidate.worldPosition],
+      source: compactSourceIdentity(affordance.source),
+      localExposure: affordance.memory.localExposure,
+      shock: affordance.support.shock,
+      directionalPermeability:
+        affordance.traversal.directionalPermeability,
     };
-  }) as [
-    LermHordeHistoryCandidate,
-    LermHordeHistoryCandidate,
+  };
+  const candidates: [
+    LermHordeGpuRouteChoiceCandidate,
+    LermHordeGpuRouteChoiceCandidate,
+  ] = [
+    adaptCandidate(LERM_HORDE_HISTORY_CANDIDATE_SPECS[0]),
+    adaptCandidate(LERM_HORDE_HISTORY_CANDIDATE_SPECS[1]),
   ];
-  const source = candidates[0].affordance.source;
+  const source = candidates[0].source;
   if (
-    candidates.some(({ affordance }) =>
-      affordance.source.route !== source.route ||
-      affordance.source.frameId !== source.frameId ||
-      affordance.source.sampleChecksum !== source.sampleChecksum ||
-      affordance.source.topologyChecksum !== source.topologyChecksum ||
-      affordance.source.supportFrameChecksum !==
+    candidates.some(({ source: candidateSource }) =>
+      candidateSource.route !== source.route ||
+      candidateSource.frameId !== source.frameId ||
+      candidateSource.sampleChecksum !== source.sampleChecksum ||
+      candidateSource.topologyChecksum !== source.topologyChecksum ||
+      candidateSource.supportFrameChecksum !==
         source.supportFrameChecksum ||
-      affordance.source.producerTrafficFieldChecksum !==
+      candidateSource.producerTrafficFieldChecksum !==
         source.producerTrafficFieldChecksum
     )
   ) {
@@ -292,76 +336,209 @@ export function createLermHordeCpuRouteChoiceQuery(
 
 export function evaluateLermHordeGpuRouteChoiceQuery(
   query: LermHordeGpuRouteChoiceQuery,
+  expectedHighestAdmittedEventSequence: number,
 ): LermHordeGpuRouteChoiceEvaluation {
   requireQuery(
     query?.schema === LERM_HORDE_GPU_ROUTE_CHOICE_QUERY_SCHEMA,
     'route-choice query schema is unsupported',
   );
   requireQuery(
-    query.route.requested === query.route.effective &&
+    hasExactKeys(query, [
+      'schema',
+      'route',
+      'episodeIndex',
+      'policy',
+      'generation',
+      'hill',
+      'candidates',
+      'nondeterminismEnvelope',
+      'timing',
+    ]),
+    'route-choice query fields are invalid',
+  );
+  requireQuery(
+    hasExactKeys(query.route, [
+      'requested',
+      'effective',
+      'backend',
+      'fallbackStatus',
+      'staleStatus',
+    ]) &&
+      nonblank(query.route.requested) &&
+      query.route.requested === query.route.effective &&
+      (query.route.backend === 'cpu-oracle' ||
+        query.route.backend === 'webgpu') &&
       query.route.fallbackStatus === 'none',
-    'route-choice effective route cannot use fallback',
+    'route-choice effective route or backend is invalid or uses fallback',
   );
   requireQuery(
     query.route.staleStatus === 'fresh',
     'route-choice query must be fresh',
   );
   requireQuery(
-    query.generation.sealed && query.generation.complete,
+    hasExactKeys(query.generation, [
+      'id',
+      'frameId',
+      'sealed',
+      'complete',
+      'highestAdmittedEventSequence',
+    ]) &&
+      query.generation.sealed === true &&
+      query.generation.complete === true,
     'route-choice generation must be sealed and complete',
   );
   requireQuery(
     Number.isInteger(query.generation.id) &&
       query.generation.id >= 0 &&
+      nonblank(query.generation.frameId) &&
       Number.isInteger(
         query.generation.highestAdmittedEventSequence,
       ) &&
-      query.generation.highestAdmittedEventSequence >= -1,
+      Number.isInteger(expectedHighestAdmittedEventSequence) &&
+      expectedHighestAdmittedEventSequence >= -1 &&
+      query.generation.highestAdmittedEventSequence ===
+        expectedHighestAdmittedEventSequence &&
+      (query.episodeIndex === 0
+        ? expectedHighestAdmittedEventSequence === -1
+        : expectedHighestAdmittedEventSequence >= 0),
     'route-choice generation identity is invalid',
   );
   requireQuery(
-    query.policy.route === LERM_HORDE_HISTORY_DECISION_POLICY &&
+    hasExactKeys(query.policy, [
+      'route',
+      'candidateSetChecksum',
+    ]) &&
+      query.policy.route === LERM_HORDE_HISTORY_DECISION_POLICY &&
       query.policy.candidateSetChecksum ===
         LERM_HORDE_HISTORY_CANDIDATE_SET_CHECKSUM,
     'route-choice policy or candidate set drifted',
   );
   requireQuery(
-    query.candidates.length === 2 &&
-      query.candidates[0].id === 'left-longitudinal' &&
-      query.candidates[1].id === 'right-longitudinal',
+    (query.episodeIndex === 0 || query.episodeIndex === 1) &&
+      Array.isArray(query.candidates) &&
+      query.candidates.length === 2 &&
+      query.candidates[0]?.id === 'left-longitudinal' &&
+      query.candidates[1]?.id === 'right-longitudinal',
     'route-choice query must contain the exact two candidates',
   );
   requireQuery(
     !containsFullTerrainPayload(query),
     'route-choice query cannot contain a full terrain payload',
   );
-  for (const value of Object.values(query.timing)) {
-    requireQuery(
-      Number.isFinite(value) && value >= 0,
-      'route-choice timing receipt must be finite and nonnegative',
-    );
-  }
-  const source = query.candidates[0].affordance.source;
   requireQuery(
-    query.candidates.every(({ affordance }) =>
-      affordance.source.route === source.route &&
-      affordance.source.frameId === source.frameId &&
-      affordance.source.sampleChecksum === source.sampleChecksum &&
-      affordance.source.topologyChecksum ===
+    hasExactKeys(query.timing, [
+      'compactPayloadBytes',
+      'mapLatencyMs',
+      'queueLatencyMs',
+      'generationAgeMs',
+      'mainThreadWaitMs',
+    ]) &&
+      timingValuesAreNonnegative(query.timing),
+    'route-choice timing receipt must be complete, finite, and nonnegative',
+  );
+  requireQuery(
+    hasExactKeys(query.hill, [
+      'route',
+      'frameId',
+      'sampleChecksum',
+      'topologyChecksum',
+      'supportFrameChecksum',
+      'producerTrafficFieldChecksum',
+    ]) &&
+      sourceIdentityIsNonblank(query.hill),
+    'route-choice Hill identity is incomplete',
+  );
+  const source = query.candidates[0].source;
+  requireQuery(
+    sourceIdentityIsNonblank(source) &&
+      query.candidates.every(({ source: candidateSource }) =>
+      sourceIdentityEquals(candidateSource, source)
+    ) &&
+      sourceIdentityEquals(query.hill, source) &&
+      query.generation.frameId === source.frameId,
+    'route-choice candidates crossed Hill or generation identity',
+  );
+  const materializeCandidate = (
+    candidate: LermHordeGpuRouteChoiceCandidate,
+    index: 0 | 1,
+  ): LermHordeHistoryCandidate => {
+      const spec =
+        LERM_HORDE_HISTORY_CANDIDATE_SPECS[index];
+      requireQuery(
+        hasExactKeys(candidate, [
+          'id',
+          'requestedWorldPosition',
+          'source',
+          'localExposure',
+          'shock',
+          'directionalPermeability',
+        ]) &&
+          candidate.id === spec.id &&
+          exactVec3(
+            candidate.requestedWorldPosition,
+            spec.worldPosition,
+          ) &&
+          hasExactKeys(candidate.source, [
+            'route',
+            'frameId',
+            'sampleChecksum',
+            'topologyChecksum',
+            'supportFrameChecksum',
+            'producerTrafficFieldChecksum',
+          ]) &&
+          Number.isFinite(candidate.localExposure) &&
+          candidate.localExposure >= 0 &&
+          candidate.localExposure <= 1 &&
+          nonblank(candidate.shock) &&
+          Number.isFinite(
+            candidate.directionalPermeability,
+          ) &&
+          candidate.directionalPermeability >= 0 &&
+          candidate.directionalPermeability <= 1,
+        `route-choice candidate ${spec.id} fields are invalid`,
+      );
+      return {
+        id: spec.id,
+        stableOrder: spec.stableOrder,
+        lateralOffset: spec.lateralOffset,
+        requestedWorldPosition: [...spec.worldPosition],
+        source: { ...candidate.source },
+        localExposure: candidate.localExposure,
+        shock: candidate.shock,
+        directionalPermeability:
+          candidate.directionalPermeability,
+        lawful:
+          candidate.shock !== 'shock_reset' &&
+          candidate.directionalPermeability > 0,
+      };
+    };
+  const candidates: [
+    LermHordeHistoryCandidate,
+    LermHordeHistoryCandidate,
+  ] = [
+    materializeCandidate(query.candidates[0], 0),
+    materializeCandidate(query.candidates[1], 1),
+  ];
+  requireQuery(
+    candidates.every(({ source: candidateSource }) =>
+      candidateSource.route === source.route &&
+      candidateSource.frameId === source.frameId &&
+      candidateSource.sampleChecksum === source.sampleChecksum &&
+      candidateSource.topologyChecksum ===
         source.topologyChecksum &&
-      affordance.source.supportFrameChecksum ===
+      candidateSource.supportFrameChecksum ===
         source.supportFrameChecksum &&
-      affordance.source.producerTrafficFieldChecksum ===
+      candidateSource.producerTrafficFieldChecksum ===
         source.producerTrafficFieldChecksum
     ),
     'route-choice candidates crossed Hill identity',
   );
-  const lawful = [...query.candidates]
+  const lawful = [...candidates]
     .filter(({ lawful }) => lawful)
     .sort(
       (left, right) =>
-        left.affordance.memory.localExposure -
-          right.affordance.memory.localExposure ||
+        left.localExposure -
+          right.localExposure ||
         left.stableOrder - right.stableOrder,
     );
   requireQuery(
@@ -369,10 +546,8 @@ export function evaluateLermHordeGpuRouteChoiceQuery(
     'route-choice query requires two lawful comparison candidates',
   );
   const [selected, runnerUp] = lawful;
-  const selectedExposure =
-    selected.affordance.memory.localExposure;
-  const runnerUpExposure =
-    runnerUp.affordance.memory.localExposure;
+  const selectedExposure = selected.localExposure;
+  const runnerUpExposure = runnerUp.localExposure;
   requireQuery(
     Number.isFinite(selectedExposure) &&
       Number.isFinite(runnerUpExposure) &&
@@ -389,6 +564,7 @@ export function evaluateLermHordeGpuRouteChoiceQuery(
   const marginStable =
     decisionMargin > query.nondeterminismEnvelope;
   return {
+    candidates,
     selected,
     runnerUp,
     selectedExposure,
@@ -402,6 +578,98 @@ export function evaluateLermHordeGpuRouteChoiceQuery(
         ? 'margin-exceeds-envelope'
         : 'inside-nondeterminism-envelope',
   };
+}
+
+function compactSourceIdentity(
+  source: LermHordeHillQuerySourceIdentity,
+): LermHordeHillQuerySourceIdentity {
+  return {
+    route: source.route,
+    frameId: source.frameId,
+    sampleChecksum: source.sampleChecksum,
+    topologyChecksum: source.topologyChecksum,
+    supportFrameChecksum: source.supportFrameChecksum,
+    producerTrafficFieldChecksum:
+      source.producerTrafficFieldChecksum,
+  };
+}
+
+function sourceIdentityEquals(
+  left: LermHordeHillQuerySourceIdentity,
+  right: LermHordeHillQuerySourceIdentity,
+): boolean {
+  return (
+    left.route === right.route &&
+    left.frameId === right.frameId &&
+    left.sampleChecksum === right.sampleChecksum &&
+    left.topologyChecksum === right.topologyChecksum &&
+    left.supportFrameChecksum === right.supportFrameChecksum &&
+    left.producerTrafficFieldChecksum ===
+      right.producerTrafficFieldChecksum
+  );
+}
+
+function sourceIdentityIsNonblank(
+  source: LermHordeHillQuerySourceIdentity | null | undefined,
+): boolean {
+  return (
+    !!source &&
+    nonblank(source.route) &&
+    nonblank(source.frameId) &&
+    nonblank(source.sampleChecksum) &&
+    nonblank(source.topologyChecksum) &&
+    nonblank(source.supportFrameChecksum) &&
+    nonblank(source.producerTrafficFieldChecksum)
+  );
+}
+
+function timingValuesAreNonnegative(
+  timing: LermHordeGpuRouteChoiceQuery['timing'],
+): boolean {
+  return (
+    Number.isFinite(timing.compactPayloadBytes) &&
+    timing.compactPayloadBytes > 0 &&
+    Number.isFinite(timing.mapLatencyMs) &&
+    timing.mapLatencyMs >= 0 &&
+    Number.isFinite(timing.queueLatencyMs) &&
+    timing.queueLatencyMs >= 0 &&
+    Number.isFinite(timing.generationAgeMs) &&
+    timing.generationAgeMs >= 0 &&
+    Number.isFinite(timing.mainThreadWaitMs) &&
+    timing.mainThreadWaitMs >= 0
+  );
+}
+
+function exactVec3(
+  value: readonly number[],
+  expected: readonly number[],
+): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every(
+      (component, index) =>
+        Number.isFinite(component) &&
+        component === expected[index],
+    )
+  );
+}
+
+function hasExactKeys(
+  value: unknown,
+  expected: readonly string[],
+): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const actual = Object.keys(value).sort();
+  const canonical = [...expected].sort();
+  return (
+    actual.length === canonical.length &&
+    actual.every((key, index) => key === canonical[index])
+  );
+}
+
+function nonblank(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
 }
 
 function encodedByteLength(value: unknown): number {

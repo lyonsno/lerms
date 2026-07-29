@@ -527,7 +527,7 @@ function exposure(
       `history-conditioned decision omitted ${candidateId}`,
     );
   }
-  return candidate.affordance.memory.localExposure;
+  return candidate.localExposure;
 }
 
 function validateOptions(

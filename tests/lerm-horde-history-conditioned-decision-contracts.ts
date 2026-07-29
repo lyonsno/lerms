@@ -47,8 +47,8 @@ assert.equal(first.selected.id, 'left-longitudinal');
 assert.equal(first.selected.reason, 'minimum-local-retained-traffic');
 assert.equal(first.candidates.every(({ lawful }) => lawful), true);
 assert.equal(
-  first.candidates.every(({ affordance }) =>
-    affordance.source.producerTrafficFieldChecksum ===
+  first.candidates.every(({ source }) =>
+    source.producerTrafficFieldChecksum ===
       runtime.state.terrain.witness.producerTrafficFieldChecksum
   ),
   true,
@@ -116,7 +116,7 @@ function exposure(
     ({ id }) => id === candidateId,
   );
   assert.ok(candidate, `missing candidate ${candidateId}`);
-  return candidate.affordance.memory.localExposure;
+  return candidate.localExposure;
 }
 
 function createReceiptRailSampler(
