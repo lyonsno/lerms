@@ -19,6 +19,9 @@ const GPU_COPY_DST = 0x0008;
 const GPU_INDEX = 0x0010;
 const GPU_STORAGE = 0x0080;
 const GPU_UNIFORM = 0x0040;
+const GPU_TEXTURE_COPY_DST = 0x0002;
+const GPU_TEXTURE_BINDING = 0x0004;
+const GPU_TEXTURE_RENDER_ATTACHMENT = 0x0010;
 
 export const HILL_GPU_PRESENTATION_SHADER = /* wgsl */ `
 struct Presentation {
@@ -28,8 +31,12 @@ struct Presentation {
   zoom: f32,
   pan_x: f32,
   pan_y: f32,
-  aspect: f32,
-  vertical_scale: f32,
+  viewport_width: f32,
+  viewport_height: f32,
+  terrain_length: f32,
+  _padding_0: f32,
+  _padding_1: f32,
+  _padding_2: f32,
 }
 
 struct VertexOutput {
@@ -70,22 +77,32 @@ fn hill_vertex(@builtin(vertex_index) index: u32) -> VertexOutput {
   let sin_yaw = sin(presentation.yaw);
   let rotated_x = x * cos_yaw - z * sin_yaw;
   let rotated_z = x * sin_yaw + z * cos_yaw;
-  let tilt_sin = sin(presentation.tilt);
-  let tilt_cos = cos(presentation.tilt);
+  let zn =
+    (rotated_z + presentation.terrain_length * 0.5) /
+    presentation.terrain_length;
+  let perspective =
+    (0.42 + (1.0 - zn) * 0.5) * presentation.zoom;
+  let scale_x = min(
+    presentation.viewport_width / 16.0,
+    presentation.viewport_height / 11.0,
+  ) * perspective;
+  let screen_x =
+    presentation.viewport_width *
+      (0.5 + presentation.pan_x) +
+    rotated_x * scale_x;
   let screen_y =
-    height * tilt_sin * presentation.vertical_scale -
-    rotated_z * tilt_cos;
-  let depth =
-    height * tilt_cos + rotated_z * tilt_sin;
-  let horizontal_scale = 0.13 * presentation.zoom;
-  let vertical_scale = 0.075 * presentation.zoom;
+    presentation.viewport_height *
+      (0.9 + presentation.pan_y) -
+    zn * presentation.viewport_height * 0.68 *
+      presentation.tilt -
+    height * 42.0 * perspective;
 
   var output: VertexOutput;
   output.position = vec4<f32>(
-    rotated_x * horizontal_scale +
-      presentation.pan_x,
-    screen_y * vertical_scale + presentation.pan_y,
-    clamp(0.5 + depth * 0.015, 0.0, 1.0),
+    screen_x / presentation.viewport_width * 2.0 - 1.0,
+    1.0 -
+      screen_y / presentation.viewport_height * 2.0,
+    clamp(zn, 0.0, 1.0),
     1.0,
   );
   output.color = vec3<f32>(
@@ -103,6 +120,42 @@ fn hill_fragment(input: VertexOutput) -> @location(0) vec4<f32> {
   let traffic = clamp(input.traffic * 1.8, 0.0, 0.90);
   let color = mix(input.color, trail, traffic);
   return vec4<f32>(color, 1.0);
+}
+`;
+
+export const HILL_GPU_OVERLAY_SHADER = /* wgsl */ `
+struct OverlayOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@group(0) @binding(0)
+var overlay_sampler: sampler;
+
+@group(0) @binding(1)
+var overlay_texture: texture_2d<f32>;
+
+@vertex
+fn overlay_vertex(@builtin(vertex_index) index: u32) -> OverlayOutput {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>(3.0, -1.0),
+    vec2<f32>(-1.0, 3.0),
+  );
+  var uvs = array<vec2<f32>, 3>(
+    vec2<f32>(0.0, 1.0),
+    vec2<f32>(2.0, 1.0),
+    vec2<f32>(0.0, -1.0),
+  );
+  var output: OverlayOutput;
+  output.position = vec4<f32>(positions[index], 0.0, 1.0);
+  output.uv = uvs[index];
+  return output;
+}
+
+@fragment
+fn overlay_fragment(input: OverlayOutput) -> @location(0) vec4<f32> {
+  return textureSample(overlay_texture, overlay_sampler, input.uv);
 }
 `;
 
@@ -132,15 +185,24 @@ export interface HillGpuPresentationView {
   zoom: number;
   panX: number;
   panY: number;
-  aspect: number;
-  verticalScale: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+export interface HillGpuPresentationOverlay {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
 }
 
 export interface HillGpuWebGpuPresenter {
   readonly route: typeof HILL_GPU_PRESENTATION_ROUTE;
   readonly indexCount: number;
   readonly initializationUploadOrdinal: 1;
-  render(view: HillGpuPresentationView): {
+  render(
+    view: HillGpuPresentationView,
+    overlay?: HillGpuPresentationOverlay,
+  ): {
     previousGeneration: number;
     currentGeneration: number;
     presentationAlpha: number;
@@ -149,6 +211,11 @@ export interface HillGpuWebGpuPresenter {
 }
 
 interface HillGpuTextureView {}
+
+interface HillGpuTexture {
+  createView(): HillGpuTextureView;
+  destroy?(): void;
+}
 
 interface HillGpuCanvasContext {
   configure(descriptor: {
@@ -162,6 +229,29 @@ interface HillGpuCanvasContext {
 }
 
 interface HillPresentationDevice extends HillWebGpuDevice {
+  readonly queue: HillWebGpuDevice['queue'] & {
+    copyExternalImageToTexture(
+      source: { source: CanvasImageSource },
+      destination: { texture: HillGpuTexture },
+      copySize: {
+        width: number;
+        height: number;
+      },
+    ): void;
+  };
+  createTexture(descriptor: {
+    label?: string;
+    size: {
+      width: number;
+      height: number;
+    };
+    format: string;
+    usage: number;
+  }): HillGpuTexture;
+  createSampler(descriptor?: {
+    magFilter?: 'linear';
+    minFilter?: 'linear';
+  }): unknown;
   createRenderPipeline(descriptor: {
     label?: string;
     layout: 'auto';
@@ -172,7 +262,21 @@ interface HillPresentationDevice extends HillWebGpuDevice {
     fragment: {
       module: unknown;
       entryPoint: string;
-      targets: readonly { format: string }[];
+      targets: readonly {
+        format: string;
+        blend?: {
+          color: {
+            srcFactor: 'src-alpha';
+            dstFactor: 'one-minus-src-alpha';
+            operation: 'add';
+          };
+          alpha: {
+            srcFactor: 'one';
+            dstFactor: 'one-minus-src-alpha';
+            operation: 'add';
+          };
+        };
+      }[];
     };
     primitive: {
       topology: 'triangle-list';
@@ -205,6 +309,7 @@ interface HillPresentationDevice extends HillWebGpuDevice {
         format: 'uint32',
       ): void;
       drawIndexed(indexCount: number): void;
+      draw(vertexCount: number): void;
       end(): void;
     };
   };
@@ -300,7 +405,7 @@ export function createHillGpuWebGpuPresenter(
   });
   const viewBuffer = device.createBuffer({
     label: 'Hill presentation view',
-    size: 8 * Float32Array.BYTES_PER_ELEMENT,
+    size: 12 * Float32Array.BYTES_PER_ELEMENT,
     usage: GPU_UNIFORM | GPU_COPY_DST,
   });
   device.queue.writeBuffer(indexBuffer, 0, indices);
@@ -330,12 +435,60 @@ export function createHillGpuWebGpuPresenter(
       cullMode: 'none',
     },
   });
+  const overlayShader = device.createShaderModule({
+    label: 'Hill GPU external actor overlay',
+    code: HILL_GPU_OVERLAY_SHADER,
+  });
+  const overlayPipeline = device.createRenderPipeline({
+    label: 'Hill GPU canonical actor overlay pipeline',
+    layout: 'auto',
+    vertex: {
+      module: overlayShader,
+      entryPoint: 'overlay_vertex',
+    },
+    fragment: {
+      module: overlayShader,
+      entryPoint: 'overlay_fragment',
+      targets: [
+        {
+          format,
+          blend: {
+            color: {
+              srcFactor: 'src-alpha',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add',
+            },
+            alpha: {
+              srcFactor: 'one',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add',
+            },
+          },
+        },
+      ],
+    },
+    primitive: {
+      topology: 'triangle-list',
+      cullMode: 'none',
+    },
+  });
+  const overlaySampler = device.createSampler({
+    magFilter: 'linear',
+    minFilter: 'linear',
+  });
+  let overlayTexture:
+    | {
+        texture: HillGpuTexture;
+        width: number;
+        height: number;
+      }
+    | undefined;
 
   return {
     route: HILL_GPU_PRESENTATION_ROUTE,
     indexCount: indices.length,
     initializationUploadOrdinal: 1,
-    render(view) {
+    render(view, overlay) {
       validateView(view);
       const selection =
         createHillGpuPresentationBufferSelection(
@@ -398,10 +551,70 @@ export function createHillGpuWebGpuPresenter(
           view.zoom,
           view.panX,
           view.panY,
-          view.aspect,
-          view.verticalScale,
+          view.viewportWidth,
+          view.viewportHeight,
+          initialization.domain.length,
+          0,
+          0,
+          0,
         ]),
       );
+      let overlayBindGroup: unknown;
+      if (overlay) {
+        requirePresentation(
+          Number.isInteger(overlay.width) &&
+            overlay.width > 0 &&
+            Number.isInteger(overlay.height) &&
+            overlay.height > 0,
+          'GPU presentation overlay dimensions are invalid',
+        );
+        if (
+          !overlayTexture ||
+          overlayTexture.width !== overlay.width ||
+          overlayTexture.height !== overlay.height
+        ) {
+          overlayTexture?.texture.destroy?.();
+          overlayTexture = {
+            texture: device.createTexture({
+              label: 'Hill canonical viewer actor overlay',
+              size: {
+                width: overlay.width,
+                height: overlay.height,
+              },
+              format: 'rgba8unorm',
+              usage:
+                GPU_TEXTURE_COPY_DST |
+                GPU_TEXTURE_BINDING |
+                GPU_TEXTURE_RENDER_ATTACHMENT,
+            }),
+            width: overlay.width,
+            height: overlay.height,
+          };
+        }
+        device.queue.copyExternalImageToTexture(
+          { source: overlay.source },
+          { texture: overlayTexture.texture },
+          {
+            width: overlay.width,
+            height: overlay.height,
+          },
+        );
+        overlayBindGroup = device.createBindGroup({
+          label: `Hill actor overlay generation ${runtime.generation}`,
+          layout: overlayPipeline.getBindGroupLayout(0),
+          entries: [
+            {
+              binding: 0,
+              resource: overlaySampler,
+            },
+            {
+              binding: 1,
+              resource:
+                overlayTexture.texture.createView(),
+            },
+          ],
+        });
+      }
       const encoder = device.createCommandEncoder({
         label: `Hill presentation generation ${runtime.generation}`,
       });
@@ -427,6 +640,11 @@ export function createHillGpuWebGpuPresenter(
       pass.setBindGroup(0, bindGroup);
       pass.setIndexBuffer(indexBuffer, 'uint32');
       pass.drawIndexed(indices.length);
+      if (overlayBindGroup) {
+        pass.setPipeline(overlayPipeline);
+        pass.setBindGroup(0, overlayBindGroup);
+        pass.draw(3);
+      }
       pass.end();
       device.queue.submit([encoder.finish()]);
       return {
@@ -524,8 +742,8 @@ function validateView(view: HillGpuPresentationView): void {
       view.presentationAlpha >= 0 &&
       view.presentationAlpha <= 1 &&
       view.zoom > 0 &&
-      view.aspect > 0 &&
-      view.verticalScale > 0,
+      view.viewportWidth > 0 &&
+      view.viewportHeight > 0,
     'GPU presentation view is malformed',
   );
 }

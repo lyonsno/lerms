@@ -1,0 +1,563 @@
+{
+  "schema": "lerms.hill-gpu-canonical-viewer-browser-witness.v0",
+  "requestedUrl": "http://127.0.0.1:4193/",
+  "effectiveUrl": "http://127.0.0.1:4193/?actor=lerm-horde-live&terrain=gpu-resident&gpuTime=1100",
+  "phase": "complete",
+  "failurePhase": null,
+  "ok": true,
+  "routeVerified": true,
+  "oneVisibleCanvasVerified": true,
+  "noFallbackOrStaleState": true,
+  "noUncapturedGpuError": true,
+  "compactTransportVerified": true,
+  "actorSupportPresentationIdentityVerified": true,
+  "actorPixelsPresent": true,
+  "terrainPixelsPresent": true,
+  "causalTerrainDeltaPresent": true,
+  "frozenGenerationStable": true,
+  "primaryOutputWritten": true,
+  "viewport": {
+    "width": 1600,
+    "height": 1000
+  },
+  "controls": {
+    "actorSourceElapsedMs": 1100,
+    "secondEpisodeSourceElapsedMs": 4300,
+    "lateSourceElapsedMs": 6622,
+    "frozenRepeatCount": 5
+  },
+  "present": {
+    "state": {
+      "schema": "lerms.hill-gpu-canonical-viewer-window.v0",
+      "requested": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+      "effective": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+      "status": "live",
+      "error": "none",
+      "route": {
+        "terrain": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+        "backend": "webgpu",
+        "device": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": ""
+        },
+        "fallbackStatus": "none",
+        "staleStatus": "fresh"
+      },
+      "presentation": {
+        "schema": "lerms.hill-gpu-presented-frame-identity.v0",
+        "route": {
+          "requested": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+          "effective": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+          "backend": "webgpu",
+          "fallbackStatus": "none",
+          "staleStatus": "fresh"
+        },
+        "generation": {
+          "previous": 21,
+          "current": 22,
+          "highestAdmittedEventSequence": 21,
+          "queueSubmissionOrdinal": 22
+        },
+        "previous": {
+          "generation": 21,
+          "frameId": "horde-live-runtime-000000:gpu-21",
+          "supportFrameChecksum": "cf7874a1",
+          "producerTrafficFieldChecksum": "23fb89b2"
+        },
+        "current": {
+          "generation": 22,
+          "frameId": "horde-live-runtime-000000:gpu-22",
+          "supportFrameChecksum": "dd2f3a89",
+          "producerTrafficFieldChecksum": "011ec35f"
+        },
+        "frameId": "horde-live-runtime-000000:gpu-22",
+        "topologyChecksum": "9a914b75",
+        "supportFrameChecksum": "dd2f3a89",
+        "producerTrafficFieldChecksum": "011ec35f",
+        "heightChecksum": "dd2f3a89",
+        "addressingKey": "48:60:15:12",
+        "terrainLength": 15,
+        "presentationAlpha": 1
+      },
+      "transfer": {
+        "fullTerrainCpuUploads": 1,
+        "fullFieldWorkerTransfersAfterInitialization": 0,
+        "fullFieldReadbacksAfterInitialization": 0
+      },
+      "lifecycle": {
+        "phase": "traversing",
+        "visible": true,
+        "sourceElapsedMs": 1100,
+        "completionElapsedMs": 6622
+      },
+      "episodeController": "lerm-episode-a",
+      "actor": {
+        "frameId": "horde-live-runtime-000000:gpu-22",
+        "rootWorld": {
+          "x": -1.25,
+          "y": 0.414900077471431,
+          "z": -0.1507283665814429
+        },
+        "supportBindingFrameId": "horde-live-runtime-000000:gpu-22"
+      },
+      "host": {
+        "schema": "lerms.hill-of-hills.primary-viewer-actor-host.v0",
+        "route": {
+          "requested": "lerms/hill-of-hills/primary-viewer-v0",
+          "effective": "lerms/hill-of-hills/primary-viewer-v0",
+          "fallbackStatus": "none",
+          "staleStatus": "fresh"
+        },
+        "drawOrder": "after-terrain-before-route-markers-and-witness",
+        "terrain": {
+          "frameId": "horde-live-runtime-000000:gpu-22",
+          "sampleChecksum": "dd2f3a89",
+          "topologyChecksum": "9a914b75"
+        },
+        "timestampMs": 2033,
+        "registeredLayerCount": 1,
+        "visibleLayerCount": 1,
+        "drawnLayerCount": 1,
+        "effectiveActorRoutes": [
+          "lerms/lerm-horde/primary-viewer-actor-frame-v0"
+        ]
+      },
+      "view": {
+        "yaw": 0,
+        "tilt": 0.72,
+        "zoom": 1,
+        "panX": 0,
+        "panY": 0,
+        "motionSpeed": 1
+      },
+      "location": "http://127.0.0.1:4193/?actor=lerm-horde-live&terrain=gpu-resident&gpuTime=1100",
+      "canvasDataset": {
+        "primaryViewerRoute": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+        "lermHordeCompositionStatus": "loading",
+        "lermHordeCompositionRoute": "",
+        "lermHordeActorRoute": "",
+        "lermHordeActorPhase": "traversing",
+        "lermHordeEpisodeStage": "",
+        "lermHordeActorInstance": "lerm-episode-a",
+        "lermHordeSelectedContinuation": "left-longitudinal",
+        "lermHordeTerrainFrame": "",
+        "hillTerrainRoute": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+        "hillTerrainBackend": "webgpu",
+        "hillTerrainFallback": "none",
+        "hillTerrainStale": "fresh",
+        "hillTerrainGeneration": "22",
+        "hillTerrainFrame": "horde-live-runtime-000000:gpu-22",
+        "gpuCanonicalSettled": "false"
+      },
+      "visibleCanvasCount": 1
+    },
+    "screenshot": {
+      "path": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/actor-present.png",
+      "byteLength": 380430,
+      "sha256": "780146479d2fb917406424d1234d19a2e219a8ced889349ea2a78cd611751042"
+    }
+  },
+  "actorHiddenControl": {
+    "state": {
+      "schema": "lerms.hill-gpu-canonical-viewer-window.v0",
+      "requested": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+      "effective": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+      "status": "live",
+      "error": "none",
+      "route": {
+        "terrain": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+        "backend": "webgpu",
+        "device": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": ""
+        },
+        "fallbackStatus": "none",
+        "staleStatus": "fresh"
+      },
+      "presentation": {
+        "schema": "lerms.hill-gpu-presented-frame-identity.v0",
+        "route": {
+          "requested": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+          "effective": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+          "backend": "webgpu",
+          "fallbackStatus": "none",
+          "staleStatus": "fresh"
+        },
+        "generation": {
+          "previous": 21,
+          "current": 22,
+          "highestAdmittedEventSequence": 21,
+          "queueSubmissionOrdinal": 22
+        },
+        "previous": {
+          "generation": 21,
+          "frameId": "horde-live-runtime-000000:gpu-21",
+          "supportFrameChecksum": "cf7874a1",
+          "producerTrafficFieldChecksum": "23fb89b2"
+        },
+        "current": {
+          "generation": 22,
+          "frameId": "horde-live-runtime-000000:gpu-22",
+          "supportFrameChecksum": "dd2f3a89",
+          "producerTrafficFieldChecksum": "011ec35f"
+        },
+        "frameId": "horde-live-runtime-000000:gpu-22",
+        "topologyChecksum": "9a914b75",
+        "supportFrameChecksum": "dd2f3a89",
+        "producerTrafficFieldChecksum": "011ec35f",
+        "heightChecksum": "dd2f3a89",
+        "addressingKey": "48:60:15:12",
+        "terrainLength": 15,
+        "presentationAlpha": 1
+      },
+      "transfer": {
+        "fullTerrainCpuUploads": 1,
+        "fullFieldWorkerTransfersAfterInitialization": 0,
+        "fullFieldReadbacksAfterInitialization": 0
+      },
+      "lifecycle": {
+        "phase": "traversing",
+        "visible": true,
+        "sourceElapsedMs": 1100,
+        "completionElapsedMs": 6622
+      },
+      "episodeController": "lerm-episode-a",
+      "actor": {
+        "frameId": "horde-live-runtime-000000:gpu-22",
+        "rootWorld": {
+          "x": -1.25,
+          "y": 0.414900077471431,
+          "z": -0.1507283665814429
+        },
+        "supportBindingFrameId": "horde-live-runtime-000000:gpu-22"
+      },
+      "host": null,
+      "view": {
+        "yaw": 0,
+        "tilt": 0.72,
+        "zoom": 1,
+        "panX": 0,
+        "panY": 0,
+        "motionSpeed": 1
+      },
+      "location": "http://127.0.0.1:4193/?actor=lerm-horde-live&terrain=gpu-resident&gpuTime=1100&actorVisual=hidden",
+      "canvasDataset": {
+        "primaryViewerRoute": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+        "lermHordeCompositionStatus": "loading",
+        "lermHordeCompositionRoute": "",
+        "lermHordeActorRoute": "",
+        "lermHordeActorPhase": "traversing",
+        "lermHordeEpisodeStage": "",
+        "lermHordeActorInstance": "lerm-episode-a",
+        "lermHordeSelectedContinuation": "left-longitudinal",
+        "lermHordeTerrainFrame": "",
+        "hillTerrainRoute": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+        "hillTerrainBackend": "webgpu",
+        "hillTerrainFallback": "none",
+        "hillTerrainStale": "fresh",
+        "hillTerrainGeneration": "22",
+        "hillTerrainFrame": "horde-live-runtime-000000:gpu-22",
+        "gpuCanonicalSettled": "false"
+      },
+      "visibleCanvasCount": 1
+    },
+    "screenshot": {
+      "path": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/same-generation-actor-hidden.png",
+      "byteLength": 374552,
+      "sha256": "82ec9d30e24b2aebeeea6f02e0e2c3dcbf09009f98f8dfa1b1a7e53c3e7b1cd9"
+    }
+  },
+  "secondEpisode": {
+    "state": {
+      "schema": "lerms.hill-gpu-canonical-viewer-window.v0",
+      "requested": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+      "effective": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+      "status": "live",
+      "error": "none",
+      "route": {
+        "terrain": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+        "backend": "webgpu",
+        "device": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": ""
+        },
+        "fallbackStatus": "none",
+        "staleStatus": "fresh"
+      },
+      "presentation": {
+        "schema": "lerms.hill-gpu-presented-frame-identity.v0",
+        "route": {
+          "requested": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+          "effective": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+          "backend": "webgpu",
+          "fallbackStatus": "none",
+          "staleStatus": "fresh"
+        },
+        "generation": {
+          "previous": 85,
+          "current": 86,
+          "highestAdmittedEventSequence": 78,
+          "queueSubmissionOrdinal": 86
+        },
+        "previous": {
+          "generation": 85,
+          "frameId": "horde-live-runtime-000000:gpu-85",
+          "supportFrameChecksum": "008551ca",
+          "producerTrafficFieldChecksum": "27d5f215"
+        },
+        "current": {
+          "generation": 86,
+          "frameId": "horde-live-runtime-000000:gpu-86",
+          "supportFrameChecksum": "fcff27c0",
+          "producerTrafficFieldChecksum": "d52496ff"
+        },
+        "frameId": "horde-live-runtime-000000:gpu-86",
+        "topologyChecksum": "9a914b75",
+        "supportFrameChecksum": "fcff27c0",
+        "producerTrafficFieldChecksum": "d52496ff",
+        "heightChecksum": "fcff27c0",
+        "addressingKey": "48:60:15:12",
+        "terrainLength": 15,
+        "presentationAlpha": 1
+      },
+      "transfer": {
+        "fullTerrainCpuUploads": 1,
+        "fullFieldWorkerTransfersAfterInitialization": 0,
+        "fullFieldReadbacksAfterInitialization": 0
+      },
+      "lifecycle": {
+        "phase": "traversing",
+        "visible": true,
+        "sourceElapsedMs": 4300,
+        "completionElapsedMs": 6622
+      },
+      "episodeController": "lerm-episode-b",
+      "actor": {
+        "frameId": "horde-live-runtime-000000:gpu-86",
+        "rootWorld": {
+          "x": 1.25,
+          "y": 0.713732187037167,
+          "z": -0.2576322631143726
+        },
+        "supportBindingFrameId": "horde-live-runtime-000000:gpu-86"
+      },
+      "host": {
+        "schema": "lerms.hill-of-hills.primary-viewer-actor-host.v0",
+        "route": {
+          "requested": "lerms/hill-of-hills/primary-viewer-v0",
+          "effective": "lerms/hill-of-hills/primary-viewer-v0",
+          "fallbackStatus": "none",
+          "staleStatus": "fresh"
+        },
+        "drawOrder": "after-terrain-before-route-markers-and-witness",
+        "terrain": {
+          "frameId": "horde-live-runtime-000000:gpu-86",
+          "sampleChecksum": "fcff27c0",
+          "topologyChecksum": "9a914b75"
+        },
+        "timestampMs": 4650.8,
+        "registeredLayerCount": 1,
+        "visibleLayerCount": 1,
+        "drawnLayerCount": 1,
+        "effectiveActorRoutes": [
+          "lerms/lerm-horde/primary-viewer-actor-frame-v0"
+        ]
+      },
+      "view": {
+        "yaw": 0,
+        "tilt": 0.72,
+        "zoom": 1,
+        "panX": 0,
+        "panY": 0,
+        "motionSpeed": 1
+      },
+      "location": "http://127.0.0.1:4193/?actor=lerm-horde-live&terrain=gpu-resident&gpuTime=4300",
+      "canvasDataset": {
+        "primaryViewerRoute": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+        "lermHordeCompositionStatus": "loading",
+        "lermHordeCompositionRoute": "",
+        "lermHordeActorRoute": "",
+        "lermHordeActorPhase": "traversing",
+        "lermHordeEpisodeStage": "",
+        "lermHordeActorInstance": "lerm-episode-b",
+        "lermHordeSelectedContinuation": "right-longitudinal",
+        "lermHordeTerrainFrame": "",
+        "hillTerrainRoute": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+        "hillTerrainBackend": "webgpu",
+        "hillTerrainFallback": "none",
+        "hillTerrainStale": "fresh",
+        "hillTerrainGeneration": "86",
+        "hillTerrainFrame": "horde-live-runtime-000000:gpu-86",
+        "gpuCanonicalSettled": "false"
+      },
+      "visibleCanvasCount": 1
+    },
+    "screenshot": {
+      "path": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/second-episode.png",
+      "byteLength": 380391,
+      "sha256": "858999ba75a3b263e0bf6ea269f5006a2aca8baad95686cc5b41a9f429e489d2"
+    }
+  },
+  "departed": {
+    "state": {
+      "schema": "lerms.hill-gpu-canonical-viewer-window.v0",
+      "requested": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+      "effective": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+      "status": "live",
+      "error": "none",
+      "route": {
+        "terrain": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+        "backend": "webgpu",
+        "device": {
+          "vendor": "apple",
+          "architecture": "metal-3",
+          "device": "",
+          "description": ""
+        },
+        "fallbackStatus": "none",
+        "staleStatus": "fresh"
+      },
+      "presentation": {
+        "schema": "lerms.hill-gpu-presented-frame-identity.v0",
+        "route": {
+          "requested": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+          "effective": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+          "backend": "webgpu",
+          "fallbackStatus": "none",
+          "staleStatus": "fresh"
+        },
+        "generation": {
+          "previous": 131,
+          "current": 132,
+          "highestAdmittedEventSequence": 116,
+          "queueSubmissionOrdinal": 132
+        },
+        "previous": {
+          "generation": 131,
+          "frameId": "horde-live-runtime-000000:gpu-131",
+          "supportFrameChecksum": "df46c245",
+          "producerTrafficFieldChecksum": "9d68e4da"
+        },
+        "current": {
+          "generation": 132,
+          "frameId": "horde-live-runtime-000000:gpu-132",
+          "supportFrameChecksum": "c6049750",
+          "producerTrafficFieldChecksum": "5889acf1"
+        },
+        "frameId": "horde-live-runtime-000000:gpu-132",
+        "topologyChecksum": "9a914b75",
+        "supportFrameChecksum": "c6049750",
+        "producerTrafficFieldChecksum": "5889acf1",
+        "heightChecksum": "c6049750",
+        "addressingKey": "48:60:15:12",
+        "terrainLength": 15,
+        "presentationAlpha": 1
+      },
+      "transfer": {
+        "fullTerrainCpuUploads": 1,
+        "fullFieldWorkerTransfersAfterInitialization": 0,
+        "fullFieldReadbacksAfterInitialization": 0
+      },
+      "lifecycle": {
+        "phase": "departed",
+        "visible": false,
+        "sourceElapsedMs": 6622,
+        "completionElapsedMs": 6622
+      },
+      "episodeController": null,
+      "actor": {
+        "frameId": "horde-live-runtime-000000:gpu-132",
+        "rootWorld": null,
+        "supportBindingFrameId": null
+      },
+      "host": {
+        "schema": "lerms.hill-of-hills.primary-viewer-actor-host.v0",
+        "route": {
+          "requested": "lerms/hill-of-hills/primary-viewer-v0",
+          "effective": "lerms/hill-of-hills/primary-viewer-v0",
+          "fallbackStatus": "none",
+          "staleStatus": "fresh"
+        },
+        "drawOrder": "after-terrain-before-route-markers-and-witness",
+        "terrain": {
+          "frameId": "horde-live-runtime-000000:gpu-132",
+          "sampleChecksum": "c6049750",
+          "topologyChecksum": "9a914b75"
+        },
+        "timestampMs": 6606.3,
+        "registeredLayerCount": 1,
+        "visibleLayerCount": 0,
+        "drawnLayerCount": 0,
+        "effectiveActorRoutes": [
+          "lerms/lerm-horde/primary-viewer-actor-frame-v0"
+        ]
+      },
+      "view": {
+        "yaw": 0,
+        "tilt": 0.72,
+        "zoom": 1,
+        "panX": 0,
+        "panY": 0,
+        "motionSpeed": 1
+      },
+      "location": "http://127.0.0.1:4193/?actor=lerm-horde-live&terrain=gpu-resident&gpuTime=6622",
+      "canvasDataset": {
+        "primaryViewerRoute": "lerms/hill-of-hills/primary-viewer-gpu-resident-v0",
+        "lermHordeCompositionStatus": "loading",
+        "lermHordeCompositionRoute": "",
+        "lermHordeActorRoute": "",
+        "lermHordeActorPhase": "departed",
+        "lermHordeEpisodeStage": "",
+        "lermHordeActorInstance": "",
+        "lermHordeSelectedContinuation": "right-longitudinal",
+        "lermHordeTerrainFrame": "",
+        "hillTerrainRoute": "lerms/hill-of-hills/gpu-resident-causal-state-v0",
+        "hillTerrainBackend": "webgpu",
+        "hillTerrainFallback": "none",
+        "hillTerrainStale": "fresh",
+        "hillTerrainGeneration": "132",
+        "hillTerrainFrame": "horde-live-runtime-000000:gpu-132",
+        "gpuCanonicalSettled": "true"
+      },
+      "visibleCanvasCount": 1
+    },
+    "screenshot": {
+      "path": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/after-departure.png",
+      "byteLength": 371237,
+      "sha256": "3a7d651498fc58b4a63376de14fd04e4342a5ed179a983c2b7c314a535d1624a"
+    }
+  },
+  "pixelMetrics": {
+    "actorPixelCount": 855,
+    "actorEvidenceRegion": {
+      "rootScreen": {
+        "x": 723.2926955811309,
+        "y": 648.3569336098117
+      },
+      "halfWidth": 180,
+      "halfHeight": 160
+    },
+    "terrainPixelCount": 339486,
+    "causalTerrainPixelDelta": 74625,
+    "frozenChangedPixels": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "measurement": "external ffmpeg PNG decode; no browser GPU terrain readback"
+  },
+  "screenshots": {
+    "present": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/actor-present.png",
+    "actorHiddenControl": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/same-generation-actor-hidden.png",
+    "secondEpisode": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/second-episode.png",
+    "departed": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/after-departure.png",
+    "phaseStrip": "/private/tmp/lerms-hill-gpu-causal-state-0728/artifacts/hill-gpu-canonical-viewer/run_004/phase-strip.png"
+  }
+}

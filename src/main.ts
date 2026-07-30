@@ -113,6 +113,14 @@ import {
   createHillPrimaryViewerRetainedActorTargetFactory
 } from './terrain/hill-primary-viewer-retained-actor-targets.js';
 import {
+  HILL_GPU_CANONICAL_VIEWER_ROUTE,
+  type HillGpuPresentedFrameIdentity
+} from './terrain/hill-of-hills-gpu-canonical-viewer.js';
+import {
+  createHillGpuCanonicalViewerRuntime,
+  type HillGpuCanonicalViewerRuntime
+} from './terrain/hill-of-hills-gpu-canonical-viewer-runtime.js';
+import {
   LERM_HORDE_PRIMARY_VIEWER_LIVE_COMPOSITION_ROUTE,
   LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE,
   isLermHordePrimaryViewerRequested,
@@ -127,10 +135,24 @@ if (!canvas) {
   throw new Error('missing lerms canvas');
 }
 
-const context = canvas.getContext('2d');
+const initialQuery = new URLSearchParams(window.location.search);
+const hillGpuCanonicalViewerRequested =
+  initialQuery.get('actor') === 'lerm-horde-live' &&
+  initialQuery.get('terrain') === 'gpu-resident';
+const hillGpuCanonicalActorVisualHidden =
+  hillGpuCanonicalViewerRequested &&
+  initialQuery.get('actorVisual') === 'hidden';
+const hillGpuCanonicalFrozenSourceElapsedMs =
+  initialQuery.has('gpuTime')
+    ? Number(initialQuery.get('gpuTime'))
+    : undefined;
+const overlayCanvas = hillGpuCanonicalViewerRequested
+  ? document.createElement('canvas')
+  : canvas;
+const context = overlayCanvas.getContext('2d');
 
 if (!context) {
-  throw new Error('2d canvas unavailable');
+  throw new Error('canonical Hill overlay canvas unavailable');
 }
 
 const appCanvas = canvas;
@@ -284,25 +306,62 @@ let lermHordePrimaryViewerStatus = lermHordePrimaryViewerRequested
   : 'not-requested';
 let lermHordePrimaryViewerError = 'none';
 let lermHordePrimaryViewerAdvanceFailed = false;
+let hillGpuCanonicalViewerRuntime:
+  | HillGpuCanonicalViewerRuntime
+  | undefined;
+let hillGpuCanonicalViewerStatus = hillGpuCanonicalViewerRequested
+  ? 'loading'
+  : 'not-requested';
+let hillGpuCanonicalViewerError = 'none';
 
 if (lermHordePrimaryViewerRequested) {
-  workerStatus = 'horde-live-source-loading';
-  void loadLermHordePrimaryViewerLiveComposition()
-    .then((composition) => {
-      hillPrimaryViewerActorHost.register(composition.layer);
-      lermHordePrimaryViewerComposition = composition;
-      terrainBuffer = composition.frame.terrainBuffer;
-      lermHordePrimaryViewerStatus = 'live';
-      workerStatus = 'horde-live-worker';
+  if (hillGpuCanonicalViewerRequested) {
+    workerStatus = 'horde-gpu-canonical-source-loading';
+    void createHillGpuCanonicalViewerRuntime(appCanvas, {
+      frozenSourceElapsedMs:
+        hillGpuCanonicalFrozenSourceElapsedMs,
     })
-    .catch((error) => {
-      lermHordePrimaryViewerStatus = 'failed';
-      lermHordePrimaryViewerError =
-        error instanceof Error ? error.message : String(error);
-      latestWorkerError = lermHordePrimaryViewerError;
-      workerStatus = 'horde-live-source-failed';
-      console.error('primary-viewer Lerm Horde composition failed', error);
-    });
+      .then((runtime) => {
+        hillPrimaryViewerActorHost.register(runtime.layer);
+        hillGpuCanonicalViewerRuntime = runtime;
+        terrainBuffer = runtime.projectionBuffer;
+        lermHordePrimaryViewerStatus = 'live';
+        hillGpuCanonicalViewerStatus = 'live';
+        workerStatus = 'horde-gpu-canonical-live';
+      })
+      .catch((error) => {
+        hillGpuCanonicalViewerStatus = 'failed';
+        hillGpuCanonicalViewerError =
+          error instanceof Error ? error.message : String(error);
+        lermHordePrimaryViewerStatus = 'failed';
+        lermHordePrimaryViewerError =
+          hillGpuCanonicalViewerError;
+        latestWorkerError = hillGpuCanonicalViewerError;
+        workerStatus = 'horde-gpu-canonical-failed';
+        console.error(
+          'canonical Hill GPU viewer failed',
+          error,
+        );
+      });
+  } else {
+    workerStatus = 'horde-live-source-loading';
+    void loadLermHordePrimaryViewerLiveComposition()
+      .then((composition) => {
+        hillPrimaryViewerActorHost.register(composition.layer);
+        lermHordePrimaryViewerComposition = composition;
+        terrainBuffer = composition.frame.terrainBuffer;
+        lermHordePrimaryViewerStatus = 'live';
+        workerStatus = 'horde-live-worker';
+      })
+      .catch((error) => {
+        lermHordePrimaryViewerStatus = 'failed';
+        lermHordePrimaryViewerError =
+          error instanceof Error ? error.message : String(error);
+        latestWorkerError = lermHordePrimaryViewerError;
+        workerStatus = 'horde-live-source-failed';
+        console.error('primary-viewer Lerm Horde composition failed', error);
+      });
+  }
 } else {
   try {
     workerTerrain = new Worker(new URL('./terrain/hill-of-hills.worker.ts', import.meta.url), { type: 'module' });
@@ -460,6 +519,10 @@ function resize(): void {
   appCanvas.height = Math.max(1, Math.floor(window.innerHeight * dpr));
   appCanvas.style.width = '100vw';
   appCanvas.style.height = '100vh';
+  if (overlayCanvas !== appCanvas) {
+    overlayCanvas.width = appCanvas.width;
+    overlayCanvas.height = appCanvas.height;
+  }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
@@ -480,6 +543,27 @@ function render(timestampMs: number): void {
       ? params.topologyPhaseTimeMs + motionTimestampMs * 0.3
       : params.topologyPhaseTimeMs;
   if (
+    hillGpuCanonicalViewerRuntime &&
+    !lermHordePrimaryViewerAdvanceFailed
+  ) {
+    try {
+      hillGpuCanonicalViewerRuntime.advance(timestampMs);
+    } catch (error) {
+      lermHordePrimaryViewerAdvanceFailed = true;
+      hillGpuCanonicalViewerStatus = 'failed';
+      hillGpuCanonicalViewerError =
+        error instanceof Error ? error.message : String(error);
+      lermHordePrimaryViewerStatus = 'failed';
+      lermHordePrimaryViewerError =
+        hillGpuCanonicalViewerError;
+      latestWorkerError = hillGpuCanonicalViewerError;
+      workerStatus = 'horde-gpu-canonical-failed';
+      console.error(
+        'canonical Hill GPU viewer advance failed',
+        error,
+      );
+    }
+  } else if (
     lermHordePrimaryViewerComposition &&
     !lermHordePrimaryViewerAdvanceFailed
   ) {
@@ -507,46 +591,102 @@ function render(timestampMs: number): void {
     });
   }
 
-  ctx.fillStyle = '#06100d';
-  ctx.fillRect(0, 0, width, height);
-  drawTerrain(terrainBuffer, width, height);
-  latestActorHostReceipt = hillPrimaryViewerActorHost.draw({
-    timestampMs,
-    viewport: {
-      width,
-      height,
-      pixelRatio: window.devicePixelRatio || 1
-    },
-    terrain: {
-      frameId: terrainBuffer.source.frameId,
-      sampleChecksum: terrainBuffer.sampleChecksum,
-      topologyChecksum: terrainBuffer.topologyChecksum
-    },
-    view: {
-      yaw: viewState.yaw,
-      tilt: viewState.tilt,
-      zoom: viewState.zoom,
-      panX: viewState.panX,
-      panY: viewState.panY
-    },
-    createFrameTarget: retainedActorTargets.createFrameTarget,
-    project: (point) =>
-      project(
-        point.x,
-        point.y,
-        point.z,
-        terrainBuffer,
-        width,
-        height
-      )
-  });
+  if (hillGpuCanonicalViewerRequested) {
+    ctx.setTransform(
+      window.devicePixelRatio || 1,
+      0,
+      0,
+      window.devicePixelRatio || 1,
+      0,
+      0,
+    );
+    ctx.clearRect(0, 0, width, height);
+  } else {
+    ctx.fillStyle = '#06100d';
+    ctx.fillRect(0, 0, width, height);
+    drawTerrain(terrainBuffer, width, height);
+  }
+  const actorTerrainIdentity =
+    hillGpuCanonicalViewerRuntime
+      ? {
+          frameId:
+            hillGpuCanonicalViewerRuntime.presentation.frameId,
+          sampleChecksum:
+            hillGpuCanonicalViewerRuntime.presentation
+              .heightChecksum,
+          topologyChecksum:
+            hillGpuCanonicalViewerRuntime.presentation
+              .topologyChecksum,
+        }
+      : {
+          frameId: terrainBuffer.source.frameId,
+          sampleChecksum: terrainBuffer.sampleChecksum,
+          topologyChecksum: terrainBuffer.topologyChecksum,
+        };
+  latestActorHostReceipt =
+    hillGpuCanonicalActorVisualHidden
+      ? undefined
+      : hillPrimaryViewerActorHost.draw({
+          timestampMs,
+          viewport: {
+            width,
+            height,
+            pixelRatio: window.devicePixelRatio || 1
+          },
+          terrain: actorTerrainIdentity,
+          view: {
+            yaw: viewState.yaw,
+            tilt: viewState.tilt,
+            zoom: viewState.zoom,
+            panX: viewState.panX,
+            panY: viewState.panY
+          },
+          createFrameTarget: retainedActorTargets.createFrameTarget,
+          project: (point) =>
+            project(
+              point.x,
+              point.y,
+              point.z,
+              terrainBuffer,
+              width,
+              height
+            )
+        });
   latestLermHordeCompositionReceipt =
     lermHordePrimaryViewerComposition?.receipt();
-  publishLermHordePrimaryViewerState();
+  if (hillGpuCanonicalViewerRuntime) {
+    publishHillGpuCanonicalViewerState(
+      hillGpuCanonicalViewerRuntime
+    );
+  } else {
+    publishLermHordePrimaryViewerState();
+  }
   if (previewSettings.mode !== 'neutral_geometry' && previewSettings.layers.routeMarkers) {
     drawRouteMarkers(terrainBuffer, width, height);
   }
-  drawWitness(terrainBuffer);
+  if (hillGpuCanonicalViewerRuntime) {
+    hillGpuCanonicalViewerRuntime.present(
+      {
+        yaw: viewState.yaw,
+        tilt: viewState.tilt,
+        zoom: viewState.zoom,
+        panX: viewState.panX,
+        panY: viewState.panY,
+        viewportWidth: width,
+        viewportHeight: height,
+      },
+      {
+        source: overlayCanvas,
+        width: overlayCanvas.width,
+        height: overlayCanvas.height,
+      },
+    );
+    drawHillGpuCanonicalWitness(
+      hillGpuCanonicalViewerRuntime
+    );
+  } else {
+    drawWitness(terrainBuffer);
+  }
 
   window.requestAnimationFrame(render);
 }
@@ -2089,6 +2229,178 @@ function drawWitness(currentBuffer: HillOfHillsTerrainBuffer): void {
   ].join('\n');
 }
 
+interface HillGpuCanonicalViewerWindowState {
+  schema: 'lerms.hill-gpu-canonical-viewer-window.v0';
+  requested: typeof HILL_GPU_CANONICAL_VIEWER_ROUTE;
+  effective: typeof HILL_GPU_CANONICAL_VIEWER_ROUTE;
+  status: string;
+  error: string;
+  route: {
+    terrain: string;
+    backend: 'webgpu';
+    device: {
+      vendor: string;
+      architecture: string;
+      device: string;
+      description: string;
+    };
+    fallbackStatus: 'none';
+    staleStatus: 'fresh';
+  };
+  presentation: HillGpuPresentedFrameIdentity;
+  transfer: {
+    fullTerrainCpuUploads: 1;
+    fullFieldWorkerTransfersAfterInitialization: 0;
+    fullFieldReadbacksAfterInitialization: 0;
+  };
+  lifecycle: {
+    phase: 'traversing' | 'departed';
+    visible: boolean;
+    sourceElapsedMs: number;
+    completionElapsedMs: number;
+  };
+  episodeController:
+    | NonNullable<
+        ReturnType<
+          HillGpuCanonicalViewerRuntime['status']
+        >['activeActorInstanceId']
+      >
+    | null;
+  actor: {
+    frameId: string;
+    rootWorld: {
+      x: number;
+      y: number;
+      z: number;
+    } | null;
+    supportBindingFrameId: string | null;
+  };
+  host: HillPrimaryViewerActorHostReceipt | null;
+  view: ViewState;
+}
+
+function publishHillGpuCanonicalViewerState(
+  runtime: HillGpuCanonicalViewerRuntime
+): void {
+  const status = runtime.status();
+  const actor = runtime.actor;
+  const state: HillGpuCanonicalViewerWindowState = {
+    schema: 'lerms.hill-gpu-canonical-viewer-window.v0',
+    requested: HILL_GPU_CANONICAL_VIEWER_ROUTE,
+    effective: HILL_GPU_CANONICAL_VIEWER_ROUTE,
+    status: hillGpuCanonicalViewerStatus,
+    error: hillGpuCanonicalViewerError,
+    route: {
+      terrain: status.terrainRoute,
+      backend: status.backend,
+      device: { ...status.device },
+      fallbackStatus: status.fallbackStatus,
+      staleStatus: status.staleStatus,
+    },
+    presentation: structuredClone(runtime.presentation),
+    transfer: {
+      fullTerrainCpuUploads:
+        status.fullTerrainCpuUploads,
+      fullFieldWorkerTransfersAfterInitialization:
+        status.fullFieldWorkerTransfersAfterInitialization,
+      fullFieldReadbacksAfterInitialization:
+        status.fullFieldReadbacksAfterInitialization,
+    },
+    lifecycle: {
+      phase: status.actorPhase,
+      visible: status.actorVisible,
+      sourceElapsedMs: status.sourceElapsedMs,
+      completionElapsedMs: status.completionElapsedMs,
+    },
+    episodeController:
+      status.activeActorInstanceId,
+    actor: {
+      frameId: actor.terrain.frameId,
+      rootWorld: actor.pose
+        ? { ...actor.pose.rootFrame.origin }
+        : null,
+      supportBindingFrameId:
+        actor.pose?.support.presentationBinding
+          ?.currentFrameId ?? null,
+    },
+    host: latestActorHostReceipt
+      ? {
+          ...latestActorHostReceipt,
+          route: { ...latestActorHostReceipt.route },
+          terrain: { ...latestActorHostReceipt.terrain },
+          effectiveActorRoutes: [
+            ...latestActorHostReceipt.effectiveActorRoutes
+          ],
+        }
+      : null,
+    view: { ...viewState },
+  };
+  (
+    window as Window & {
+      __hillGpuCanonicalViewer?: HillGpuCanonicalViewerWindowState;
+    }
+  ).__hillGpuCanonicalViewer = state;
+  appCanvas.dataset.primaryViewerRoute =
+    HILL_GPU_CANONICAL_VIEWER_ROUTE;
+  appCanvas.dataset.hillTerrainRoute =
+    status.terrainRoute;
+  appCanvas.dataset.hillTerrainBackend =
+    status.backend;
+  appCanvas.dataset.hillTerrainFallback =
+    status.fallbackStatus;
+  appCanvas.dataset.hillTerrainStale =
+    status.staleStatus;
+  appCanvas.dataset.hillTerrainGeneration = String(
+    status.generation,
+  );
+  appCanvas.dataset.hillTerrainFrame =
+    runtime.presentation.frameId;
+  appCanvas.dataset.lermHordeActorPhase =
+    status.actorPhase;
+  appCanvas.dataset.lermHordeActorInstance =
+    status.activeActorInstanceId ?? '';
+  appCanvas.dataset.lermHordeSelectedContinuation =
+    status.selectedContinuation ?? '';
+  appCanvas.dataset.gpuCanonicalSettled =
+    status.actorPhase === 'departed' &&
+    status.sourceElapsedMs === status.completionElapsedMs
+      ? 'true'
+      : 'false';
+  updateLermEpisodeReadout(
+    actor.episodeController ?? null,
+  );
+}
+
+function drawHillGpuCanonicalWitness(
+  runtime: HillGpuCanonicalViewerRuntime
+): void {
+  const status = runtime.status();
+  const presentation = runtime.presentation;
+  witnessPanel.textContent = [
+    'Hill of Hills witness',
+    `${HILL_GPU_CANONICAL_VIEWER_ROUTE}`,
+    `terrain requested/effective: ${status.terrainRoute}`,
+    `backend: ${status.backend} / fallback: ${status.fallbackStatus} / stale: ${status.staleStatus}`,
+    `device: ${status.device.vendor} / ${status.device.architecture} / ${status.device.device} / ${status.device.description}`,
+    `grid: ${runtime.projectionBuffer.gridResolution.x} x ${runtime.projectionBuffer.gridResolution.z} / samples: ${runtime.projectionBuffer.sampleCount}`,
+    `generation: ${status.previousGeneration} -> ${status.generation} / queue ${status.queueSubmissionOrdinal}`,
+    `frame: ${presentation.frameId}`,
+    `height/support: ${presentation.supportFrameChecksum}`,
+    `traffic: ${presentation.producerTrafficFieldChecksum} / admitted ${status.highestAdmittedEventSequence}`,
+    `topology: ${presentation.topologyChecksum}`,
+    `transport: initial terrain uploads ${status.fullTerrainCpuUploads} / post-init full-field worker transfers ${status.fullFieldWorkerTransfersAfterInitialization} / readbacks ${status.fullFieldReadbacksAfterInitialization}`,
+    `support: CPU oracle compact seven-station binding / presented frame ${runtime.actor.pose?.support.presentationBinding?.currentFrameId ?? 'departed'}`,
+    `Horde actor: ${status.actorPhase} / visible ${status.actorVisible} / ${status.activeActorInstanceId ?? 'no actor'}`,
+    `Horde continuation: ${status.selectedContinuation ?? 'waiting for sealed current-Hill query'}`,
+    `clock: ${status.sourceElapsedMs.toFixed(0)} / ${status.completionElapsedMs.toFixed(0)} ms`,
+    `actor host: ${latestActorHostReceipt?.route.effective ?? HILL_PRIMARY_VIEWER_ACTOR_HOST_ROUTE} layers ${latestActorHostReceipt?.drawnLayerCount ?? 0}/${latestActorHostReceipt?.registeredLayerCount ?? 0}`,
+    `actor routes: ${latestActorHostReceipt?.effectiveActorRoutes.join(',') || 'none'}`,
+    `composition: one visible WebGPU canvas / indexed Lerm imported from one retained offscreen surface`,
+    `view yaw ${viewState.yaw.toFixed(2)} tilt ${viewState.tilt.toFixed(2)} zoom ${viewState.zoom.toFixed(2)} motion ${viewState.motionSpeed.toFixed(2)}`,
+    `error: ${hillGpuCanonicalViewerError}`,
+  ].join('\n');
+}
+
 interface LermHordePrimaryViewerWindowState {
   requested: {
     queryValue: typeof LERM_HORDE_PRIMARY_VIEWER_QUERY_VALUE;
@@ -3153,29 +3465,38 @@ function createPhaseFilmstripExportControls(): HTMLElement {
   }
   select.value = '10';
   button.type = 'button';
-  button.textContent = 'Export phase strip';
+  button.textContent = hillGpuCanonicalViewerRequested
+    ? 'GPU strip captured by browser witness'
+    : 'Export phase strip';
   reportButton.type = 'button';
   reportButton.textContent = 'Download continuity JSON';
   reportButton.disabled = true;
   status.className = 'phase-filmstrip-status';
-  status.textContent = 'next salient topology points';
-  button.addEventListener('click', () => {
-    const frameCount = normalizeHillPhaseFilmstripFrameCount(select.value);
+  status.textContent = hillGpuCanonicalViewerRequested
+    ? 'browser-owned capture preserves route identity without GPU terrain readback'
+    : 'next salient topology points';
+  if (hillGpuCanonicalViewerRequested) {
     button.disabled = true;
-    status.textContent = `rendering ${frameCount} frames`;
-    window.setTimeout(() => {
-      try {
-        const result = exportHillPhaseFilmstrip(frameCount);
-        lastExport = result;
-        reportButton.disabled = false;
-        status.textContent = `${result.filename} exported; JSON staged (${result.frameCount} frames)`;
-      } catch (error) {
-        status.textContent = error instanceof Error ? error.message : String(error);
-      } finally {
-        button.disabled = false;
-      }
-    }, 0);
-  });
+    select.disabled = true;
+  } else {
+    button.addEventListener('click', () => {
+      const frameCount = normalizeHillPhaseFilmstripFrameCount(select.value);
+      button.disabled = true;
+      status.textContent = `rendering ${frameCount} frames`;
+      window.setTimeout(() => {
+        try {
+          const result = exportHillPhaseFilmstrip(frameCount);
+          lastExport = result;
+          reportButton.disabled = false;
+          status.textContent = `${result.filename} exported; JSON staged (${result.frameCount} frames)`;
+        } catch (error) {
+          status.textContent = error instanceof Error ? error.message : String(error);
+        } finally {
+          button.disabled = false;
+        }
+      }, 0);
+    });
+  }
   reportButton.addEventListener('click', () => {
     if (!lastExport) {
       status.textContent = 'export a phase strip first';

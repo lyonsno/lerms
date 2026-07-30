@@ -504,8 +504,13 @@ assert.deepEqual(retainedTargets.stats(), {
 const primaryViewerSource = readFileSync(resolve('src/main.ts'), 'utf8');
 assert.match(
   primaryViewerSource,
-  /hillPrimaryViewerActorHost\.draw\(\{[\s\S]*terrainBuffer\.source\.frameId[\s\S]*terrainBuffer\.sampleChecksum[\s\S]*terrainBuffer\.topologyChecksum[\s\S]*createFrameTarget:\s*retainedActorTargets\.createFrameTarget[\s\S]*project:/,
-  'canonical primary viewer does not supply current Hill identity, isolated actor target factory, and projection to the actor host',
+  /const actorTerrainIdentity[\s\S]*hillGpuCanonicalViewerRuntime\.presentation\.frameId[\s\S]*hillGpuCanonicalViewerRuntime\.presentation[\s\S]*\.heightChecksum[\s\S]*hillGpuCanonicalViewerRuntime\.presentation[\s\S]*\.topologyChecksum[\s\S]*terrainBuffer\.source\.frameId[\s\S]*terrainBuffer\.sampleChecksum[\s\S]*terrainBuffer\.topologyChecksum/,
+  'canonical primary viewer does not distinguish the GPU-presented Hill identity from the CPU terrain identity',
+);
+assert.match(
+  primaryViewerSource,
+  /hillPrimaryViewerActorHost\.draw\(\{[\s\S]*terrain:\s*actorTerrainIdentity[\s\S]*createFrameTarget:\s*retainedActorTargets\.createFrameTarget[\s\S]*project:/,
+  'canonical primary viewer does not supply its selected current Hill identity, isolated actor target factory, and projection to the actor host',
 );
 assert.doesNotMatch(
   primaryViewerSource,

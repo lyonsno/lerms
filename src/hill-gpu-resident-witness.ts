@@ -174,8 +174,8 @@ async function start(): Promise<void> {
         zoom: 0.82,
         panX: 0,
         panY: -0.12,
-        aspect: canvas.width / Math.max(1, canvas.height),
-        verticalScale: 0.34,
+        viewportWidth: canvas.width,
+        viewportHeight: canvas.height,
       });
 
       const phase = phaseAt(requestedTime);

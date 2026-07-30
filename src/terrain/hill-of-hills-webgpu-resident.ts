@@ -137,7 +137,7 @@ export interface HillWebGpuDevice {
     layout: unknown;
     entries: readonly {
       binding: number;
-      resource: { buffer: HillWebGpuBuffer };
+      resource: unknown;
     }[];
   }): unknown;
   createCommandEncoder(descriptor?: {
