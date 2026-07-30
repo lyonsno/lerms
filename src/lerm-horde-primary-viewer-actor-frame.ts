@@ -228,8 +228,22 @@ export function createLermHordePrimaryViewerActorFrame(
   validateLiveSource(state);
   if (supportBinding) {
     requireActorFrame(
-      supportBinding.current.identity.frameId ===
-        state.terrainBuffer.source.frameId,
+      state.body !== null &&
+        supportBinding.current?.identity?.route ===
+          state.terrainBuffer.source.route &&
+        supportBinding.current?.identity?.frameId ===
+          state.terrainBuffer.source.frameId &&
+        supportBinding.current?.generation ===
+          state.terrainBuffer.witness.cacheGeneration &&
+        supportBinding.current?.identity?.topologyChecksum ===
+          state.terrainBuffer.topologyChecksum &&
+        supportBinding.current?.identity?.supportFrameChecksum ===
+          state.terrainBuffer.witness.supportFrame
+            .supportFrameChecksum &&
+        supportBinding.current?.identity
+          ?.producerTrafficFieldChecksum ===
+          state.terrainBuffer.witness
+            .producerTrafficFieldChecksum,
       'presentation support binding does not match the rendered Hill',
     );
   }
@@ -299,8 +313,7 @@ export function createLermHordePrimaryViewerActorFrame(
                   (candidate) => ({
                     id: candidate.id,
                     lawful: candidate.lawful,
-                    localExposure:
-                      candidate.affordance.memory.localExposure,
+                    localExposure: candidate.localExposure,
                   }),
                 ),
               }),
@@ -552,34 +565,69 @@ export function resolveLermHordePresentationSupportBinding(
     'presentation support binding schema is unsupported',
   );
   requireActorFrame(
-    binding.route.requested === binding.route.effective &&
+    hasExactKeys(binding, [
+      'schema',
+      'route',
+      'request',
+      'presentationAlpha',
+      'previous',
+      'current',
+      'timing',
+    ]) &&
+      hasExactKeys(binding.route, [
+        'requested',
+        'effective',
+        'backend',
+        'fallbackStatus',
+        'staleStatus',
+      ]) &&
+      nonblank(binding.route.requested) &&
+      binding.route.requested === binding.route.effective &&
+      (binding.route.backend === 'cpu-oracle' ||
+        binding.route.backend === 'webgpu') &&
       binding.route.fallbackStatus === 'none',
-    'presentation support binding effective route cannot use fallback',
+    'presentation support binding route or backend is invalid or uses fallback',
   );
   requireActorFrame(
     binding.route.staleStatus === 'fresh',
     'presentation support binding must be fresh',
   );
   requireActorFrame(
-    !binding.timing.synchronousAtPresentationFrequency,
+    hasExactKeys(binding.timing, [
+      'compactPayloadBytes',
+      'mapLatencyMs',
+      'queueLatencyMs',
+      'generationAgeMs',
+      'mainThreadWaitMs',
+      'synchronousAtPresentationFrequency',
+    ]) &&
+      binding.timing.synchronousAtPresentationFrequency === false,
     'presentation support cannot use synchronous presentation-frequency readback',
   );
-  for (const [name, value] of Object.entries(binding.timing)) {
-    if (name === 'synchronousAtPresentationFrequency') continue;
-    requireActorFrame(
-      typeof value === 'number' &&
-        Number.isFinite(value) &&
-        value >= 0,
-      'presentation support timing receipt must be finite and nonnegative',
-    );
-  }
+  requireActorFrame(
+    Number.isFinite(binding.timing.compactPayloadBytes) &&
+      binding.timing.compactPayloadBytes > 0 &&
+      Number.isFinite(binding.timing.mapLatencyMs) &&
+      binding.timing.mapLatencyMs >= 0 &&
+      Number.isFinite(binding.timing.queueLatencyMs) &&
+      binding.timing.queueLatencyMs >= 0 &&
+      Number.isFinite(binding.timing.generationAgeMs) &&
+      binding.timing.generationAgeMs >= 0 &&
+      Number.isFinite(binding.timing.mainThreadWaitMs) &&
+      binding.timing.mainThreadWaitMs >= 0,
+    'presentation support timing receipt must be complete, finite, and nonnegative',
+  );
   validateSupportRequest(binding.request);
   validateSupportGeneration(binding.previous, 'previous');
   validateSupportGeneration(binding.current, 'current');
   requireActorFrame(
-    binding.previous.identity.addressingKey ===
-      binding.current.identity.addressingKey,
-    'previous and current support generations use incompatible addressing',
+    binding.previous.identity.route ===
+      binding.current.identity.route &&
+      binding.previous.identity.addressingKey ===
+        binding.current.identity.addressingKey &&
+      binding.previous.identity.terrainLength ===
+        binding.current.identity.terrainLength,
+    'previous and current support generations use incompatible route or addressing',
   );
   requireActorFrame(
     binding.previous.generation <= binding.current.generation,
@@ -592,14 +640,27 @@ export function resolveLermHordePresentationSupportBinding(
     'presentation support alpha must be between zero and one',
   );
   const validatedRoot = validateRootFrame(rootFrame);
+  const expectedRequest =
+    createLermHordeSupportProfileRequest(validatedRoot);
   requireActorFrame(
     Math.abs(
       validatedRoot.origin.x - binding.request.rootWorld.x,
     ) < 1e-6 &&
       Math.abs(
         validatedRoot.origin.z - binding.request.rootWorld.z,
-      ) < 1e-6,
-    'presentation support request does not match the actor root',
+      ) < 1e-6 &&
+      binding.request.stations.every(
+        (station, index) =>
+          Math.abs(
+            station.worldX -
+              expectedRequest.stations[index].worldX,
+          ) < 1e-6 &&
+          Math.abs(
+            station.worldZ -
+              expectedRequest.stations[index].worldZ,
+          ) < 1e-6,
+      ),
+    'presentation support request stations do not match the actor body axis',
   );
   const alpha = binding.presentationAlpha;
   const rootHeight = mix(
@@ -675,12 +736,23 @@ function validateSupportRequest(
 ): void {
   requireActorFrame(
     request?.schema === LERM_HORDE_SUPPORT_PROFILE_REQUEST_SCHEMA &&
+      hasExactKeys(request, [
+        'schema',
+        'rootWorld',
+        'stations',
+      ]) &&
+      hasExactKeys(request.rootWorld, ['x', 'z']) &&
       Number.isFinite(request.rootWorld.x) &&
       Number.isFinite(request.rootWorld.z) &&
       request.stations.length ===
         LERM_HORDE_TERRAIN_SUPPORT_STATION_COUNT &&
       request.stations.every(
         (station, index) =>
+          hasExactKeys(station, [
+            't',
+            'worldX',
+            'worldZ',
+          ]) &&
           Number.isFinite(station.t) &&
           Number.isFinite(station.worldX) &&
           Number.isFinite(station.worldZ) &&
@@ -699,7 +771,22 @@ function validateSupportGeneration(
   label: string,
 ): void {
   requireActorFrame(
-    Number.isInteger(generation.generation) &&
+    hasExactKeys(generation, [
+      'generation',
+      'identity',
+      'rootHeight',
+      'stations',
+    ]) &&
+      hasExactKeys(generation.identity, [
+        'route',
+        'frameId',
+        'topologyChecksum',
+        'supportFrameChecksum',
+        'producerTrafficFieldChecksum',
+        'addressingKey',
+        'terrainLength',
+      ]) &&
+      Number.isInteger(generation.generation) &&
       generation.generation >= 0 &&
       generation.identity.route.length > 0 &&
       generation.identity.frameId.length > 0 &&
@@ -714,6 +801,10 @@ function validateSupportGeneration(
         LERM_HORDE_TERRAIN_SUPPORT_STATION_COUNT &&
       generation.stations.every(
         ({ t, height }, index) =>
+          hasExactKeys(generation.stations[index], [
+            't',
+            'height',
+          ]) &&
           Number.isFinite(t) &&
           Number.isFinite(height) &&
           Math.abs(
@@ -724,6 +815,23 @@ function validateSupportGeneration(
       ),
     `${label} presentation support requires nonblank identity and exactly seven finite stations`,
   );
+}
+
+function hasExactKeys(
+  value: unknown,
+  expected: readonly string[],
+): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const actual = Object.keys(value).sort();
+  const canonical = [...expected].sort();
+  return (
+    actual.length === canonical.length &&
+    actual.every((key, index) => key === canonical[index])
+  );
+}
+
+function nonblank(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
 }
 
 function mix(from: number, to: number, alpha: number): number {
