@@ -1,11 +1,15 @@
-export const LIVE_HAND_OPERATOR_SMOKE_WITNESS_SCHEMA = 'lerms.operator-smoke-witness.v0' as const;
-export const LIVE_HAND_OPERATOR_SMOKE_CAPTURE_ROUTE = 'browser-mediarecorder-parallel-camera-track-v0' as const;
+import { LIVE_HAND_PRESENTATION_CAPTURE_ROUTE } from './live-hand-presentation-capture.js';
+
+export const LIVE_HAND_OPERATOR_SMOKE_WITNESS_SCHEMA = 'lerms.operator-smoke-witness.v1' as const;
+export const LIVE_HAND_OPERATOR_SMOKE_RAW_CAPTURE_ROUTE = 'browser-mediarecorder-parallel-camera-track-v0' as const;
 
 export interface LiveHandOperatorSmokeStart {
-  stream: MediaStream;
+  presentationStream: MediaStream;
+  cameraStream: MediaStream;
   sessionId: string;
   requestedRoute: string;
   initialMotionPhase: string;
+  presentationFrameCount: () => number;
 }
 
 export interface LiveHandOperatorSmokeWitnessDependencies {
@@ -15,18 +19,27 @@ export interface LiveHandOperatorSmokeWitnessDependencies {
   isTypeSupported: (mimeType: string) => boolean;
 }
 
+interface ActiveCapture {
+  role: 'presentation' | 'raw_camera';
+  recorder: MediaRecorder;
+  chunks: Blob[];
+  chunkCount: number;
+  stopped: Promise<void>;
+  resolveStopped: () => void;
+  rejectStopped: (error: Error) => void;
+}
+
 interface ActiveRecording {
   sessionId: string;
   requestedRoute: string;
   mimeType: string;
-  recorder: MediaRecorder;
-  chunks: Blob[];
-  chunkCount: number;
+  captures: {
+    presentation: ActiveCapture;
+    rawCamera: ActiveCapture;
+  };
   captureStartedAtMs: number;
   phaseTimeline: Array<{ phase: string; atMs: number }>;
-  stopped: Promise<void>;
-  resolveStopped: () => void;
-  rejectStopped: (error: Error) => void;
+  presentationFrameCount: () => number;
 }
 
 const MIME_CANDIDATES = [
@@ -65,10 +78,13 @@ export class LiveHandOperatorSmokeWitness {
   snapshot(): Record<string, unknown> {
     return {
       schema: LIVE_HAND_OPERATOR_SMOKE_WITNESS_SCHEMA,
-      state: this.active ? this.active.recorder.state : 'inactive',
+      state: this.active ? 'recording' : 'inactive',
       sessionId: this.active?.sessionId ?? null,
       mimeType: this.active?.mimeType ?? null,
-      chunkCount: this.active?.chunkCount ?? 0,
+      primaryCaptureRoute: LIVE_HAND_PRESENTATION_CAPTURE_ROUTE,
+      rawCaptureRoute: LIVE_HAND_OPERATOR_SMOKE_RAW_CAPTURE_ROUTE,
+      presentationChunkCount: this.active?.captures.presentation.chunkCount ?? 0,
+      rawCameraChunkCount: this.active?.captures.rawCamera.chunkCount ?? 0,
       captureStartedAtMs: this.active?.captureStartedAtMs ?? null,
       lastReceipt: this.lastReceipt,
       lastError: this.lastError,
@@ -77,6 +93,9 @@ export class LiveHandOperatorSmokeWitness {
 
   async start(options: LiveHandOperatorSmokeStart): Promise<Record<string, unknown>> {
     if (this.active) throw new Error(`operator smoke ${this.active.sessionId} is already recording`);
+    if (options.presentationStream === options.cameraStream) {
+      throw new Error('operator smoke presentation and raw camera streams must be independently identifiable');
+    }
     const mimeType = MIME_CANDIDATES.find(candidate => this.dependencies.isTypeSupported(candidate));
     if (!mimeType) throw new Error('no supported MediaRecorder video format for operator smoke witness');
     const captureStartedAtMs = this.dependencies.now();
@@ -84,30 +103,28 @@ export class LiveHandOperatorSmokeWitness {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        schema: 'lerms.operator-smoke-start.v0',
+        schema: 'lerms.operator-smoke-start.v1',
         sessionId: options.sessionId,
         requestedRoute: options.requestedRoute,
-        captureRoute: LIVE_HAND_OPERATOR_SMOKE_CAPTURE_ROUTE,
+        captureRoute: LIVE_HAND_PRESENTATION_CAPTURE_ROUTE,
+        rawCaptureRoute: LIVE_HAND_OPERATOR_SMOKE_RAW_CAPTURE_ROUTE,
         recorderMimeType: mimeType,
+        rawRecorderMimeType: mimeType,
         captureStartedAtMs,
       }),
     });
 
-    let resolveStopped = () => {};
-    let rejectStopped = (_error: Error) => {};
-    const stopped = new Promise<void>((resolve, reject) => {
-      resolveStopped = resolve;
-      rejectStopped = reject;
-    });
-    let recorder: MediaRecorder;
+    let presentation: ActiveCapture;
+    let rawCamera: ActiveCapture;
     try {
-      recorder = this.dependencies.createRecorder(options.stream, { mimeType });
+      presentation = this.createCapture('presentation', options.presentationStream, mimeType);
+      rawCamera = this.createCapture('raw_camera', options.cameraStream, mimeType);
     } catch (error) {
       await this.interruptReservation(
         options.sessionId,
         `recorder_construction_failed: ${errorMessage(error)}`,
         'media_recorder_construction',
-        { mediaRecorderChunkCount: 0, recorderState: 'unavailable' },
+        { presentationRecorderState: 'unavailable', rawCameraRecorderState: 'unavailable' },
       );
       throw error;
     }
@@ -115,38 +132,26 @@ export class LiveHandOperatorSmokeWitness {
       sessionId: options.sessionId,
       requestedRoute: options.requestedRoute,
       mimeType,
-      recorder,
-      chunks: [],
-      chunkCount: 0,
+      captures: { presentation, rawCamera },
       captureStartedAtMs,
       phaseTimeline: [{ phase: options.initialMotionPhase, atMs: captureStartedAtMs }],
-      stopped,
-      resolveStopped,
-      rejectStopped,
+      presentationFrameCount: options.presentationFrameCount,
     };
-    recorder.ondataavailable = event => {
-      if (event.data.size <= 0) return;
-      active.chunks.push(event.data);
-      active.chunkCount += 1;
-    };
-    recorder.onerror = event => {
-      const mediaError = 'error' in event && event.error instanceof Error
-        ? event.error
-        : new Error('MediaRecorder failed');
-      active.rejectStopped(mediaError);
-    };
-    recorder.onstop = () => active.resolveStopped();
     this.active = active;
     this.lastError = null;
     try {
-      recorder.start(1000);
+      presentation.recorder.start(1000);
+      rawCamera.recorder.start(1000);
     } catch (error) {
       this.active = null;
+      for (const capture of [presentation, rawCamera]) {
+        if (capture.recorder.state !== 'inactive') capture.recorder.stop();
+      }
       await this.interruptReservation(
         options.sessionId,
         `recorder_start_failed: ${errorMessage(error)}`,
         'media_recorder_start',
-        { mediaRecorderChunkCount: 0, recorderState: recorder.state },
+        this.captureEvidence(active),
       );
       throw error;
     }
@@ -167,36 +172,43 @@ export class LiveHandOperatorSmokeWitness {
     const captureStoppedAtMs = this.dependencies.now();
     let failurePhase = 'media_recorder_stop';
     try {
-      if (active.recorder.state !== 'inactive') {
-        active.recorder.requestData();
-        active.recorder.stop();
+      const [presentationBlob, rawCameraBlob] = await Promise.all([
+        this.stopCapture(active.captures.presentation),
+        this.stopCapture(active.captures.rawCamera),
+      ]);
+      if (presentationBlob.size <= 0) {
+        failurePhase = 'presentation_media_recorder_empty';
+        throw new Error('operator smoke rendered hand presentation recording is empty');
       }
-      await active.stopped;
-      const rawCapture = new Blob(active.chunks, { type: active.mimeType });
-      if (rawCapture.size <= 0) {
-        failurePhase = 'media_recorder_empty';
+      if (rawCameraBlob.size <= 0) {
+        failurePhase = 'raw_camera_media_recorder_empty';
         throw new Error('operator smoke raw camera recording is empty');
       }
+      failurePhase = 'presentation_capture_upload';
+      await this.uploadCapture(
+        '/operator-smoke/presentation-capture',
+        active,
+        active.captures.presentation,
+        presentationBlob,
+        captureStoppedAtMs,
+      );
       failurePhase = 'raw_capture_upload';
-      await this.fetchJson('/operator-smoke/raw-capture', {
-        method: 'POST',
-        headers: {
-          'Content-Type': active.mimeType,
-          'X-Operator-Smoke-Session-Id': active.sessionId,
-          'X-Capture-Started-At-Ms': String(active.captureStartedAtMs),
-          'X-Capture-Stopped-At-Ms': String(captureStoppedAtMs),
-          'X-Media-Recorder-Chunk-Count': String(active.chunkCount),
-        },
-        body: rawCapture,
-      });
+      await this.uploadCapture(
+        '/operator-smoke/raw-capture',
+        active,
+        active.captures.rawCamera,
+        rawCameraBlob,
+        captureStoppedAtMs,
+      );
       failurePhase = 'runtime_operator_smoke_finalize';
       const receipt = await this.fetchJson('/operator-smoke/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          schema: 'lerms.operator-smoke-stop.v0',
+          schema: 'lerms.operator-smoke-stop.v1',
           sessionId: active.sessionId,
           captureStoppedAtMs,
+          presentationFrameCount: active.presentationFrameCount(),
           operatorMotionPhases: active.phaseTimeline,
         }),
       });
@@ -210,10 +222,10 @@ export class LiveHandOperatorSmokeWitness {
         `stop_failed: ${this.lastError}`,
         failurePhase,
         {
-          mediaRecorderChunkCount: active.chunkCount,
-          recorderState: active.recorder.state,
+          ...this.captureEvidence(active),
           captureStartedAtMs: active.captureStartedAtMs,
           captureStoppedAtMs,
+          presentationFrameCount: active.presentationFrameCount(),
         },
       );
       throw error;
@@ -226,15 +238,15 @@ export class LiveHandOperatorSmokeWitness {
     const active = this.active;
     if (!active) return;
     const body = JSON.stringify({
-      schema: 'lerms.operator-smoke-interrupted.v0',
+      schema: 'lerms.operator-smoke-interrupted.v1',
       sessionId: active.sessionId,
       reason,
       failurePhase: 'viewer_beforeunload',
       interruptedAtMs: this.dependencies.now(),
       lastTrustworthyEvidence: {
-        mediaRecorderChunkCount: active.chunkCount,
-        recorderState: active.recorder.state,
+        ...this.captureEvidence(active),
         captureStartedAtMs: active.captureStartedAtMs,
+        presentationFrameCount: active.presentationFrameCount(),
       },
     });
     void this.dependencies.fetch(`${this.runtimeUrl}/operator-smoke/interrupted`, {
@@ -245,6 +257,81 @@ export class LiveHandOperatorSmokeWitness {
       credentials: 'omit',
     });
     this.active = null;
+  }
+
+  private createCapture(
+    role: ActiveCapture['role'],
+    stream: MediaStream,
+    mimeType: string,
+  ): ActiveCapture {
+    let resolveStopped = () => {};
+    let rejectStopped = (_error: Error) => {};
+    const stopped = new Promise<void>((resolve, reject) => {
+      resolveStopped = resolve;
+      rejectStopped = reject;
+    });
+    const recorder = this.dependencies.createRecorder(stream, { mimeType });
+    const capture: ActiveCapture = {
+      role,
+      recorder,
+      chunks: [],
+      chunkCount: 0,
+      stopped,
+      resolveStopped,
+      rejectStopped,
+    };
+    recorder.ondataavailable = event => {
+      if (event.data.size <= 0) return;
+      capture.chunks.push(event.data);
+      capture.chunkCount += 1;
+    };
+    recorder.onerror = event => {
+      const mediaError = 'error' in event && event.error instanceof Error
+        ? event.error
+        : new Error(`${role} MediaRecorder failed`);
+      capture.rejectStopped(mediaError);
+    };
+    recorder.onstop = () => capture.resolveStopped();
+    return capture;
+  }
+
+  private async stopCapture(capture: ActiveCapture): Promise<Blob> {
+    if (capture.recorder.state !== 'inactive') {
+      capture.recorder.requestData();
+      capture.recorder.stop();
+    }
+    await capture.stopped;
+    return new Blob(capture.chunks, { type: capture.recorder.mimeType });
+  }
+
+  private async uploadCapture(
+    path: string,
+    active: ActiveRecording,
+    capture: ActiveCapture,
+    blob: Blob,
+    captureStoppedAtMs: number,
+  ): Promise<void> {
+    await this.fetchJson(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': active.mimeType,
+        'X-Operator-Smoke-Session-Id': active.sessionId,
+        'X-Capture-Started-At-Ms': String(active.captureStartedAtMs),
+        'X-Capture-Stopped-At-Ms': String(captureStoppedAtMs),
+        'X-Media-Recorder-Chunk-Count': String(capture.chunkCount),
+        'X-Presentation-Frame-Count': String(active.presentationFrameCount()),
+      },
+      body: blob,
+    });
+  }
+
+  private captureEvidence(active: ActiveRecording): Record<string, unknown> {
+    return {
+      presentationMediaRecorderChunkCount: active.captures.presentation.chunkCount,
+      presentationRecorderState: active.captures.presentation.recorder.state,
+      rawCameraMediaRecorderChunkCount: active.captures.rawCamera.chunkCount,
+      rawCameraRecorderState: active.captures.rawCamera.recorder.state,
+    };
   }
 
   private async interruptReservation(
@@ -258,7 +345,7 @@ export class LiveHandOperatorSmokeWitness {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          schema: 'lerms.operator-smoke-interrupted.v0',
+          schema: 'lerms.operator-smoke-interrupted.v1',
           sessionId,
           reason,
           failurePhase,

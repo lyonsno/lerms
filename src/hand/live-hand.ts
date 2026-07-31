@@ -27,6 +27,7 @@ import {
 } from './live-hand-contract.js';
 import { LiveHandSidecarReadinessCoordinator } from './live-hand-sidecar-readiness.js';
 import { LiveHandOperatorSmokeWitness } from './live-hand-operator-smoke-witness.js';
+import { LiveHandPresentationCapture } from './live-hand-presentation-capture.js';
 import {
   LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
   LIVE_HAND_CAPTURE_WORKER_ROUTE,
@@ -216,6 +217,7 @@ handMesh.visible = false;
 scene.add(handMesh);
 
 let stream: MediaStream | null = null;
+let presentationCapture: LiveHandPresentationCapture | null = null;
 let running = false;
 let captureRunGeneration = 0;
 let captureInFlightGeneration: number | null = null;
@@ -1619,14 +1621,22 @@ async function start(): Promise<void> {
   await video.play();
   setStatus('acquiring first WiLoR MANO anchor');
   resetBenchmark();
+  presentationCapture = new LiveHandPresentationCapture(canvas);
+  const presentationStream = presentationCapture.start();
   try {
     await operatorSmokeWitness.start({
-      stream,
+      presentationStream,
+      cameraStream: stream,
       sessionId: benchmarkSessionId,
       requestedRoute: sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE,
       initialMotionPhase: operatorMotionPhase,
+      presentationFrameCount: () => Number(
+        presentationCapture?.snapshot().capturedFrameCount ?? 0
+      ),
     });
   } catch (error) {
+    presentationCapture.stop();
+    presentationCapture = null;
     stream.getTracks().forEach(track => track.stop());
     stream = null;
     video.srcObject = null;
@@ -1693,6 +1703,8 @@ async function stop(): Promise<void> {
     witnessFailure = `visual witness failure: ${error instanceof Error ? error.message : String(error)}`;
     lastBenchmarkError = witnessFailure;
   }
+  presentationCapture?.stop();
+  presentationCapture = null;
   fastDeliveryMailbox.discardPending();
   await fastDeliveryMailbox.whenIdle();
   disposeCaptureWorker(new Error('hand control stopped'));
@@ -1878,6 +1890,24 @@ function animate(now: number): void {
     unflushedLatencySamples.push(sample);
     scheduleLatencyFlush();
   }
+  if (running && presentationCapture) {
+    try {
+      presentationCapture.capturePresentedFrame();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      operatorSmokeWitness.markInterrupted(`presentation_compositor_failed: ${message}`);
+      presentationCapture.stop();
+      presentationCapture = null;
+      running = false;
+      stream?.getTracks().forEach(track => track.stop());
+      stream = null;
+      video.srcObject = null;
+      routeModeControl.disabled = false;
+      toggle.textContent = 'Start Hand';
+      toggle.dataset.running = 'false';
+      setStatus(`visual witness failure: ${message}`, 'error');
+    }
+  }
   if ((running || densityBenchActive || fluidAssayRunning) && fluidSolver?.available && frameDecision.runFluid) {
     if (!fluidAssayRunning && !densityBenchActive && latestFluidPacket && !isLiveFingerFluidPacketFresh(latestFluidPacket)) {
       deactivateFluidInlets('hand_state_packet_expired');
@@ -1935,6 +1965,8 @@ window.addEventListener('beforeunload', () => {
   capturePostAbortController?.abort();
   stateAbortController?.abort();
   operatorSmokeWitness.markInterrupted('viewer_beforeunload');
+  presentationCapture?.stop();
+  presentationCapture = null;
   stream?.getTracks().forEach(track => track.stop());
   sidecarReadiness.invalidate();
   sidecarStatusTruth = null;
@@ -1978,6 +2010,7 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     runtimeOwner: 'hand-state-runtime',
     runtimeUrl,
     operatorSmokeWitness: operatorSmokeWitness.snapshot(),
+    presentationCapture: presentationCapture?.snapshot() ?? null,
     fixtureMode,
     fixtureKind,
     articulatedFixture: articulatedFixture ? {
