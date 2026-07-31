@@ -123,6 +123,21 @@ assert.match(
 );
 assert.match(
   liveHandSource,
+  /async function start\(\)[\s\S]*resetBenchmark\(\)[\s\S]*operatorSmokeWitness\.start\([\s\S]*running = true/,
+  'continuous raw-camera evidence begins before the live hand route is admitted',
+);
+assert.match(
+  liveHandSource,
+  /async function stop\(\)[\s\S]*operatorSmokeWitness\.stop\([\s\S]*stream\?\.getTracks\(\)\.forEach\(track => track\.stop\(\)\)/,
+  'continuous raw-camera evidence finalizes before camera tracks are destroyed',
+);
+assert.match(
+  liveHandSource,
+  /beforeunload[\s\S]*operatorSmokeWitness\.markInterrupted\(/,
+  'unexpected viewer teardown records an incomplete witness instead of implying evidence closure',
+);
+assert.match(
+  liveHandSource,
   /async function stop\(\)[\s\S]*runtimeFetch\('\/sidecar\/stop'[\s\S]*sidecarReadiness\.invalidate\(\)[\s\S]*runtimeFetch\('\/chronology\/flush'/,
   'stop invalidates browser readiness authority before closing chronology',
 );

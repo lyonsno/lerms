@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operator Smoke Witness Browser Contract</title>
+    <style>
+      html, body { margin: 0; min-height: 100%; background: #101416; color: #eef5f2; font: 14px system-ui, sans-serif; }
+      main { display: grid; gap: 12px; width: min(680px, calc(100% - 32px)); margin: 16px auto; }
+      canvas { width: 100%; aspect-ratio: 4 / 3; background: #081012; }
+      pre { margin: 0; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <canvas id="source" width="640" height="480"></canvas>
+      <pre id="result">recording moving witness...</pre>
+    </main>
+    <script type="module" src="/tests/operator-smoke-witness-browser.ts"></script>
+  </body>
+</html>

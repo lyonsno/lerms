@@ -26,6 +26,7 @@ import {
   type RuntimeSidecarStatusTruth,
 } from './live-hand-contract.js';
 import { LiveHandSidecarReadinessCoordinator } from './live-hand-sidecar-readiness.js';
+import { LiveHandOperatorSmokeWitness } from './live-hand-operator-smoke-witness.js';
 import {
   LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
   LIVE_HAND_CAPTURE_WORKER_ROUTE,
@@ -88,6 +89,7 @@ import {
 
 const params = new URLSearchParams(window.location.search);
 const runtimeUrl = params.get('runtime_url') || 'http://127.0.0.1:8766';
+const operatorSmokeWitness = new LiveHandOperatorSmokeWitness(runtimeUrl);
 const fixtureKind = params.get('fixture');
 const fixtureMode = fixtureKind === '1' || fixtureKind === 'articulated';
 const articulatedFixtureMode = fixtureKind === 'articulated';
@@ -1617,6 +1619,19 @@ async function start(): Promise<void> {
   await video.play();
   setStatus('acquiring first WiLoR MANO anchor');
   resetBenchmark();
+  try {
+    await operatorSmokeWitness.start({
+      stream,
+      sessionId: benchmarkSessionId,
+      requestedRoute: sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE,
+      initialMotionPhase: operatorMotionPhase,
+    });
+  } catch (error) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    video.srcObject = null;
+    throw error;
+  }
   animationFrameIntervalsMs.length = 0;
   fluidSubmitIntervalsMs.length = 0;
   combinedCpuSubmitMs.length = 0;
@@ -1671,6 +1686,13 @@ async function stop(): Promise<void> {
   cameraFrameFallbackTimer = null;
   capturePostAbortController?.abort();
   capturePostAbortController = null;
+  let witnessFailure: string | null = null;
+  try {
+    await operatorSmokeWitness.stop();
+  } catch (error) {
+    witnessFailure = `visual witness failure: ${error instanceof Error ? error.message : String(error)}`;
+    lastBenchmarkError = witnessFailure;
+  }
   fastDeliveryMailbox.discardPending();
   await fastDeliveryMailbox.whenIdle();
   disposeCaptureWorker(new Error('hand control stopped'));
@@ -1698,7 +1720,7 @@ async function stop(): Promise<void> {
       ? `telemetry incomplete: ${receiptJoinState.pendingFrameCount} unmatched frames, ${receiptJoinState.pendingCaptureCount} unmatched captures, ${receiptJoinState.discardedFrameCount} discarded frames, ${receiptJoinState.discardedCaptureCount} discarded captures, ${receiptJoinState.resolvedWithoutPresentationCount} resolved without presentation, ${benchmarkDroppedBeforeRender} superseded, ${pendingLatencySample ? 1 : 0} awaiting render`
       : null;
   if (missingEvidenceError) lastBenchmarkError = missingEvidenceError;
-  const benchmarkFailure = missingEvidenceError
+  const benchmarkFailure = witnessFailure || missingEvidenceError
     || (unflushedLatencySamples.length > 0 ? lastBenchmarkError || 'telemetry failure: viewer latency samples remain unflushed' : null);
   try {
     await runtimeFetch('/sidecar/stop', { method: 'POST' });
@@ -1750,6 +1772,7 @@ juiceBudgetControl.addEventListener('input', applyJuiceBudgetFromControl);
 for (const control of motionPhaseControls) {
   control.addEventListener('click', () => {
     operatorMotionPhase = normalizeLiveHandMotionPhase(control.dataset.motionPhase);
+    operatorSmokeWitness.recordMotionPhase(operatorMotionPhase);
     syncMotionPhaseControls();
   });
 }
@@ -1911,6 +1934,7 @@ window.addEventListener('beforeunload', () => {
   captureRunGeneration += 1;
   capturePostAbortController?.abort();
   stateAbortController?.abort();
+  operatorSmokeWitness.markInterrupted('viewer_beforeunload');
   stream?.getTracks().forEach(track => track.stop());
   sidecarReadiness.invalidate();
   sidecarStatusTruth = null;
@@ -1953,6 +1977,7 @@ function collectLiveHandDebugState(): Record<string, unknown> {
     schema: 'lerms.live-hand-viewer.v0',
     runtimeOwner: 'hand-state-runtime',
     runtimeUrl,
+    operatorSmokeWitness: operatorSmokeWitness.snapshot(),
     fixtureMode,
     fixtureKind,
     articulatedFixture: articulatedFixture ? {
