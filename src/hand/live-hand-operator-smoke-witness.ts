@@ -1,4 +1,5 @@
 export const LIVE_HAND_OPERATOR_SMOKE_WITNESS_SCHEMA = 'lerms.operator-smoke-witness.v0' as const;
+export const LIVE_HAND_OPERATOR_SMOKE_CAPTURE_ROUTE = 'browser-mediarecorder-parallel-camera-track-v0' as const;
 
 export interface LiveHandOperatorSmokeStart {
   stream: MediaStream;
@@ -86,6 +87,7 @@ export class LiveHandOperatorSmokeWitness {
         schema: 'lerms.operator-smoke-start.v0',
         sessionId: options.sessionId,
         requestedRoute: options.requestedRoute,
+        captureRoute: LIVE_HAND_OPERATOR_SMOKE_CAPTURE_ROUTE,
         recorderMimeType: mimeType,
         captureStartedAtMs,
       }),
@@ -101,7 +103,12 @@ export class LiveHandOperatorSmokeWitness {
     try {
       recorder = this.dependencies.createRecorder(options.stream, { mimeType });
     } catch (error) {
-      await this.interruptReservation(options.sessionId, `recorder_construction_failed: ${errorMessage(error)}`);
+      await this.interruptReservation(
+        options.sessionId,
+        `recorder_construction_failed: ${errorMessage(error)}`,
+        'media_recorder_construction',
+        { mediaRecorderChunkCount: 0, recorderState: 'unavailable' },
+      );
       throw error;
     }
     const active: ActiveRecording = {
@@ -135,7 +142,12 @@ export class LiveHandOperatorSmokeWitness {
       recorder.start(1000);
     } catch (error) {
       this.active = null;
-      await this.interruptReservation(options.sessionId, `recorder_start_failed: ${errorMessage(error)}`);
+      await this.interruptReservation(
+        options.sessionId,
+        `recorder_start_failed: ${errorMessage(error)}`,
+        'media_recorder_start',
+        { mediaRecorderChunkCount: 0, recorderState: recorder.state },
+      );
       throw error;
     }
     this.lastReceipt = started;
@@ -153,6 +165,7 @@ export class LiveHandOperatorSmokeWitness {
     const active = this.active;
     if (!active) throw new Error('operator smoke witness is not recording');
     const captureStoppedAtMs = this.dependencies.now();
+    let failurePhase = 'media_recorder_stop';
     try {
       if (active.recorder.state !== 'inactive') {
         active.recorder.requestData();
@@ -160,7 +173,11 @@ export class LiveHandOperatorSmokeWitness {
       }
       await active.stopped;
       const rawCapture = new Blob(active.chunks, { type: active.mimeType });
-      if (rawCapture.size <= 0) throw new Error('operator smoke raw camera recording is empty');
+      if (rawCapture.size <= 0) {
+        failurePhase = 'media_recorder_empty';
+        throw new Error('operator smoke raw camera recording is empty');
+      }
+      failurePhase = 'raw_capture_upload';
       await this.fetchJson('/operator-smoke/raw-capture', {
         method: 'POST',
         headers: {
@@ -172,6 +189,7 @@ export class LiveHandOperatorSmokeWitness {
         },
         body: rawCapture,
       });
+      failurePhase = 'runtime_operator_smoke_finalize';
       const receipt = await this.fetchJson('/operator-smoke/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -187,7 +205,17 @@ export class LiveHandOperatorSmokeWitness {
       return receipt;
     } catch (error) {
       this.lastError = errorMessage(error);
-      await this.interruptReservation(active.sessionId, `stop_failed: ${this.lastError}`);
+      await this.interruptReservation(
+        active.sessionId,
+        `stop_failed: ${this.lastError}`,
+        failurePhase,
+        {
+          mediaRecorderChunkCount: active.chunkCount,
+          recorderState: active.recorder.state,
+          captureStartedAtMs: active.captureStartedAtMs,
+          captureStoppedAtMs,
+        },
+      );
       throw error;
     } finally {
       this.active = null;
@@ -201,7 +229,13 @@ export class LiveHandOperatorSmokeWitness {
       schema: 'lerms.operator-smoke-interrupted.v0',
       sessionId: active.sessionId,
       reason,
+      failurePhase: 'viewer_beforeunload',
       interruptedAtMs: this.dependencies.now(),
+      lastTrustworthyEvidence: {
+        mediaRecorderChunkCount: active.chunkCount,
+        recorderState: active.recorder.state,
+        captureStartedAtMs: active.captureStartedAtMs,
+      },
     });
     void this.dependencies.fetch(`${this.runtimeUrl}/operator-smoke/interrupted`, {
       method: 'POST',
@@ -213,7 +247,12 @@ export class LiveHandOperatorSmokeWitness {
     this.active = null;
   }
 
-  private async interruptReservation(sessionId: string, reason: string): Promise<void> {
+  private async interruptReservation(
+    sessionId: string,
+    reason: string,
+    failurePhase: string,
+    lastTrustworthyEvidence: Record<string, unknown>,
+  ): Promise<void> {
     try {
       await this.fetchJson('/operator-smoke/interrupted', {
         method: 'POST',
@@ -222,7 +261,9 @@ export class LiveHandOperatorSmokeWitness {
           schema: 'lerms.operator-smoke-interrupted.v0',
           sessionId,
           reason,
+          failurePhase,
           interruptedAtMs: this.dependencies.now(),
+          lastTrustworthyEvidence,
         }),
       });
     } catch {

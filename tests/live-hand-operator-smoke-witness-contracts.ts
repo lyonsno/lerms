@@ -90,9 +90,12 @@ const finalBody = JSON.parse(String(finalization?.init.body));
 assert(finalBody.operatorMotionPhases.length === 2, 'phase changes align the dense recording with operator probes');
 
 const interruptedEvents: string[] = [];
+const interruptedCalls: Array<{ path: string; init: RequestInit }> = [];
 const interrupted = new LiveHandOperatorSmokeWitness('http://runtime', {
   fetch: async (input, init = {}) => {
-    interruptedEvents.push(String(input).replace('http://runtime', ''));
+    const path = String(input).replace('http://runtime', '');
+    interruptedEvents.push(path);
+    interruptedCalls.push({ path, init });
     calls.push({ path: String(input), init });
     return response({ status: 'ok' });
   },
@@ -115,5 +118,9 @@ try {
 assert(rejectedEmpty, 'empty MediaRecorder output fails witness closure');
 assert(interruptedEvents.includes('/operator-smoke/interrupted'), 'pre-output failure is durably reported');
 assert(!interruptedEvents.includes('/operator-smoke/raw-capture'), 'empty output cannot masquerade as raw evidence');
+const emptyInterruption = interruptedCalls.find(call => call.path === '/operator-smoke/interrupted');
+const emptyInterruptionBody = JSON.parse(String(emptyInterruption?.init.body));
+assert(emptyInterruptionBody.failurePhase === 'media_recorder_empty', 'empty recorder identity survives browser handoff');
+assert(emptyInterruptionBody.lastTrustworthyEvidence.mediaRecorderChunkCount === 0, 'empty recorder evidence carries the observed chunk count');
 
 console.log('live hand operator smoke witness contracts ok');
