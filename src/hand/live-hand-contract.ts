@@ -1,8 +1,8 @@
 export const LIVE_HAND_ROUTE = 'native_wilor_mini_mlx_detector_sidecar_live' as const;
-export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v4' as const;
+export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v5' as const;
 export const LIVE_HAND_HYBRID_FALLBACK_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano/fallback' as const;
 export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_live' as const;
-export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_temporal_authority_observer' as const;
+export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_complete_pose_authority_v5' as const;
 export const LIVE_HAND_HYBRID_GEOMETRY_MODE = 'native_mano_regeneration' as const;
 export const LIVE_HAND_POSE_OBSERVER_MODE = 'fixed_lag_anatomical_state_v2' as const;
 export const LIVE_HAND_FAST_LANDMARK_SCHEMA = 'hand-state.browser-fast-landmarks.v1' as const;
@@ -76,7 +76,13 @@ export type PoseObserverChainAuthorityMode =
   | 'weighted_measurement'
   | 'attenuated_large_innovation'
   | 'held_incoherent_measurement'
-  | 'held_temporal_ambiguity';
+  | 'held_temporal_ambiguity'
+  | 'held_complete_pose_ambiguity';
+
+export type ArticulationAuthorityMode =
+  | 'tracking'
+  | 'ambiguous_articulation_hold'
+  | 'reacquiring';
 
 export type PoseObserverChainAuthority = Record<
   LiveHandFinger,
@@ -184,6 +190,13 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   poseObserverMaxInnovationRad: number | null;
   poseObserverMaxVelocityRadS: number | null;
   poseObserverChainAuthority: PoseObserverChainAuthority | null;
+  articulationAuthorityMode: ArticulationAuthorityMode | null;
+  articulationAuthorityTrigger: 'image_boundary' | null;
+  articulationHoldAgeMs: number | null;
+  imageBoundaryMarginMin: number | null;
+  rejectedArticulationCandidateCount: number | null;
+  reacquisitionEvidenceCount: number | null;
+  correctionSuspended: boolean | null;
   anchorReplay: AnchorReplayTruth | null;
   fingerExtension: {
     target: FingerExtensionTruth;
@@ -516,6 +529,7 @@ const POSE_OBSERVER_CHAIN_AUTHORITY_MODES = new Set<PoseObserverChainAuthorityMo
   'attenuated_large_innovation',
   'held_incoherent_measurement',
   'held_temporal_ambiguity',
+  'held_complete_pose_ambiguity',
 ]);
 
 function normalizeFingerExtensions(value: unknown, label: string): FingerExtensionTruth {
@@ -787,6 +801,13 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let poseObserverMaxInnovationRad: number | null = null;
   let poseObserverMaxVelocityRadS: number | null = null;
   let poseObserverChainAuthority: PoseObserverChainAuthority | null = null;
+  let articulationAuthorityMode: ArticulationAuthorityMode | null = null;
+  let articulationAuthorityTrigger: 'image_boundary' | null = null;
+  let articulationHoldAgeMs: number | null = null;
+  let imageBoundaryMarginMin: number | null = null;
+  let rejectedArticulationCandidateCount: number | null = null;
+  let reacquisitionEvidenceCount: number | null = null;
+  let correctionSuspended: boolean | null = null;
   let anchorReplay: AnchorReplayTruth | null = null;
   let fingerExtension: NormalizedManoFrame['fingerExtension'] = null;
   if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
@@ -985,6 +1006,77 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     poseObserverChainAuthority = normalizePoseObserverChainAuthority(
       diagnostics.poseObserverChainAuthority,
     );
+    const rawArticulationAuthorityMode = text(
+      diagnostics.articulationAuthorityMode,
+      'articulationAuthorityMode',
+    );
+    if (
+      rawArticulationAuthorityMode !== 'tracking'
+      && rawArticulationAuthorityMode !== 'ambiguous_articulation_hold'
+      && rawArticulationAuthorityMode !== 'reacquiring'
+    ) {
+      throw new Error(`unsupported articulation authority mode: ${rawArticulationAuthorityMode}`);
+    }
+    articulationAuthorityMode = rawArticulationAuthorityMode;
+    const rawAuthorityTrigger = diagnostics.articulationAuthorityTrigger;
+    if (rawAuthorityTrigger !== null && rawAuthorityTrigger !== 'image_boundary') {
+      throw new Error('unsupported articulation authority trigger');
+    }
+    articulationAuthorityTrigger = rawAuthorityTrigger;
+    articulationHoldAgeMs = finiteNonNegative(
+      diagnostics.articulationHoldAgeMs,
+      'articulationHoldAgeMs',
+    );
+    imageBoundaryMarginMin = finite(
+      diagnostics.imageBoundaryMarginMin,
+      'imageBoundaryMarginMin',
+    );
+    rejectedArticulationCandidateCount = finiteNonNegative(
+      diagnostics.rejectedArticulationCandidateCount,
+      'rejectedArticulationCandidateCount',
+    );
+    reacquisitionEvidenceCount = finiteNonNegative(
+      diagnostics.reacquisitionEvidenceCount,
+      'reacquisitionEvidenceCount',
+    );
+    if (
+      !Number.isInteger(rejectedArticulationCandidateCount)
+      || !Number.isInteger(reacquisitionEvidenceCount)
+    ) {
+      throw new Error('articulation authority counts must be integers');
+    }
+    if (typeof diagnostics.correctionSuspended !== 'boolean') {
+      throw new Error('correctionSuspended must be boolean');
+    }
+    correctionSuspended = diagnostics.correctionSuspended;
+    if (correctionSuspended !== (articulationAuthorityMode !== 'tracking')) {
+      throw new Error('correction suspension must match articulation authority mode');
+    }
+    if (
+      articulationAuthorityMode !== 'tracking'
+      && articulationAuthorityTrigger !== 'image_boundary'
+    ) {
+      throw new Error('held articulation must expose its authority trigger');
+    }
+    if (
+      articulationAuthorityMode !== 'tracking'
+      && Object.values(poseObserverChainAuthority).some(
+        authority => authority !== 'held_complete_pose_ambiguity',
+      )
+    ) {
+      throw new Error('held articulation must freeze every local finger chain');
+    }
+    if (
+      articulationAuthorityMode === 'tracking'
+      && (
+        articulationAuthorityTrigger !== null
+        || articulationHoldAgeMs !== 0
+        || rejectedArticulationCandidateCount !== 0
+        || reacquisitionEvidenceCount !== 0
+      )
+    ) {
+      throw new Error('tracking articulation cannot retain active hold episode truth');
+    }
     if (
       palmSolverInlierFraction > 1
       || poseSolverRobustInlierFraction > 1
@@ -1104,6 +1196,13 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     poseObserverMaxInnovationRad,
     poseObserverMaxVelocityRadS,
     poseObserverChainAuthority,
+    articulationAuthorityMode,
+    articulationAuthorityTrigger,
+    articulationHoldAgeMs,
+    imageBoundaryMarginMin,
+    rejectedArticulationCandidateCount,
+    reacquisitionEvidenceCount,
+    correctionSuspended,
     anchorReplay,
     fingerExtension,
   };

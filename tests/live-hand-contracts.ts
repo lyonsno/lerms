@@ -723,7 +723,7 @@ const hybridState = {
     mano: { ...state.frame.mano, diagnostic: 'native_mano_regeneration' },
     diagnostics: {
       ...state.frame.diagnostics,
-      fusionMode: 'wilor_anchor_mediapipe_mano_temporal_authority_observer',
+      fusionMode: 'wilor_anchor_mediapipe_mano_complete_pose_authority_v5',
       geometryMode: 'native_mano_regeneration',
       anchorSource: LIVE_HAND_ROUTE,
       anchorCaptureId: 'run-8-1000-1',
@@ -780,6 +780,13 @@ const hybridState = {
         ring: 'held_incoherent_measurement',
         pinky: 'held_temporal_ambiguity',
       },
+      articulationAuthorityMode: 'tracking',
+      articulationAuthorityTrigger: null,
+      articulationHoldAgeMs: 0,
+      imageBoundaryMarginMin: 0.25,
+      rejectedArticulationCandidateCount: 0,
+      reacquisitionEvidenceCount: 0,
+      correctionSuspended: false,
       anchorReplay: {
         mode: 'capture_time_fast_observation_replay_v1',
         anchorCaptureTimestampMs: 1_000,
@@ -817,10 +824,10 @@ assertThrows(
 );
 assert(hybrid.effectiveRoute === LIVE_HAND_HYBRID_ROUTE, 'accepts the explicit WiLoR-anchor/browser-fast hybrid route');
 assert(
-  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v4',
+  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v5',
   'the consumer accepts only the articulated MANO route',
 );
-assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_temporal_authority_observer', 'preserves the time-indexed state-observer fusion mode');
+assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_complete_pose_authority_v5', 'preserves the time-indexed state-observer fusion mode');
 assert(hybrid.geometryMode === 'native_mano_regeneration', 'requires native MANO surface regeneration');
 assert(hybrid.anchorCaptureId === 'run-8-1000-1', 'preserves the exact paired WiLoR/MediaPipe capture identity');
 assert(hybrid.fitResidualMean === 0.024, 'preserves the articulated fit residual');
@@ -900,6 +907,74 @@ assert(
     && hybrid.poseObserverChainAuthority?.ring === 'held_incoherent_measurement'
     && hybrid.poseObserverChainAuthority?.pinky === 'held_temporal_ambiguity',
   'preserves observer identity, capture watermark, and spatial/temporal chain authority',
+);
+assert(
+  hybrid.articulationAuthorityMode === 'tracking'
+    && hybrid.articulationAuthorityTrigger === null
+    && hybrid.correctionSuspended === false,
+  'preserves complete-pose articulation authority while tracking',
+);
+const heldCompletePose = normalizeLiveManoFrame({
+  ...hybridState,
+  frame: {
+    ...hybridState.frame,
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      poseObserverChainAuthority: {
+        thumb: 'held_complete_pose_ambiguity',
+        index: 'held_complete_pose_ambiguity',
+        middle: 'held_complete_pose_ambiguity',
+        ring: 'held_complete_pose_ambiguity',
+        pinky: 'held_complete_pose_ambiguity',
+      },
+      articulationAuthorityMode: 'ambiguous_articulation_hold',
+      articulationAuthorityTrigger: 'image_boundary',
+      articulationHoldAgeMs: 67,
+      imageBoundaryMarginMin: -0.08,
+      rejectedArticulationCandidateCount: 3,
+      reacquisitionEvidenceCount: 0,
+      correctionSuspended: true,
+    },
+  },
+});
+assert(
+  heldCompletePose.articulationAuthorityMode === 'ambiguous_articulation_hold'
+    && heldCompletePose.imageBoundaryMarginMin === -0.08
+    && heldCompletePose.rejectedArticulationCandidateCount === 3
+    && heldCompletePose.poseObserverChainAuthority?.index === 'held_complete_pose_ambiguity',
+  'preserves boundary-triggered complete-pose hold truth',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        articulationAuthorityMode: 'ambiguous_articulation_hold',
+        articulationAuthorityTrigger: 'image_boundary',
+        correctionSuspended: false,
+      },
+    },
+  }),
+  'correction suspension must match articulation authority mode',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        articulationAuthorityMode: 'tracking',
+        articulationAuthorityTrigger: 'image_boundary',
+        articulationHoldAgeMs: 50,
+        rejectedArticulationCandidateCount: 2,
+        reacquisitionEvidenceCount: 5,
+      },
+    },
+  }),
+  'tracking articulation cannot retain active hold episode truth',
 );
 assert(
   hybrid.anchorReplay?.mode === 'capture_time_fast_observation_replay_v1'

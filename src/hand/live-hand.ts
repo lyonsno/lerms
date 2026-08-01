@@ -404,6 +404,13 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   poseObserverMaxInnovationRad: number | null;
   poseObserverMaxVelocityRadS: number | null;
   poseObserverChainAuthority: NormalizedManoFrame['poseObserverChainAuthority'];
+  articulationAuthorityMode: NormalizedManoFrame['articulationAuthorityMode'];
+  articulationAuthorityTrigger: NormalizedManoFrame['articulationAuthorityTrigger'];
+  articulationHoldAgeMs: number | null;
+  imageBoundaryMarginMin: number | null;
+  rejectedArticulationCandidateCount: number | null;
+  reacquisitionEvidenceCount: number | null;
+  correctionSuspended: boolean | null;
   anchorReplay: NormalizedManoFrame['anchorReplay'];
   fingerExtension: NormalizedManoFrame['fingerExtension'];
   fallbackState: null;
@@ -612,6 +619,8 @@ function publishFluidPacketForFrame(frame: NormalizedManoFrame): void {
     frameId: frame.frameId,
     captureTimestampMs: frame.captureTimestampMs,
     effectiveRoute: frame.effectiveRoute,
+    articulationAuthorityMode: frame.articulationAuthorityMode,
+    correctionSuspended: frame.correctionSuspended,
     confidence: frame.confidence,
     handedness: frame.handedness,
     keypoints3d: frame.keypoints3d,
@@ -1482,6 +1491,14 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     poseObserverMaxInnovationRad: frame.poseObserverMaxInnovationRad,
     poseObserverMaxVelocityRadS: frame.poseObserverMaxVelocityRadS,
     poseObserverChainAuthority: frame.poseObserverChainAuthority,
+    articulationAuthorityMode: frame.articulationAuthorityMode,
+    articulationAuthorityTrigger: frame.articulationAuthorityTrigger,
+    articulationHoldAgeMs: frame.articulationHoldAgeMs,
+    imageBoundaryMarginMin: frame.imageBoundaryMarginMin,
+    rejectedArticulationCandidateCount:
+      frame.rejectedArticulationCandidateCount,
+    reacquisitionEvidenceCount: frame.reacquisitionEvidenceCount,
+    correctionSuspended: frame.correctionSuspended,
     anchorReplay: frame.anchorReplay,
     fingerExtension: frame.fingerExtension,
     fallbackState: null,

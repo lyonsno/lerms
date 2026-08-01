@@ -1,6 +1,7 @@
 import {
   LIVE_HAND_HYBRID_ROUTE,
   LIVE_HAND_ROUTE,
+  type ArticulationAuthorityMode,
   type ManoDisplayTransform,
 } from './live-hand-contract.js';
 
@@ -125,6 +126,8 @@ export interface LiveFingerFluidFrame {
   frameId: string;
   captureTimestampMs: number;
   effectiveRoute: string;
+  articulationAuthorityMode?: ArticulationAuthorityMode | null;
+  correctionSuspended?: boolean | null;
   confidence: number;
   handedness: string;
   keypoints3d: readonly Vec3[];
@@ -622,9 +625,17 @@ export function createLiveFingerFluidEmitterPacket(
   const sampleAgeMs = Math.max(0, nowMs - frame.captureTimestampMs);
   const stale = sampleAgeMs > MAX_LIVE_SAMPLE_AGE_MS;
   const economics = normalizeLiveFingerFluidEconomics(economicsOptions);
+  const articulationAuthorityFailure = frame.effectiveRoute === LIVE_HAND_HYBRID_ROUTE
+    ? frame.articulationAuthorityMode !== 'tracking'
+      ? frame.articulationAuthorityMode ?? 'missing_articulation_authority'
+      : frame.correctionSuspended !== false
+        ? 'correction_suspended'
+        : null
+    : null;
   const simulationSafe = LIVE_HAND_FLUID_ACCEPTED_ROUTES.has(frame.effectiveRoute)
     && frame.confidence > 0
     && frame.keypoints3d.length >= 21
+    && articulationAuthorityFailure === null
     && !stale;
   const emitterDrafts = FINGERS.map(finger => {
     const distal = frame.keypoints3d[finger.joints[2]];
@@ -671,7 +682,9 @@ export function createLiveFingerFluidEmitterPacket(
       stale,
       reason: simulationSafe
         ? economics.fallbackReason
-        : stale ? 'stale_hand_frame' : 'invalid_live_hand_route',
+        : stale
+          ? 'stale_hand_frame'
+          : articulationAuthorityFailure ?? 'invalid_live_hand_route',
     },
     economics,
     emitters,
