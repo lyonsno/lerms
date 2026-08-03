@@ -55,7 +55,7 @@ export interface RuntimeHealthTruth extends RuntimeRouteTruth {
   }>;
 }
 
-export type RuntimeSidecarModelReadiness = 'warming' | 'ready' | 'failed_before_ready' | 'stopped';
+export type RuntimeSidecarModelReadiness = 'warming' | 'ready' | 'unresponsive' | 'failed_before_ready' | 'stopped';
 
 export interface RuntimeSidecarStatusTruth {
   runtimeOwner: typeof LIVE_HAND_RUNTIME_OWNER;
@@ -488,6 +488,7 @@ export function assertLiveRuntimeSidecarStatus(value: unknown): RuntimeSidecarSt
   if (
     modelReadiness !== 'warming'
     && modelReadiness !== 'ready'
+    && modelReadiness !== 'unresponsive'
     && modelReadiness !== 'failed_before_ready'
     && modelReadiness !== 'stopped'
   ) {
@@ -498,6 +499,9 @@ export function assertLiveRuntimeSidecarStatus(value: unknown): RuntimeSidecarSt
   }
   if (modelReadiness === 'warming' && (!status.running || status.modelReady)) {
     throw new Error('warming sidecar must be running without a loaded model');
+  }
+  if (modelReadiness === 'unresponsive' && (!status.running || status.modelReady)) {
+    throw new Error('unresponsive sidecar must be running without current model authority');
   }
   if ((modelReadiness === 'failed_before_ready' || modelReadiness === 'stopped') && status.modelReady) {
     throw new Error(`${modelReadiness} sidecar cannot claim a loaded model`);

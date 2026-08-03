@@ -155,6 +155,19 @@ const readySidecar = assertLiveRuntimeSidecarStatus({
   stopReason: null,
 });
 assert(readySidecar.modelReady && readySidecar.modelStartupMs === 250, 'preserves loaded model timing');
+const unresponsiveSidecar = assertLiveRuntimeSidecarStatus({
+  runtimeOwner: 'hand-state-runtime',
+  running: true,
+  modelReady: false,
+  modelReadiness: 'unresponsive',
+  modelReadyAtMs: 1250,
+  modelStartupMs: 250,
+  stopReason: null,
+});
+assert(
+  unresponsiveSidecar.modelReadiness === 'unresponsive' && !unresponsiveSidecar.modelReady,
+  'preserves pid-alive but operationally stale sidecar truth',
+);
 assertThrows(
   () => assertLiveRuntimeSidecarStatus({
     runtimeOwner: 'hand-state-runtime',
@@ -202,6 +215,11 @@ const readySidecarStatus = {
   modelReadyAtMs: 1250,
   modelStartupMs: 250,
   stopReason: null,
+};
+const unresponsiveSidecarStatus = {
+  ...readySidecarStatus,
+  modelReady: false,
+  modelReadiness: 'unresponsive',
 };
 
 function scriptedSidecarReadiness({
@@ -253,6 +271,18 @@ await Promise.all([
 assert(
   staleEvents.filter(event => event === 'start').length === 2,
   'resolved prewarm is not durable authority and concurrent stale callers share one replacement start',
+);
+
+const unresponsiveEvents: string[] = [];
+const unresponsiveCoordinator = scriptedSidecarReadiness({
+  statuses: [unresponsiveSidecarStatus, readySidecarStatus],
+  starts: [readySidecarStatus],
+  events: unresponsiveEvents,
+});
+await unresponsiveCoordinator.ensureCurrentReady();
+assert(
+  unresponsiveEvents.filter(event => event === 'start').length === 1,
+  'pid-alive unresponsive sidecar is replaced before camera admission',
 );
 
 let rejectedCameraCalls = 0;
