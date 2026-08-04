@@ -13,6 +13,10 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 
+import {
+  summarizeCanonicalPerformanceSamples,
+} from './hill-of-hills-gpu-canonical-performance-metrics.mjs';
+
 const CHROME =
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const EXPECTED_VIEWER =
@@ -38,6 +42,7 @@ const report = {
   terrainPixelsPresent: false,
   causalTerrainDeltaPresent: false,
   frozenGenerationStable: false,
+  performanceEvidenceComplete: false,
   primaryOutputWritten: false,
   viewport: {
     width: options.width,
@@ -49,7 +54,10 @@ const report = {
       options.secondEpisodeTimeMs,
     lateSourceElapsedMs: null,
     frozenRepeatCount: 5,
+    performanceWindowMs: options.performanceWindowMs,
+    runContext: options.runContext,
   },
+  performance: null,
   present: null,
   actorHiddenControl: null,
   secondEpisode: null,
@@ -61,6 +69,7 @@ const report = {
     secondEpisode: options.secondEpisodeScreenshot,
     departed: options.departedScreenshot,
     phaseStrip: options.phaseStrip,
+    performanceWindow: options.performanceScreenshot,
   },
 };
 
@@ -113,6 +122,57 @@ async function runWitness() {
         deviceScaleFactor: 1,
         mobile: false,
       },
+    );
+
+    report.phase = 'sampling-live-performance';
+    const performanceUrl = withQuery(options.url, {
+      actor: 'lerm-horde-live',
+      terrain: 'gpu-resident',
+      gpuTime: null,
+      actorVisual: null,
+    });
+    const performanceStartState = await navigateToSettled(
+      browser,
+      performanceUrl,
+      true,
+    );
+    const performanceSamples = await capturePerformanceSamples(
+      browser,
+      options.performanceWindowMs,
+    );
+    const performanceEndState = await currentState(browser);
+    const performanceShot = await captureScreenshot(
+      browser,
+      options.performanceScreenshot,
+    );
+    const performanceSummary =
+      summarizeCanonicalPerformanceSamples({
+        samples: performanceSamples,
+        requestedWindowMs: options.performanceWindowMs,
+        runContext: options.runContext,
+        expected: {
+          viewer: EXPECTED_VIEWER,
+          terrain: EXPECTED_TERRAIN,
+          actor:
+            'lerms/lerm-horde/primary-viewer-actor-frame-v0',
+          backend: 'webgpu',
+        },
+      });
+    report.performance = {
+      requestedUrl: performanceUrl,
+      effectiveUrl: performanceEndState.location,
+      startState: performanceStartState,
+      endState: performanceEndState,
+      samples: performanceSamples,
+      summary: performanceSummary,
+      screenshot: performanceShot,
+    };
+    report.performanceEvidenceComplete =
+      performanceSummary.complete;
+    assert.equal(
+      report.performanceEvidenceComplete,
+      true,
+      `canonical performance evidence incomplete: ${performanceSummary.reasons.join('; ')}`,
     );
 
     report.phase = 'capturing-actor-generation';
@@ -488,6 +548,61 @@ async function currentState(browser) {
   })()`);
 }
 
+async function capturePerformanceSamples(browser, windowMs) {
+  return browser.evaluate(`(() => new Promise((resolve) => {
+    const requestedWindowMs = ${JSON.stringify(windowMs)};
+    const samples = [];
+    let firstTimestamp = null;
+    const sample = (timestampMs) => {
+      const state = window.__hillGpuCanonicalViewer;
+      const canvas = document.querySelector('#lerms-canvas');
+      if (firstTimestamp === null) firstTimestamp = timestampMs;
+      samples.push({
+        timestampMs,
+        generation: state?.presentation?.generation?.current ?? null,
+        queueSubmissionOrdinal:
+          state?.presentation?.generation?.queueSubmissionOrdinal ?? null,
+        viewer: state?.effective ?? null,
+        terrain: state?.route?.terrain ?? null,
+        actor:
+          state?.host?.effectiveActorRoutes?.[0] ??
+          canvas?.dataset?.lermHordeActorRoute ??
+          null,
+        backend: state?.route?.backend ?? null,
+        fallbackStatus: state?.route?.fallbackStatus ?? null,
+        staleStatus: state?.route?.staleStatus ?? null,
+        sourceElapsedMs: state?.lifecycle?.sourceElapsedMs ?? null,
+        hostTimestampMs: state?.host?.timestampMs ?? null,
+        lifecyclePhase: state?.lifecycle?.phase ?? null,
+        visibleCanvasCount: Array.from(
+          document.querySelectorAll('canvas')
+        ).filter((candidate) => {
+          const style = getComputedStyle(candidate);
+          const rect = candidate.getBoundingClientRect();
+          return style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            rect.width > 0 &&
+            rect.height > 0;
+        }).length,
+        fullTerrainCpuUploads:
+          state?.transfer?.fullTerrainCpuUploads ?? null,
+        fullFieldWorkerTransfersAfterInitialization:
+          state?.transfer
+            ?.fullFieldWorkerTransfersAfterInitialization ?? null,
+        fullFieldReadbacksAfterInitialization:
+          state?.transfer
+            ?.fullFieldReadbacksAfterInitialization ?? null,
+      });
+      if (timestampMs - firstTimestamp >= requestedWindowMs) {
+        resolve(samples);
+        return;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }))()`);
+}
+
 async function captureScreenshot(
   browser,
   outputPath,
@@ -726,12 +841,33 @@ function parseArgs(args) {
     values.get('output-root') ??
       'artifacts/hill-gpu-canonical-viewer/run_001',
   );
+  const performanceWindowMs = Number(
+    values.get('performance-window-ms') ?? '4000',
+  );
+  if (
+    !Number.isFinite(performanceWindowMs) ||
+    performanceWindowMs <= 0
+  ) {
+    throw new Error(
+      `invalid --performance-window-ms ${performanceWindowMs}`,
+    );
+  }
+  const runContext =
+    values.get('run-context') ?? 'contended-diagnostic';
+  if (
+    runContext !== 'contended-diagnostic' &&
+    runContext !== 'quiet-baseline'
+  ) {
+    throw new Error(`invalid --run-context ${runContext}`);
+  }
   return {
     url:
       values.get('url') ??
       'http://127.0.0.1:4193/',
     width: Number(match[1]),
     height: Number(match[2]),
+    performanceWindowMs,
+    runContext,
     actorTimeMs: Number(
       values.get('actor-time-ms') ?? '1100',
     ),
@@ -761,6 +897,10 @@ function parseArgs(args) {
     phaseStrip: resolve(
       values.get('phase-strip') ??
         `${outputRoot}/phase-strip.png`,
+    ),
+    performanceScreenshot: resolve(
+      values.get('performance-screenshot') ??
+        `${outputRoot}/performance-window.png`,
     ),
   };
 }
