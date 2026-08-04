@@ -411,6 +411,14 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   rejectedArticulationCandidateCount: number | null;
   reacquisitionEvidenceCount: number | null;
   correctionSuspended: boolean | null;
+  boundaryConsensusActive: boolean | null;
+  boundaryConsensusAnchorEvidenceCount: number | null;
+  boundaryConsensusAnchorCaptureId: string | null;
+  boundaryConsensusMeanExtensionDelta: number | null;
+  boundaryConsensusMaxExtensionDelta: number | null;
+  boundaryConsensusAgreeingChainCount: number | null;
+  boundaryConsensusMeanChainDirectionDeltaRad: number | null;
+  boundaryConsensusMaxChainDirectionDeltaRad: number | null;
   anchorReplay: NormalizedManoFrame['anchorReplay'];
   fingerExtension: NormalizedManoFrame['fingerExtension'];
   fallbackState: null;
@@ -1499,6 +1507,21 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
       frame.rejectedArticulationCandidateCount,
     reacquisitionEvidenceCount: frame.reacquisitionEvidenceCount,
     correctionSuspended: frame.correctionSuspended,
+    boundaryConsensusActive: frame.boundaryConsensusActive,
+    boundaryConsensusAnchorEvidenceCount:
+      frame.boundaryConsensusAnchorEvidenceCount,
+    boundaryConsensusAnchorCaptureId:
+      frame.boundaryConsensusAnchorCaptureId,
+    boundaryConsensusMeanExtensionDelta:
+      frame.boundaryConsensusMeanExtensionDelta,
+    boundaryConsensusMaxExtensionDelta:
+      frame.boundaryConsensusMaxExtensionDelta,
+    boundaryConsensusAgreeingChainCount:
+      frame.boundaryConsensusAgreeingChainCount,
+    boundaryConsensusMeanChainDirectionDeltaRad:
+      frame.boundaryConsensusMeanChainDirectionDeltaRad,
+    boundaryConsensusMaxChainDirectionDeltaRad:
+      frame.boundaryConsensusMaxChainDirectionDeltaRad,
     anchorReplay: frame.anchorReplay,
     fingerExtension: frame.fingerExtension,
     fallbackState: null,

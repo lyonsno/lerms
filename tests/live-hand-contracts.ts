@@ -817,6 +817,14 @@ const hybridState = {
       rejectedArticulationCandidateCount: 0,
       reacquisitionEvidenceCount: 0,
       correctionSuspended: false,
+      boundaryConsensusActive: false,
+      boundaryConsensusAnchorEvidenceCount: 0,
+      boundaryConsensusAnchorCaptureId: null,
+      boundaryConsensusMeanExtensionDelta: null,
+      boundaryConsensusMaxExtensionDelta: null,
+      boundaryConsensusAgreeingChainCount: 0,
+      boundaryConsensusMeanChainDirectionDeltaRad: null,
+      boundaryConsensusMaxChainDirectionDeltaRad: null,
       anchorReplay: {
         mode: 'capture_time_fast_observation_replay_v1',
         anchorCaptureTimestampMs: 1_000,
@@ -943,6 +951,57 @@ assert(
     && hybrid.articulationAuthorityTrigger === null
     && hybrid.correctionSuspended === false,
   'preserves complete-pose articulation authority while tracking',
+);
+assert(
+  hybrid.boundaryConsensusActive === false
+    && hybrid.boundaryConsensusAnchorEvidenceCount === 0
+    && hybrid.boundaryConsensusAnchorCaptureId === null,
+  'preserves inactive boundary-consensus truth',
+);
+const activeBoundaryConsensus = normalizeLiveManoFrame({
+  ...hybridState,
+  frame: {
+    ...hybridState.frame,
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      imageBoundaryMarginMin: -0.04,
+      boundaryConsensusActive: true,
+      boundaryConsensusAnchorEvidenceCount: 2,
+      boundaryConsensusAnchorCaptureId: 'run-8-1080-3',
+      boundaryConsensusMeanExtensionDelta: 0.18,
+      boundaryConsensusMaxExtensionDelta: 0.31,
+      boundaryConsensusAgreeingChainCount: 5,
+      boundaryConsensusMeanChainDirectionDeltaRad: 0.37,
+      boundaryConsensusMaxChainDirectionDeltaRad: 0.52,
+    },
+  },
+});
+assert(
+  activeBoundaryConsensus.boundaryConsensusActive
+    && activeBoundaryConsensus.boundaryConsensusAnchorEvidenceCount === 2
+    && activeBoundaryConsensus.boundaryConsensusAnchorCaptureId === 'run-8-1080-3'
+    && activeBoundaryConsensus.boundaryConsensusAgreeingChainCount === 5,
+  'preserves active source-distinct boundary-consensus truth',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        boundaryConsensusActive: true,
+        boundaryConsensusAnchorEvidenceCount: 1,
+        boundaryConsensusAnchorCaptureId: 'run-8-1080-3',
+        boundaryConsensusMeanExtensionDelta: 0.18,
+        boundaryConsensusMaxExtensionDelta: 0.31,
+        boundaryConsensusAgreeingChainCount: 5,
+        boundaryConsensusMeanChainDirectionDeltaRad: 0.37,
+        boundaryConsensusMaxChainDirectionDeltaRad: 0.52,
+      },
+    },
+  }),
+  'active boundary consensus requires two anchors at the image boundary',
 );
 const heldCompletePose = normalizeLiveManoFrame({
   ...hybridState,

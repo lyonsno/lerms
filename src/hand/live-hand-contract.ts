@@ -197,6 +197,14 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   rejectedArticulationCandidateCount: number | null;
   reacquisitionEvidenceCount: number | null;
   correctionSuspended: boolean | null;
+  boundaryConsensusActive: boolean | null;
+  boundaryConsensusAnchorEvidenceCount: number | null;
+  boundaryConsensusAnchorCaptureId: string | null;
+  boundaryConsensusMeanExtensionDelta: number | null;
+  boundaryConsensusMaxExtensionDelta: number | null;
+  boundaryConsensusAgreeingChainCount: number | null;
+  boundaryConsensusMeanChainDirectionDeltaRad: number | null;
+  boundaryConsensusMaxChainDirectionDeltaRad: number | null;
   anchorReplay: AnchorReplayTruth | null;
   fingerExtension: {
     target: FingerExtensionTruth;
@@ -812,6 +820,14 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let rejectedArticulationCandidateCount: number | null = null;
   let reacquisitionEvidenceCount: number | null = null;
   let correctionSuspended: boolean | null = null;
+  let boundaryConsensusActive: boolean | null = null;
+  let boundaryConsensusAnchorEvidenceCount: number | null = null;
+  let boundaryConsensusAnchorCaptureId: string | null = null;
+  let boundaryConsensusMeanExtensionDelta: number | null = null;
+  let boundaryConsensusMaxExtensionDelta: number | null = null;
+  let boundaryConsensusAgreeingChainCount: number | null = null;
+  let boundaryConsensusMeanChainDirectionDeltaRad: number | null = null;
+  let boundaryConsensusMaxChainDirectionDeltaRad: number | null = null;
   let anchorReplay: AnchorReplayTruth | null = null;
   let fingerExtension: NormalizedManoFrame['fingerExtension'] = null;
   if (effectiveRoute === LIVE_HAND_HYBRID_ROUTE) {
@@ -1056,6 +1072,77 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     if (correctionSuspended !== (articulationAuthorityMode !== 'tracking')) {
       throw new Error('correction suspension must match articulation authority mode');
     }
+    if (typeof diagnostics.boundaryConsensusActive !== 'boolean') {
+      throw new Error('boundaryConsensusActive must be boolean');
+    }
+    boundaryConsensusActive = diagnostics.boundaryConsensusActive;
+    boundaryConsensusAnchorEvidenceCount = finiteNonNegative(
+      diagnostics.boundaryConsensusAnchorEvidenceCount,
+      'boundaryConsensusAnchorEvidenceCount',
+    );
+    boundaryConsensusAgreeingChainCount = finiteNonNegative(
+      diagnostics.boundaryConsensusAgreeingChainCount,
+      'boundaryConsensusAgreeingChainCount',
+    );
+    if (
+      !Number.isInteger(boundaryConsensusAnchorEvidenceCount)
+      || !Number.isInteger(boundaryConsensusAgreeingChainCount)
+      || boundaryConsensusAgreeingChainCount > 5
+    ) {
+      throw new Error('boundary consensus counts must be bounded integers');
+    }
+    if (boundaryConsensusAnchorEvidenceCount === 0) {
+      if (
+        boundaryConsensusActive
+        || diagnostics.boundaryConsensusAnchorCaptureId !== null
+        || diagnostics.boundaryConsensusMeanExtensionDelta !== null
+        || diagnostics.boundaryConsensusMaxExtensionDelta !== null
+        || diagnostics.boundaryConsensusMeanChainDirectionDeltaRad !== null
+        || diagnostics.boundaryConsensusMaxChainDirectionDeltaRad !== null
+        || boundaryConsensusAgreeingChainCount !== 0
+      ) {
+        throw new Error('inactive boundary consensus cannot carry evidence truth');
+      }
+    } else {
+      boundaryConsensusAnchorCaptureId = text(
+        diagnostics.boundaryConsensusAnchorCaptureId,
+        'boundaryConsensusAnchorCaptureId',
+      );
+      boundaryConsensusMeanExtensionDelta = finiteNonNegative(
+        diagnostics.boundaryConsensusMeanExtensionDelta,
+        'boundaryConsensusMeanExtensionDelta',
+      );
+      boundaryConsensusMaxExtensionDelta = finiteNonNegative(
+        diagnostics.boundaryConsensusMaxExtensionDelta,
+        'boundaryConsensusMaxExtensionDelta',
+      );
+      boundaryConsensusMeanChainDirectionDeltaRad = finiteNonNegative(
+        diagnostics.boundaryConsensusMeanChainDirectionDeltaRad,
+        'boundaryConsensusMeanChainDirectionDeltaRad',
+      );
+      boundaryConsensusMaxChainDirectionDeltaRad = finiteNonNegative(
+        diagnostics.boundaryConsensusMaxChainDirectionDeltaRad,
+        'boundaryConsensusMaxChainDirectionDeltaRad',
+      );
+      if (
+        boundaryConsensusAgreeingChainCount < 4
+        || boundaryConsensusMeanExtensionDelta > 0.25
+        || boundaryConsensusMeanChainDirectionDeltaRad > 0.55
+        || boundaryConsensusMaxChainDirectionDeltaRad > 0.85
+      ) {
+        throw new Error('boundary consensus exceeds its structural agreement bounds');
+      }
+    }
+    if (
+      boundaryConsensusActive
+      && (
+        articulationAuthorityMode !== 'tracking'
+        || boundaryConsensusAnchorEvidenceCount < 2
+        || imageBoundaryMarginMin >= 0
+      )
+    ) {
+      throw new Error('active boundary consensus requires two anchors at the image boundary');
+    }
     if (
       articulationAuthorityMode !== 'tracking'
       && articulationAuthorityTrigger !== 'image_boundary'
@@ -1207,6 +1294,14 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     rejectedArticulationCandidateCount,
     reacquisitionEvidenceCount,
     correctionSuspended,
+    boundaryConsensusActive,
+    boundaryConsensusAnchorEvidenceCount,
+    boundaryConsensusAnchorCaptureId,
+    boundaryConsensusMeanExtensionDelta,
+    boundaryConsensusMaxExtensionDelta,
+    boundaryConsensusAgreeingChainCount,
+    boundaryConsensusMeanChainDirectionDeltaRad,
+    boundaryConsensusMaxChainDirectionDeltaRad,
     anchorReplay,
     fingerExtension,
   };
