@@ -45,7 +45,7 @@ const hybridPacket = createLiveFingerFluidEmitterPacket({
   eventSequence: 171,
   frameId: 'frame-hybrid-17',
   captureTimestampMs: 1_000,
-  effectiveRoute: 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v5',
+  effectiveRoute: 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v6',
   articulationAuthorityMode: 'tracking',
   correctionSuspended: false,
   confidence: 0.96,
@@ -64,13 +64,13 @@ assert(packet.route_identity === 'native_wilor_mini_mlx_detector_sidecar_live', 
 assert(packet.adapter_contract === LIVE_FINGER_FLUID_ADAPTER_CONTRACT, 'packet identifies the LERMS hand-to-fluid adapter separately');
 assert(packet.authority.simulation_safe === true && packet.authority.stale === false, 'fresh native frames pass the solver authority gate');
 assert(hybridPacket.simulation_authority === 'live_simulation', 'fresh hybrid frames carry live simulation authority');
-assert(hybridPacket.source_route === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v5', 'hybrid packet preserves fused source route');
+assert(hybridPacket.source_route === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v6', 'hybrid packet preserves fused source route');
 assert(hybridPacket.authority.simulation_safe === true && hybridPacket.authority.stale === false, 'fresh hybrid frames pass the solver authority gate');
 const heldHybridPacket = createLiveFingerFluidEmitterPacket({
   eventSequence: 172,
   frameId: 'frame-hybrid-held-17',
   captureTimestampMs: 1_000,
-  effectiveRoute: 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v5',
+  effectiveRoute: 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v6',
   articulationAuthorityMode: 'ambiguous_articulation_hold',
   correctionSuspended: true,
   confidence: 0.96,

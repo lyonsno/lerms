@@ -380,7 +380,9 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   jointStepIntervalMs: number | null;
   jointStepLimitRad: number | null;
   maxJointStepAppliedRad: number | null;
-  jointStepPolicy: 'fixed_speed' | 'adaptive_confidence_residual_anchor_v2' | null;
+  jointStepPolicy: NormalizedManoFrame['jointStepPolicy'];
+  reacquisitionCatchupRemainingMs: number | null;
+  reacquisitionCatchupSourceCaptureId: string | null;
   jointStepSpeedRadS: number | null;
   jointStepBaseLimitRad: number | null;
   adaptiveStepQuality: number | null;
@@ -411,6 +413,7 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   rejectedArticulationCandidateCount: number | null;
   reacquisitionEvidenceCount: number | null;
   correctionSuspended: boolean | null;
+  completePoseAmbiguity: NormalizedManoFrame['completePoseAmbiguity'];
   boundaryConsensusActive: boolean | null;
   boundaryConsensusAnchorEvidenceCount: number | null;
   boundaryConsensusAnchorCaptureId: string | null;
@@ -1475,6 +1478,10 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     jointStepLimitRad: frame.jointStepLimitRad,
     maxJointStepAppliedRad: frame.maxJointStepAppliedRad,
     jointStepPolicy: frame.jointStepPolicy,
+    reacquisitionCatchupRemainingMs:
+      frame.reacquisitionCatchupRemainingMs,
+    reacquisitionCatchupSourceCaptureId:
+      frame.reacquisitionCatchupSourceCaptureId,
     jointStepSpeedRadS: frame.jointStepSpeedRadS,
     jointStepBaseLimitRad: frame.jointStepBaseLimitRad,
     adaptiveStepQuality: frame.adaptiveStepQuality,
@@ -1507,6 +1514,7 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
       frame.rejectedArticulationCandidateCount,
     reacquisitionEvidenceCount: frame.reacquisitionEvidenceCount,
     correctionSuspended: frame.correctionSuspended,
+    completePoseAmbiguity: frame.completePoseAmbiguity,
     boundaryConsensusActive: frame.boundaryConsensusActive,
     boundaryConsensusAnchorEvidenceCount:
       frame.boundaryConsensusAnchorEvidenceCount,

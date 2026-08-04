@@ -1,8 +1,8 @@
 export const LIVE_HAND_ROUTE = 'native_wilor_mini_mlx_detector_sidecar_live' as const;
-export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v5' as const;
+export const LIVE_HAND_HYBRID_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v6' as const;
 export const LIVE_HAND_HYBRID_FALLBACK_ROUTE = 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano/fallback' as const;
 export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_live' as const;
-export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_complete_pose_authority_v5' as const;
+export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_complete_pose_authority_v6' as const;
 export const LIVE_HAND_HYBRID_GEOMETRY_MODE = 'native_mano_regeneration' as const;
 export const LIVE_HAND_POSE_OBSERVER_MODE = 'fixed_lag_anatomical_state_v2' as const;
 export const LIVE_HAND_FAST_LANDMARK_SCHEMA = 'hand-state.browser-fast-landmarks.v1' as const;
@@ -83,6 +83,16 @@ export type ArticulationAuthorityMode =
   | 'tracking'
   | 'ambiguous_articulation_hold'
   | 'reacquiring';
+
+export interface CompletePoseAmbiguityTruth {
+  ambiguous: boolean;
+  score: number;
+  sampleCount: number;
+  clusterSeparationRad: number;
+  withinClusterRadiusRad: number;
+  alternationFraction: number;
+  maxReversalSpeedRadS: number;
+}
 
 export type PoseObserverChainAuthority = Record<
   LiveHandFinger,
@@ -166,7 +176,13 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   jointStepIntervalMs: number | null;
   jointStepLimitRad: number | null;
   maxJointStepAppliedRad: number | null;
-  jointStepPolicy: 'fixed_speed' | 'adaptive_confidence_residual_anchor_v2' | null;
+  jointStepPolicy:
+    | 'fixed_speed'
+    | 'adaptive_confidence_residual_anchor_v2'
+    | 'atomic_complete_pose_reacquisition_v1'
+    | null;
+  reacquisitionCatchupRemainingMs: number | null;
+  reacquisitionCatchupSourceCaptureId: string | null;
   jointStepSpeedRadS: number | null;
   jointStepBaseLimitRad: number | null;
   adaptiveStepQuality: number | null;
@@ -191,12 +207,13 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   poseObserverMaxVelocityRadS: number | null;
   poseObserverChainAuthority: PoseObserverChainAuthority | null;
   articulationAuthorityMode: ArticulationAuthorityMode | null;
-  articulationAuthorityTrigger: 'image_boundary' | null;
+  articulationAuthorityTrigger: 'complete_pose_ambiguity' | null;
   articulationHoldAgeMs: number | null;
   imageBoundaryMarginMin: number | null;
   rejectedArticulationCandidateCount: number | null;
   reacquisitionEvidenceCount: number | null;
   correctionSuspended: boolean | null;
+  completePoseAmbiguity: CompletePoseAmbiguityTruth | null;
   boundaryConsensusActive: boolean | null;
   boundaryConsensusAnchorEvidenceCount: number | null;
   boundaryConsensusAnchorCaptureId: string | null;
@@ -790,6 +807,8 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let jointStepLimitRad: number | null = null;
   let maxJointStepAppliedRad: number | null = null;
   let jointStepPolicy: NormalizedManoFrame['jointStepPolicy'] = null;
+  let reacquisitionCatchupRemainingMs: number | null = null;
+  let reacquisitionCatchupSourceCaptureId: string | null = null;
   let jointStepSpeedRadS: number | null = null;
   let jointStepBaseLimitRad: number | null = null;
   let adaptiveStepQuality: number | null = null;
@@ -814,12 +833,13 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let poseObserverMaxVelocityRadS: number | null = null;
   let poseObserverChainAuthority: PoseObserverChainAuthority | null = null;
   let articulationAuthorityMode: ArticulationAuthorityMode | null = null;
-  let articulationAuthorityTrigger: 'image_boundary' | null = null;
+  let articulationAuthorityTrigger: 'complete_pose_ambiguity' | null = null;
   let articulationHoldAgeMs: number | null = null;
   let imageBoundaryMarginMin: number | null = null;
   let rejectedArticulationCandidateCount: number | null = null;
   let reacquisitionEvidenceCount: number | null = null;
   let correctionSuspended: boolean | null = null;
+  let completePoseAmbiguity: CompletePoseAmbiguityTruth | null = null;
   let boundaryConsensusActive: boolean | null = null;
   let boundaryConsensusAnchorEvidenceCount: number | null = null;
   let boundaryConsensusAnchorCaptureId: string | null = null;
@@ -914,10 +934,32 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     if (
       rawJointStepPolicy !== 'fixed_speed'
       && rawJointStepPolicy !== 'adaptive_confidence_residual_anchor_v2'
+      && rawJointStepPolicy !== 'atomic_complete_pose_reacquisition_v1'
     ) {
       throw new Error(`unsupported jointStepPolicy: ${rawJointStepPolicy}`);
     }
     jointStepPolicy = rawJointStepPolicy;
+    if (jointStepPolicy === 'atomic_complete_pose_reacquisition_v1') {
+      reacquisitionCatchupRemainingMs = finiteNonNegative(
+        diagnostics.reacquisitionCatchupRemainingMs,
+        'reacquisitionCatchupRemainingMs',
+      );
+      if (
+        reacquisitionCatchupRemainingMs <= 0
+        || reacquisitionCatchupRemainingMs > 200
+      ) {
+        throw new Error('atomic reacquisition must stay inside its 200ms horizon');
+      }
+      reacquisitionCatchupSourceCaptureId = text(
+        diagnostics.reacquisitionCatchupSourceCaptureId,
+        'reacquisitionCatchupSourceCaptureId',
+      );
+    } else if (
+      diagnostics.reacquisitionCatchupRemainingMs !== null
+      || diagnostics.reacquisitionCatchupSourceCaptureId !== null
+    ) {
+      throw new Error('non-atomic joint policy cannot carry reacquisition truth');
+    }
     jointStepSpeedRadS = finiteNonNegative(diagnostics.jointStepSpeedRadS, 'jointStepSpeedRadS');
     jointStepBaseLimitRad = finiteNonNegative(
       diagnostics.jointStepBaseLimitRad,
@@ -1039,7 +1081,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     }
     articulationAuthorityMode = rawArticulationAuthorityMode;
     const rawAuthorityTrigger = diagnostics.articulationAuthorityTrigger;
-    if (rawAuthorityTrigger !== null && rawAuthorityTrigger !== 'image_boundary') {
+    if (
+      rawAuthorityTrigger !== null
+      && rawAuthorityTrigger !== 'complete_pose_ambiguity'
+    ) {
       throw new Error('unsupported articulation authority trigger');
     }
     articulationAuthorityTrigger = rawAuthorityTrigger;
@@ -1072,6 +1117,54 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     if (correctionSuspended !== (articulationAuthorityMode !== 'tracking')) {
       throw new Error('correction suspension must match articulation authority mode');
     }
+    const rawCompletePoseAmbiguity = record(
+      diagnostics.completePoseAmbiguity,
+      'completePoseAmbiguity',
+    );
+    const ambiguitySampleCount = finiteNonNegative(
+      rawCompletePoseAmbiguity.sampleCount,
+      'completePoseAmbiguity.sampleCount',
+    );
+    const ambiguityScore = finiteNonNegative(
+      rawCompletePoseAmbiguity.score,
+      'completePoseAmbiguity.score',
+    );
+    const alternationFraction = finiteNonNegative(
+      rawCompletePoseAmbiguity.alternationFraction,
+      'completePoseAmbiguity.alternationFraction',
+    );
+    if (
+      typeof rawCompletePoseAmbiguity.ambiguous !== 'boolean'
+      || !Number.isInteger(ambiguitySampleCount)
+      || ambiguityScore > 1
+      || alternationFraction > 1
+    ) {
+      throw new Error('completePoseAmbiguity carries invalid bounded truth');
+    }
+    completePoseAmbiguity = {
+      ambiguous: rawCompletePoseAmbiguity.ambiguous,
+      score: ambiguityScore,
+      sampleCount: ambiguitySampleCount,
+      clusterSeparationRad: finiteNonNegative(
+        rawCompletePoseAmbiguity.clusterSeparationRad,
+        'completePoseAmbiguity.clusterSeparationRad',
+      ),
+      withinClusterRadiusRad: finiteNonNegative(
+        rawCompletePoseAmbiguity.withinClusterRadiusRad,
+        'completePoseAmbiguity.withinClusterRadiusRad',
+      ),
+      alternationFraction,
+      maxReversalSpeedRadS: finiteNonNegative(
+        rawCompletePoseAmbiguity.maxReversalSpeedRadS,
+        'completePoseAmbiguity.maxReversalSpeedRadS',
+      ),
+    };
+    if (
+      completePoseAmbiguity.ambiguous
+      && articulationAuthorityMode !== 'ambiguous_articulation_hold'
+    ) {
+      throw new Error('complete-pose ambiguity contradicts tracking authority');
+    }
     if (typeof diagnostics.boundaryConsensusActive !== 'boolean') {
       throw new Error('boundaryConsensusActive must be boolean');
     }
@@ -1091,61 +1184,21 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     ) {
       throw new Error('boundary consensus counts must be bounded integers');
     }
-    if (boundaryConsensusAnchorEvidenceCount === 0) {
-      if (
-        boundaryConsensusActive
-        || diagnostics.boundaryConsensusAnchorCaptureId !== null
-        || diagnostics.boundaryConsensusMeanExtensionDelta !== null
-        || diagnostics.boundaryConsensusMaxExtensionDelta !== null
-        || diagnostics.boundaryConsensusMeanChainDirectionDeltaRad !== null
-        || diagnostics.boundaryConsensusMaxChainDirectionDeltaRad !== null
-        || boundaryConsensusAgreeingChainCount !== 0
-      ) {
-        throw new Error('inactive boundary consensus cannot carry evidence truth');
-      }
-    } else {
-      boundaryConsensusAnchorCaptureId = text(
-        diagnostics.boundaryConsensusAnchorCaptureId,
-        'boundaryConsensusAnchorCaptureId',
-      );
-      boundaryConsensusMeanExtensionDelta = finiteNonNegative(
-        diagnostics.boundaryConsensusMeanExtensionDelta,
-        'boundaryConsensusMeanExtensionDelta',
-      );
-      boundaryConsensusMaxExtensionDelta = finiteNonNegative(
-        diagnostics.boundaryConsensusMaxExtensionDelta,
-        'boundaryConsensusMaxExtensionDelta',
-      );
-      boundaryConsensusMeanChainDirectionDeltaRad = finiteNonNegative(
-        diagnostics.boundaryConsensusMeanChainDirectionDeltaRad,
-        'boundaryConsensusMeanChainDirectionDeltaRad',
-      );
-      boundaryConsensusMaxChainDirectionDeltaRad = finiteNonNegative(
-        diagnostics.boundaryConsensusMaxChainDirectionDeltaRad,
-        'boundaryConsensusMaxChainDirectionDeltaRad',
-      );
-      if (
-        boundaryConsensusAgreeingChainCount < 4
-        || boundaryConsensusMeanExtensionDelta > 0.25
-        || boundaryConsensusMeanChainDirectionDeltaRad > 0.55
-        || boundaryConsensusMaxChainDirectionDeltaRad > 0.85
-      ) {
-        throw new Error('boundary consensus exceeds its structural agreement bounds');
-      }
-    }
     if (
       boundaryConsensusActive
-      && (
-        articulationAuthorityMode !== 'tracking'
-        || boundaryConsensusAnchorEvidenceCount < 2
-        || imageBoundaryMarginMin >= 0
-      )
+      || boundaryConsensusAnchorEvidenceCount !== 0
+      || diagnostics.boundaryConsensusAnchorCaptureId !== null
+      || diagnostics.boundaryConsensusMeanExtensionDelta !== null
+      || diagnostics.boundaryConsensusMaxExtensionDelta !== null
+      || diagnostics.boundaryConsensusMeanChainDirectionDeltaRad !== null
+      || diagnostics.boundaryConsensusMaxChainDirectionDeltaRad !== null
+      || boundaryConsensusAgreeingChainCount !== 0
     ) {
-      throw new Error('active boundary consensus requires two anchors at the image boundary');
+      throw new Error('boundary consensus authority has been retired');
     }
     if (
       articulationAuthorityMode !== 'tracking'
-      && articulationAuthorityTrigger !== 'image_boundary'
+      && articulationAuthorityTrigger !== 'complete_pose_ambiguity'
     ) {
       throw new Error('held articulation must expose its authority trigger');
     }
@@ -1201,7 +1254,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     }
     if (
       jointStepSpeedRadS < 2.4 - 1e-8
-      || jointStepSpeedRadS > 9.6 + 1e-8
+      || (
+        jointStepPolicy !== 'atomic_complete_pose_reacquisition_v1'
+        && jointStepSpeedRadS > 9.6 + 1e-8
+      )
       || adaptiveStepQuality > 1
     ) {
       throw new Error('adaptive joint correction policy exceeds its declared bounds');
@@ -1264,6 +1320,8 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     jointStepLimitRad,
     maxJointStepAppliedRad,
     jointStepPolicy,
+    reacquisitionCatchupRemainingMs,
+    reacquisitionCatchupSourceCaptureId,
     jointStepSpeedRadS,
     jointStepBaseLimitRad,
     adaptiveStepQuality,
@@ -1294,6 +1352,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     rejectedArticulationCandidateCount,
     reacquisitionEvidenceCount,
     correctionSuspended,
+    completePoseAmbiguity,
     boundaryConsensusActive,
     boundaryConsensusAnchorEvidenceCount,
     boundaryConsensusAnchorCaptureId,

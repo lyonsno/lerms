@@ -753,7 +753,7 @@ const hybridState = {
     mano: { ...state.frame.mano, diagnostic: 'native_mano_regeneration' },
     diagnostics: {
       ...state.frame.diagnostics,
-      fusionMode: 'wilor_anchor_mediapipe_mano_complete_pose_authority_v5',
+      fusionMode: 'wilor_anchor_mediapipe_mano_complete_pose_authority_v6',
       geometryMode: 'native_mano_regeneration',
       anchorSource: LIVE_HAND_ROUTE,
       anchorCaptureId: 'run-8-1000-1',
@@ -781,6 +781,8 @@ const hybridState = {
       jointStepLimitRad: 0.08,
       maxJointStepAppliedRad: 0.073,
       jointStepPolicy: 'adaptive_confidence_residual_anchor_v2',
+      reacquisitionCatchupRemainingMs: null,
+      reacquisitionCatchupSourceCaptureId: null,
       jointStepSpeedRadS: 4.8,
       jointStepBaseLimitRad: 0.04,
       adaptiveStepQuality: 1 / 3,
@@ -817,6 +819,15 @@ const hybridState = {
       rejectedArticulationCandidateCount: 0,
       reacquisitionEvidenceCount: 0,
       correctionSuspended: false,
+      completePoseAmbiguity: {
+        ambiguous: false,
+        score: 0,
+        sampleCount: 7,
+        clusterSeparationRad: 0.01,
+        withinClusterRadiusRad: 0.005,
+        alternationFraction: 0,
+        maxReversalSpeedRadS: 0.3,
+      },
       boundaryConsensusActive: false,
       boundaryConsensusAnchorEvidenceCount: 0,
       boundaryConsensusAnchorCaptureId: null,
@@ -862,10 +873,10 @@ assertThrows(
 );
 assert(hybrid.effectiveRoute === LIVE_HAND_HYBRID_ROUTE, 'accepts the explicit WiLoR-anchor/browser-fast hybrid route');
 assert(
-  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v5',
+  LIVE_HAND_HYBRID_ROUTE === 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v6',
   'the consumer accepts only the articulated MANO route',
 );
-assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_complete_pose_authority_v5', 'preserves the time-indexed state-observer fusion mode');
+assert(hybrid.fusionMode === 'wilor_anchor_mediapipe_mano_complete_pose_authority_v6', 'preserves the time-indexed state-observer fusion mode');
 assert(hybrid.geometryMode === 'native_mano_regeneration', 'requires native MANO surface regeneration');
 assert(hybrid.anchorCaptureId === 'run-8-1000-1', 'preserves the exact paired WiLoR/MediaPipe capture identity');
 assert(hybrid.fitResidualMean === 0.024, 'preserves the articulated fit residual');
@@ -952,36 +963,76 @@ assert(
     && hybrid.correctionSuspended === false,
   'preserves complete-pose articulation authority while tracking',
 );
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        completePoseAmbiguity: {
+          ambiguous: true,
+          score: 1,
+          sampleCount: 7,
+          clusterSeparationRad: 0.72,
+          withinClusterRadiusRad: 0.03,
+          alternationFraction: 1,
+          maxReversalSpeedRadS: 21.8,
+        },
+      },
+    },
+  }),
+  'complete-pose ambiguity contradicts tracking authority',
+);
+const atomicReacquisition = normalizeLiveManoFrame({
+  ...hybridState,
+  frame: {
+    ...hybridState.frame,
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      jointStepPolicy: 'atomic_complete_pose_reacquisition_v1',
+      jointStepSpeedRadS: 12,
+      jointStepLimitRad: 0.2,
+      maxJointStepAppliedRad: 0.18,
+      reacquisitionCatchupRemainingMs: 200,
+      reacquisitionCatchupSourceCaptureId: 'consistent-release-7',
+    },
+  },
+});
+assert(
+  atomicReacquisition.jointStepPolicy
+    === 'atomic_complete_pose_reacquisition_v1'
+    && atomicReacquisition.reacquisitionCatchupRemainingMs === 200
+    && atomicReacquisition.reacquisitionCatchupSourceCaptureId
+      === 'consistent-release-7',
+  'preserves source-identified bounded atomic reacquisition truth',
+);
 assert(
   hybrid.boundaryConsensusActive === false
     && hybrid.boundaryConsensusAnchorEvidenceCount === 0
     && hybrid.boundaryConsensusAnchorCaptureId === null,
   'preserves inactive boundary-consensus truth',
 );
-const activeBoundaryConsensus = normalizeLiveManoFrame({
-  ...hybridState,
-  frame: {
-    ...hybridState.frame,
-    diagnostics: {
-      ...hybridState.frame.diagnostics,
-      imageBoundaryMarginMin: -0.04,
-      boundaryConsensusActive: true,
-      boundaryConsensusAnchorEvidenceCount: 2,
-      boundaryConsensusAnchorCaptureId: 'run-8-1080-3',
-      boundaryConsensusMeanExtensionDelta: 0.18,
-      boundaryConsensusMaxExtensionDelta: 0.31,
-      boundaryConsensusAgreeingChainCount: 5,
-      boundaryConsensusMeanChainDirectionDeltaRad: 0.37,
-      boundaryConsensusMaxChainDirectionDeltaRad: 0.52,
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        imageBoundaryMarginMin: -0.04,
+        boundaryConsensusActive: true,
+        boundaryConsensusAnchorEvidenceCount: 2,
+        boundaryConsensusAnchorCaptureId: 'run-8-1080-3',
+        boundaryConsensusMeanExtensionDelta: 0.18,
+        boundaryConsensusMaxExtensionDelta: 0.31,
+        boundaryConsensusAgreeingChainCount: 5,
+        boundaryConsensusMeanChainDirectionDeltaRad: 0.37,
+        boundaryConsensusMaxChainDirectionDeltaRad: 0.52,
+      },
     },
-  },
-});
-assert(
-  activeBoundaryConsensus.boundaryConsensusActive
-    && activeBoundaryConsensus.boundaryConsensusAnchorEvidenceCount === 2
-    && activeBoundaryConsensus.boundaryConsensusAnchorCaptureId === 'run-8-1080-3'
-    && activeBoundaryConsensus.boundaryConsensusAgreeingChainCount === 5,
-  'preserves active source-distinct boundary-consensus truth',
+  }),
+  'boundary consensus authority has been retired',
 );
 assertThrows(
   () => normalizeLiveManoFrame({
@@ -1001,7 +1052,7 @@ assertThrows(
       },
     },
   }),
-  'active boundary consensus requires two anchors at the image boundary',
+  'boundary consensus authority has been retired',
 );
 const heldCompletePose = normalizeLiveManoFrame({
   ...hybridState,
@@ -1017,12 +1068,21 @@ const heldCompletePose = normalizeLiveManoFrame({
         pinky: 'held_complete_pose_ambiguity',
       },
       articulationAuthorityMode: 'ambiguous_articulation_hold',
-      articulationAuthorityTrigger: 'image_boundary',
+      articulationAuthorityTrigger: 'complete_pose_ambiguity',
       articulationHoldAgeMs: 67,
       imageBoundaryMarginMin: -0.08,
       rejectedArticulationCandidateCount: 3,
       reacquisitionEvidenceCount: 0,
       correctionSuspended: true,
+      completePoseAmbiguity: {
+        ambiguous: true,
+        score: 1,
+        sampleCount: 7,
+        clusterSeparationRad: 0.72,
+        withinClusterRadiusRad: 0.03,
+        alternationFraction: 1,
+        maxReversalSpeedRadS: 21.8,
+      },
     },
   },
 });
@@ -1031,7 +1091,7 @@ assert(
     && heldCompletePose.imageBoundaryMarginMin === -0.08
     && heldCompletePose.rejectedArticulationCandidateCount === 3
     && heldCompletePose.poseObserverChainAuthority?.index === 'held_complete_pose_ambiguity',
-  'preserves boundary-triggered complete-pose hold truth',
+  'preserves measurement-triggered complete-pose hold truth',
 );
 assertThrows(
   () => normalizeLiveManoFrame({
@@ -1041,7 +1101,7 @@ assertThrows(
       diagnostics: {
         ...hybridState.frame.diagnostics,
         articulationAuthorityMode: 'ambiguous_articulation_hold',
-        articulationAuthorityTrigger: 'image_boundary',
+        articulationAuthorityTrigger: 'complete_pose_ambiguity',
         correctionSuspended: false,
       },
     },
@@ -1056,7 +1116,7 @@ assertThrows(
       diagnostics: {
         ...hybridState.frame.diagnostics,
         articulationAuthorityMode: 'tracking',
-        articulationAuthorityTrigger: 'image_boundary',
+        articulationAuthorityTrigger: 'complete_pose_ambiguity',
         articulationHoldAgeMs: 50,
         rejectedArticulationCandidateCount: 2,
         reacquisitionEvidenceCount: 5,
@@ -1064,6 +1124,21 @@ assertThrows(
     },
   }),
   'tracking articulation cannot retain active hold episode truth',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        articulationAuthorityMode: 'ambiguous_articulation_hold',
+        articulationAuthorityTrigger: 'image_boundary',
+        correctionSuspended: true,
+      },
+    },
+  }),
+  'unsupported articulation authority trigger',
 );
 assert(
   hybrid.anchorReplay?.mode === 'capture_time_fast_observation_replay_v1'
