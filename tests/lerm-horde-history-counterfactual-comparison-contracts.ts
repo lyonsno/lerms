@@ -54,6 +54,10 @@ assert.equal(
   producerReceipt.historySummary.checksum,
 );
 assert.equal(
+  receipt.source.expectedHighestAdmittedEventSequence,
+  producerReceipt.history.samples.length - 1,
+);
+assert.equal(
   receipt.controls.terrainInitialStateSealed,
   true,
 );
@@ -129,6 +133,37 @@ assert.equal(ambiguous.delta.selectedChanged, false);
 assert.equal(ambiguous.delta.from, null);
 assert.equal(ambiguous.delta.to, null);
 validateLermHordeHistoryCounterfactualReceipt(ambiguous);
+
+const partialHistory = structuredClone(receipt);
+partialHistory.alternatives.inheritedHistory.primary.generation.highestAdmittedEventSequence =
+  0;
+partialHistory.alternatives.inheritedHistory.repeat.generation.highestAdmittedEventSequence =
+  0;
+assert.throws(
+  () => validateLermHordeHistoryCounterfactualReceipt(partialHistory),
+  /admitted|sequence|partial|complete/i,
+  'a mutually consistent partial inherited history cannot impersonate the producer-complete alternative',
+);
+
+const impossibleAffordance = structuredClone(receipt);
+for (const snapshot of [
+  impossibleAffordance.alternatives.inheritedHistory.primary,
+  impossibleAffordance.alternatives.inheritedHistory.repeat,
+]) {
+  snapshot.candidates[0].localExposure = 2;
+  snapshot.runnerUp.localExposure = 2;
+  snapshot.runnerUpExposure = 2;
+  snapshot.decisionMargin = 2;
+}
+impossibleAffordance.delta.decisionMarginDelta = 2;
+impossibleAffordance.delta.candidateAffordances[0].inheritedHistoryExposure =
+  2;
+impossibleAffordance.delta.candidateAffordances[0].localExposureDelta = 2;
+assert.throws(
+  () => validateLermHordeHistoryCounterfactualReceipt(impossibleAffordance),
+  /affordance|candidate|exposure|evaluation|range/i,
+  'internally mirrored but impossible affordance evidence cannot pass',
+);
 
 for (const [label, mutate, expected] of [
   [

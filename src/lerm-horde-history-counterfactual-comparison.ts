@@ -1,6 +1,7 @@
 import {
   createLermHordeCpuRouteChoiceQuery,
   evaluateLermHordeGpuRouteChoiceQuery,
+  LERM_HORDE_GPU_ROUTE_CHOICE_QUERY_SCHEMA,
   type LermHordeGpuRouteChoiceEvaluation,
   type LermHordeGpuRouteChoiceQuery,
   type LermHordeHistoryCandidate,
@@ -28,6 +29,7 @@ export interface CreateLermHordeHistoryCounterfactualOptions {
 
 export interface LermHordeHistoryCounterfactualSnapshot {
   queryRoute: LermHordeGpuRouteChoiceQuery['route'];
+  queryTiming: LermHordeGpuRouteChoiceQuery['timing'];
   generation: LermHordeGpuRouteChoiceQuery['generation'];
   hill: LermHordeGpuRouteChoiceQuery['hill'];
   policy: LermHordeGpuRouteChoiceQuery['policy'];
@@ -59,6 +61,7 @@ export interface LermHordeHistoryCounterfactualReceipt {
     producerModuleSha256: string;
     historyChecksum: string;
     historyEpisodeId: string;
+    expectedHighestAdmittedEventSequence: number;
     sourceBindingChecksum: string;
   };
   controls: {
@@ -166,6 +169,8 @@ export function createLermHordeHistoryCounterfactualReceipt(
     historyChecksum: options.producerReceipt.historySummary.checksum,
     historyEpisodeId:
       options.producerReceipt.historySummary.episodeId,
+    expectedHighestAdmittedEventSequence:
+      options.producerReceipt.history.samples.length - 1,
   };
   const receipt: LermHordeHistoryCounterfactualReceipt = {
     ok: true,
@@ -284,8 +289,17 @@ export function validateLermHordeHistoryCounterfactualReceipt(
         receipt.source?.producerModuleSha256 ?? '',
       ) &&
       sourceValues.every(nonblank) &&
+      Number.isInteger(
+        receipt.source?.expectedHighestAdmittedEventSequence,
+      ) &&
+      receipt.source.expectedHighestAdmittedEventSequence >= 0 &&
       receipt.source.sourceBindingChecksum ===
-        checksumText(sourceValues.join('|')),
+        checksumText(
+          [
+            ...sourceValues,
+            receipt.source.expectedHighestAdmittedEventSequence,
+          ].join('|'),
+        ),
     'history counterfactual source or producer binding is invalid',
   );
   requireReceipt(
@@ -299,17 +313,30 @@ export function validateLermHordeHistoryCounterfactualReceipt(
   );
   const zero = receipt.alternatives?.zeroHistory;
   const inherited = receipt.alternatives?.inheritedHistory;
-  validateSnapshot(zero?.primary, -1);
-  validateSnapshot(zero?.repeat, -1);
-  validateSnapshot(inherited?.primary, undefined);
-  validateSnapshot(inherited?.repeat, undefined);
+  requireReceipt(
+    !!zero?.primary &&
+      !!zero.repeat &&
+      !!inherited?.primary &&
+      !!inherited.repeat,
+    'history counterfactual alternatives are missing',
+  );
   requireReceipt(
     equivalent(zero.primary, zero.repeat),
-    'history counterfactual zero-history repeat is not deterministic',
+    'history counterfactual zero-history candidate alternative repeat is not deterministic',
   );
   requireReceipt(
     equivalent(inherited.primary, inherited.repeat),
-    'history counterfactual inherited-history repeat is not deterministic',
+    'history counterfactual inherited-history candidate alternative repeat is not deterministic',
+  );
+  validateSnapshot(zero?.primary, -1);
+  validateSnapshot(zero?.repeat, -1);
+  validateSnapshot(
+    inherited?.primary,
+    receipt.source.expectedHighestAdmittedEventSequence,
+  );
+  validateSnapshot(
+    inherited?.repeat,
+    receipt.source.expectedHighestAdmittedEventSequence,
   );
   requireReceipt(
     equivalent(zero.primary.policy, inherited.primary.policy) &&
@@ -342,6 +369,9 @@ export function validateLermHordeHistoryCounterfactualReceipt(
   );
   requireReceipt(
     receipt.delta.onlyBoundedCausalInputsChanged === true &&
+      receipt.delta.decisionMarginDelta ===
+        inherited.primary.decisionMargin -
+          zero.primary.decisionMargin &&
       equivalent(receipt.delta.changedInputClasses, [
         'sealed-hill-source-identity',
         'local-typed-affordance',
@@ -414,6 +444,7 @@ function reconstructAlternative(
   );
   return {
     queryRoute: { ...query.route },
+    queryTiming: { ...query.timing },
     generation: { ...query.generation },
     hill: { ...query.hill },
     policy: { ...query.policy },
@@ -435,7 +466,7 @@ function reconstructAlternative(
 
 function validateSnapshot(
   snapshot: LermHordeHistoryCounterfactualSnapshot | undefined,
-  expectedSequence: number | undefined,
+  expectedSequence: number,
 ): asserts snapshot is LermHordeHistoryCounterfactualSnapshot {
   requireReceipt(!!snapshot, 'history counterfactual alternative is missing');
   requireReceipt(
@@ -446,13 +477,11 @@ function validateSnapshot(
     'history counterfactual alternative query route is invalid',
   );
   requireReceipt(
-    snapshot.generation.sealed === true &&
+      snapshot.generation.sealed === true &&
       snapshot.generation.complete === true &&
-      (expectedSequence === undefined
-        ? snapshot.generation.highestAdmittedEventSequence >= 0
-        : snapshot.generation.highestAdmittedEventSequence ===
-          expectedSequence),
-    'history counterfactual alternative generation is not sealed',
+      snapshot.generation.highestAdmittedEventSequence ===
+        expectedSequence,
+    'history counterfactual alternative generation is not sealed, complete, or at the expected admitted sequence',
   );
   requireReceipt(
     snapshot.candidates.length === 2 &&
@@ -477,6 +506,56 @@ function validateSnapshot(
     snapshot.selected.id === snapshot.candidates[0].id ||
       snapshot.selected.id === snapshot.candidates[1].id,
     'history counterfactual selected candidate is not preserved',
+  );
+  requireReceipt(
+    snapshot.candidates.every(
+      ({ shock }) => shock === 'none' || shock === 'shock_reset',
+    ),
+    'history counterfactual candidate shock is invalid',
+  );
+  const compactCandidate = (
+    candidate: LermHordeHistoryCandidate,
+  ): LermHordeGpuRouteChoiceQuery['candidates'][number] => ({
+    id: candidate.id,
+    requestedWorldPosition: [
+      ...candidate.requestedWorldPosition,
+    ],
+    source: { ...candidate.source },
+    localExposure: candidate.localExposure,
+    shock: candidate.shock as 'none' | 'shock_reset',
+    directionalPermeability:
+      candidate.directionalPermeability,
+  });
+  const queryCandidates: LermHordeGpuRouteChoiceQuery['candidates'] = [
+    compactCandidate(snapshot.candidates[0]),
+    compactCandidate(snapshot.candidates[1]),
+  ];
+  const evaluation = evaluateLermHordeGpuRouteChoiceQuery(
+    {
+      schema: LERM_HORDE_GPU_ROUTE_CHOICE_QUERY_SCHEMA,
+      route: { ...snapshot.queryRoute },
+      episodeIndex: expectedSequence === -1 ? 0 : 1,
+      policy: { ...snapshot.policy },
+      generation: { ...snapshot.generation },
+      hill: { ...snapshot.hill },
+      candidates: queryCandidates,
+      nondeterminismEnvelope: snapshot.nondeterminismEnvelope,
+      timing: { ...snapshot.queryTiming },
+    },
+    expectedSequence,
+  );
+  requireReceipt(
+    equivalent(snapshot.candidates, evaluation.candidates) &&
+      equivalent(snapshot.selected, evaluation.selected) &&
+      equivalent(snapshot.runnerUp, evaluation.runnerUp) &&
+      snapshot.selectedExposure === evaluation.selectedExposure &&
+      snapshot.runnerUpExposure === evaluation.runnerUpExposure &&
+      snapshot.decisionMargin === evaluation.decisionMargin &&
+      snapshot.nondeterminismEnvelope ===
+        evaluation.nondeterminismEnvelope &&
+      snapshot.decisionStable === evaluation.decisionStable &&
+      snapshot.stabilityBasis === evaluation.stabilityBasis,
+    'history counterfactual affordance or decision evidence disagrees with canonical evaluation',
   );
 }
 
