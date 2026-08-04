@@ -73,6 +73,7 @@ export type FingerExtensionTruth = Record<LiveHandFinger, number>;
 
 export type PoseObserverChainAuthorityMode =
   | 'accepted_measurement'
+  | 'complete_pose_accepted_measurement'
   | 'weighted_measurement'
   | 'attenuated_large_innovation'
   | 'held_incoherent_measurement'
@@ -192,7 +193,13 @@ export interface NormalizedManoFrame extends RuntimeRouteTruth {
   palmSolverConsensusMode: 'fixed_radius_v1' | 'bounded_trimmed_v1' | null;
   palmSolverResidualMean: number | null;
   palmSolverInlierFraction: number | null;
-  poseSolverMode: 'chain_coupled_anatomical_v1' | null;
+  poseSolverMode:
+    | 'chain_coupled_anatomical_v1'
+    | 'chain_coupled_anatomical_multistart_v2'
+    | null;
+  poseSolverHypothesisCount: 1 | 2 | null;
+  poseSolverSelectedHypothesis: 'continuity_seed' | 'anchor_seed' | null;
+  poseSolverObjectiveMargin: number | null;
   poseSolverIterations: number | null;
   poseSolverDofCount: number | null;
   poseSolverObjectiveInitial: number | null;
@@ -554,6 +561,7 @@ export function assertLiveRuntimeSidecarStatus(value: unknown): RuntimeSidecarSt
 const LIVE_HAND_FINGERS = ['thumb', 'index', 'middle', 'ring', 'pinky'] as const;
 const POSE_OBSERVER_CHAIN_AUTHORITY_MODES = new Set<PoseObserverChainAuthorityMode>([
   'accepted_measurement',
+  'complete_pose_accepted_measurement',
   'weighted_measurement',
   'attenuated_large_innovation',
   'held_incoherent_measurement',
@@ -819,6 +827,10 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
   let palmSolverResidualMean: number | null = null;
   let palmSolverInlierFraction: number | null = null;
   let poseSolverMode: NormalizedManoFrame['poseSolverMode'] = null;
+  let poseSolverHypothesisCount: 1 | 2 | null = null;
+  let poseSolverSelectedHypothesis:
+    NormalizedManoFrame['poseSolverSelectedHypothesis'] = null;
+  let poseSolverObjectiveMargin: number | null = null;
   let poseSolverIterations: number | null = null;
   let poseSolverDofCount: number | null = null;
   let poseSolverObjectiveInitial: number | null = null;
@@ -1004,10 +1016,51 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       'palmSolverInlierFraction',
     );
     const rawPoseSolverMode = text(diagnostics.poseSolverMode, 'poseSolverMode');
-    if (rawPoseSolverMode !== 'chain_coupled_anatomical_v1') {
+    if (
+      rawPoseSolverMode !== 'chain_coupled_anatomical_v1'
+      && rawPoseSolverMode !== 'chain_coupled_anatomical_multistart_v2'
+    ) {
       throw new Error('hybrid frame must expose the chain-coupled anatomical pose solver');
     }
     poseSolverMode = rawPoseSolverMode;
+    const rawHypothesisCount = finiteNonNegative(
+      diagnostics.poseSolverHypothesisCount,
+      'poseSolverHypothesisCount',
+    );
+    if (rawHypothesisCount !== 1 && rawHypothesisCount !== 2) {
+      throw new Error('poseSolverHypothesisCount must be 1 or 2');
+    }
+    poseSolverHypothesisCount = rawHypothesisCount;
+    const rawSelectedHypothesis = text(
+      diagnostics.poseSolverSelectedHypothesis,
+      'poseSolverSelectedHypothesis',
+    );
+    if (
+      rawSelectedHypothesis !== 'continuity_seed'
+      && rawSelectedHypothesis !== 'anchor_seed'
+    ) {
+      throw new Error(`unsupported pose solver hypothesis: ${rawSelectedHypothesis}`);
+    }
+    poseSolverSelectedHypothesis = rawSelectedHypothesis;
+    const rawObjectiveMargin = diagnostics.poseSolverObjectiveMargin;
+    poseSolverObjectiveMargin = rawObjectiveMargin === null
+      ? null
+      : finiteNonNegative(rawObjectiveMargin, 'poseSolverObjectiveMargin');
+    if (
+      (poseSolverMode === 'chain_coupled_anatomical_v1'
+        && (
+          poseSolverHypothesisCount !== 1
+          || poseSolverSelectedHypothesis !== 'continuity_seed'
+          || poseSolverObjectiveMargin !== null
+        ))
+      || (poseSolverMode === 'chain_coupled_anatomical_multistart_v2'
+        && (
+          poseSolverHypothesisCount !== 2
+          || poseSolverObjectiveMargin === null
+        ))
+    ) {
+      throw new Error('pose solver mode contradicts hypothesis-selection truth');
+    }
     poseSolverIterations = finiteNonNegative(
       diagnostics.poseSolverIterations,
       'poseSolverIterations',
@@ -1332,6 +1385,9 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     palmSolverResidualMean,
     palmSolverInlierFraction,
     poseSolverMode,
+    poseSolverHypothesisCount,
+    poseSolverSelectedHypothesis,
+    poseSolverObjectiveMargin,
     poseSolverIterations,
     poseSolverDofCount,
     poseSolverObjectiveInitial,

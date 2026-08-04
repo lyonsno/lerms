@@ -393,6 +393,9 @@ interface RuntimeLatencySample extends LiveHandLatencySample {
   palmSolverResidualMean: number | null;
   palmSolverInlierFraction: number | null;
   poseSolverMode: NormalizedManoFrame['poseSolverMode'];
+  poseSolverHypothesisCount: NormalizedManoFrame['poseSolverHypothesisCount'];
+  poseSolverSelectedHypothesis: NormalizedManoFrame['poseSolverSelectedHypothesis'];
+  poseSolverObjectiveMargin: number | null;
   poseSolverIterations: number | null;
   poseSolverDofCount: number | null;
   poseSolverObjectiveInitial: number | null;
@@ -1492,6 +1495,9 @@ function armLatencySample(receipt: LiveHandLatencyReceipt<NormalizedManoFrame>):
     palmSolverResidualMean: frame.palmSolverResidualMean,
     palmSolverInlierFraction: frame.palmSolverInlierFraction,
     poseSolverMode: frame.poseSolverMode,
+    poseSolverHypothesisCount: frame.poseSolverHypothesisCount,
+    poseSolverSelectedHypothesis: frame.poseSolverSelectedHypothesis,
+    poseSolverObjectiveMargin: frame.poseSolverObjectiveMargin,
     poseSolverIterations: frame.poseSolverIterations,
     poseSolverDofCount: frame.poseSolverDofCount,
     poseSolverObjectiveInitial: frame.poseSolverObjectiveInitial,

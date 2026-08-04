@@ -793,6 +793,9 @@ const hybridState = {
       palmSolverResidualMean: 0.003,
       palmSolverInlierFraction: 1,
       poseSolverMode: 'chain_coupled_anatomical_v1',
+      poseSolverHypothesisCount: 1,
+      poseSolverSelectedHypothesis: 'continuity_seed',
+      poseSolverObjectiveMargin: null,
       poseSolverIterations: 3,
       poseSolverDofCount: 20,
       poseSolverObjectiveInitial: 0.0018,
@@ -938,6 +941,42 @@ assert(
   'accepts and preserves bounded cross-model palm consensus provenance',
 );
 assert(hybrid.poseSolverMode === 'chain_coupled_anatomical_v1', 'preserves chain-coupled pose solver identity');
+const multistartHybrid = normalizeLiveManoFrame({
+  ...hybridState,
+  frame: {
+    ...hybridState.frame,
+    diagnostics: {
+      ...hybridState.frame.diagnostics,
+      poseSolverMode: 'chain_coupled_anatomical_multistart_v2',
+      poseSolverHypothesisCount: 2,
+      poseSolverSelectedHypothesis: 'anchor_seed',
+      poseSolverObjectiveMargin: 0.00041,
+      poseObserverChainAuthority: {
+        thumb: 'complete_pose_accepted_measurement',
+        index: 'complete_pose_accepted_measurement',
+        middle: 'complete_pose_accepted_measurement',
+        ring: 'complete_pose_accepted_measurement',
+        pinky: 'complete_pose_accepted_measurement',
+      },
+    },
+  },
+});
+assert(
+  multistartHybrid.poseSolverMode === 'chain_coupled_anatomical_multistart_v2',
+  'preserves multistart anatomical solver identity',
+);
+assert(
+  multistartHybrid.poseSolverHypothesisCount === 2
+    && multistartHybrid.poseSolverSelectedHypothesis === 'anchor_seed'
+    && multistartHybrid.poseSolverObjectiveMargin === 0.00041,
+  'preserves which multistart hypothesis won and by what objective margin',
+);
+assert(
+  Object.values(multistartHybrid.poseObserverChainAuthority ?? {}).every(
+    authority => authority === 'complete_pose_accepted_measurement',
+  ),
+  'preserves coherent complete-pose measurement authority',
+);
 assert(hybrid.poseSolverDofCount === 20, 'preserves reduced anatomical coordinate count');
 assert(hybrid.poseSolverIterations === 3, 'preserves pose solve iteration count');
 assert(
