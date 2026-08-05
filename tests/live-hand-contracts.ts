@@ -830,6 +830,7 @@ const hybridState = {
         withinClusterRadiusRad: 0.005,
         alternationFraction: 0,
         maxReversalSpeedRadS: 0.3,
+        worldImageEvidenceMode: 'live_browser_measurement',
         worldImageResidual: 0.031,
         worldImageThreshold: 0.05,
         worldImageInconsistent: false,
@@ -1031,6 +1032,22 @@ assertThrows(
       diagnostics: {
         ...hybridState.frame.diagnostics,
         completePoseAmbiguity: {
+          ...hybridState.frame.diagnostics.completePoseAmbiguity,
+          worldImageEvidenceMode: 'trust-me-bro',
+        },
+      },
+    },
+  }),
+  'completePoseAmbiguity.worldImageEvidenceMode is missing or invalid',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        completePoseAmbiguity: {
           ambiguous: true,
           score: 1,
           sampleCount: 7,
@@ -1038,6 +1055,7 @@ assertThrows(
           withinClusterRadiusRad: 0.03,
           alternationFraction: 1,
           maxReversalSpeedRadS: 21.8,
+          worldImageEvidenceMode: 'live_browser_measurement',
           worldImageResidual: 0.061,
           worldImageThreshold: 0.05,
           worldImageInconsistent: true,
@@ -1147,6 +1165,7 @@ const heldCompletePose = normalizeLiveManoFrame({
         withinClusterRadiusRad: 0.03,
         alternationFraction: 1,
         maxReversalSpeedRadS: 21.8,
+        worldImageEvidenceMode: 'live_browser_measurement',
         worldImageResidual: 0.061,
         worldImageThreshold: 0.05,
         worldImageInconsistent: true,

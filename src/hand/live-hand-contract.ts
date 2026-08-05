@@ -87,6 +87,12 @@ export type ArticulationAuthorityMode =
   | 'ambiguous_articulation_hold'
   | 'reacquiring';
 
+export type WorldImageEvidenceMode =
+  | 'live_browser_measurement'
+  | 'preserved_live_measurement_replay'
+  | 'derived_neutral_boundary_telemetry_only'
+  | 'unavailable';
+
 export interface CompletePoseAmbiguityTruth {
   ambiguous: boolean;
   score: number;
@@ -95,6 +101,7 @@ export interface CompletePoseAmbiguityTruth {
   withinClusterRadiusRad: number;
   alternationFraction: number;
   maxReversalSpeedRadS: number;
+  worldImageEvidenceMode: WorldImageEvidenceMode;
   worldImageResidual: number | null;
   worldImageThreshold: typeof LIVE_HAND_WORLD_IMAGE_CONSISTENCY_THRESHOLD;
   worldImageInconsistent: boolean;
@@ -1202,6 +1209,17 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
       throw new Error('completePoseAmbiguity carries invalid bounded truth');
     }
     const rawWorldImageResidual = rawCompletePoseAmbiguity.worldImageResidual;
+    const worldImageEvidenceMode = rawCompletePoseAmbiguity.worldImageEvidenceMode;
+    if (
+      worldImageEvidenceMode !== 'live_browser_measurement'
+      && worldImageEvidenceMode !== 'preserved_live_measurement_replay'
+      && worldImageEvidenceMode !== 'derived_neutral_boundary_telemetry_only'
+      && worldImageEvidenceMode !== 'unavailable'
+    ) {
+      throw new Error(
+        'completePoseAmbiguity.worldImageEvidenceMode is missing or invalid',
+      );
+    }
     const worldImageResidual = rawWorldImageResidual === null
       ? null
       : finiteNonNegative(
@@ -1226,7 +1244,14 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     }
     const worldImageInconsistent = rawCompletePoseAmbiguity.worldImageInconsistent;
     const worldImageAmbiguous = rawCompletePoseAmbiguity.worldImageAmbiguous;
+    const worldImageEvidenceCanAuthorize = (
+      worldImageEvidenceMode === 'live_browser_measurement'
+      || worldImageEvidenceMode === 'preserved_live_measurement_replay'
+    );
     if (
+      (!worldImageEvidenceCanAuthorize && worldImageResidual !== null)
+      || (!worldImageEvidenceCanAuthorize && worldImageInconsistencyStreak !== 0)
+      ||
       worldImageInconsistent
       !== (
         worldImageResidual !== null
@@ -1258,6 +1283,7 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
         rawCompletePoseAmbiguity.maxReversalSpeedRadS,
         'completePoseAmbiguity.maxReversalSpeedRadS',
       ),
+      worldImageEvidenceMode,
       worldImageResidual,
       worldImageThreshold: LIVE_HAND_WORLD_IMAGE_CONSISTENCY_THRESHOLD,
       worldImageInconsistent,
