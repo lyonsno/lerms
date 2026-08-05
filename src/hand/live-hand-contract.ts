@@ -5,6 +5,8 @@ export const LIVE_HAND_FAST_PATH_SOURCE = 'browser_mediapipe_hand_landmarker_liv
 export const LIVE_HAND_HYBRID_FUSION_MODE = 'wilor_anchor_mediapipe_mano_complete_pose_authority_v6' as const;
 export const LIVE_HAND_HYBRID_GEOMETRY_MODE = 'native_mano_regeneration' as const;
 export const LIVE_HAND_POSE_OBSERVER_MODE = 'fixed_lag_anatomical_state_v2' as const;
+export const LIVE_HAND_WORLD_IMAGE_CONSISTENCY_THRESHOLD = 0.05 as const;
+export const LIVE_HAND_WORLD_IMAGE_INCONSISTENCY_ENTRY_FRAMES = 2 as const;
 export const LIVE_HAND_FAST_LANDMARK_SCHEMA = 'hand-state.browser-fast-landmarks.v1' as const;
 export const LIVE_HAND_RUNTIME_OWNER = 'hand-state-runtime' as const;
 export const MANO_VERTEX_COUNT = 778 as const;
@@ -93,6 +95,11 @@ export interface CompletePoseAmbiguityTruth {
   withinClusterRadiusRad: number;
   alternationFraction: number;
   maxReversalSpeedRadS: number;
+  worldImageResidual: number | null;
+  worldImageThreshold: typeof LIVE_HAND_WORLD_IMAGE_CONSISTENCY_THRESHOLD;
+  worldImageInconsistent: boolean;
+  worldImageInconsistencyStreak: number;
+  worldImageAmbiguous: boolean;
 }
 
 export type PoseObserverChainAuthority = Record<
@@ -296,7 +303,7 @@ const TRANSIENT_HYBRID_FALLBACK_REASONS = new Set([
   'articulated_fit_residual_too_large',
   'stale_wilor_anchor',
 ]);
-export const STALE_WILOR_PRESENTATION_HOLD_MS = 150;
+export const STALE_WILOR_PRESENTATION_HOLD_MS = 750;
 
 export interface HeldHandSurfaceDecision {
   hold: boolean;
@@ -1194,6 +1201,46 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
     ) {
       throw new Error('completePoseAmbiguity carries invalid bounded truth');
     }
+    const rawWorldImageResidual = rawCompletePoseAmbiguity.worldImageResidual;
+    const worldImageResidual = rawWorldImageResidual === null
+      ? null
+      : finiteNonNegative(
+        rawWorldImageResidual,
+        'completePoseAmbiguity.worldImageResidual',
+      );
+    const worldImageThreshold = finiteNonNegative(
+      rawCompletePoseAmbiguity.worldImageThreshold,
+      'completePoseAmbiguity.worldImageThreshold',
+    );
+    const worldImageInconsistencyStreak = finiteNonNegative(
+      rawCompletePoseAmbiguity.worldImageInconsistencyStreak,
+      'completePoseAmbiguity.worldImageInconsistencyStreak',
+    );
+    if (
+      worldImageThreshold !== LIVE_HAND_WORLD_IMAGE_CONSISTENCY_THRESHOLD
+      || !Number.isInteger(worldImageInconsistencyStreak)
+      || typeof rawCompletePoseAmbiguity.worldImageInconsistent !== 'boolean'
+      || typeof rawCompletePoseAmbiguity.worldImageAmbiguous !== 'boolean'
+    ) {
+      throw new Error('completePoseAmbiguity carries invalid world/image truth');
+    }
+    const worldImageInconsistent = rawCompletePoseAmbiguity.worldImageInconsistent;
+    const worldImageAmbiguous = rawCompletePoseAmbiguity.worldImageAmbiguous;
+    if (
+      worldImageInconsistent
+      !== (
+        worldImageResidual !== null
+        && worldImageResidual > worldImageThreshold
+      )
+      || worldImageAmbiguous
+      !== (
+        worldImageInconsistencyStreak
+        >= LIVE_HAND_WORLD_IMAGE_INCONSISTENCY_ENTRY_FRAMES
+      )
+      || (worldImageAmbiguous && !rawCompletePoseAmbiguity.ambiguous)
+    ) {
+      throw new Error('completePoseAmbiguity world/image truth is contradictory');
+    }
     completePoseAmbiguity = {
       ambiguous: rawCompletePoseAmbiguity.ambiguous,
       score: ambiguityScore,
@@ -1211,6 +1258,11 @@ export function normalizeLiveManoFrame(value: unknown): NormalizedManoFrame {
         rawCompletePoseAmbiguity.maxReversalSpeedRadS,
         'completePoseAmbiguity.maxReversalSpeedRadS',
       ),
+      worldImageResidual,
+      worldImageThreshold: LIVE_HAND_WORLD_IMAGE_CONSISTENCY_THRESHOLD,
+      worldImageInconsistent,
+      worldImageInconsistencyStreak,
+      worldImageAmbiguous,
     };
     if (
       completePoseAmbiguity.ambiguous

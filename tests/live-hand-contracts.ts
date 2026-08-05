@@ -830,6 +830,11 @@ const hybridState = {
         withinClusterRadiusRad: 0.005,
         alternationFraction: 0,
         maxReversalSpeedRadS: 0.3,
+        worldImageResidual: 0.031,
+        worldImageThreshold: 0.05,
+        worldImageInconsistent: false,
+        worldImageInconsistencyStreak: 0,
+        worldImageAmbiguous: false,
       },
       boundaryConsensusActive: false,
       boundaryConsensusAnchorEvidenceCount: 0,
@@ -1010,6 +1015,22 @@ assertThrows(
       diagnostics: {
         ...hybridState.frame.diagnostics,
         completePoseAmbiguity: {
+          ...hybridState.frame.diagnostics.completePoseAmbiguity,
+          worldImageResidual: 'looks-good',
+        },
+      },
+    },
+  }),
+  'completePoseAmbiguity.worldImageResidual is missing or invalid',
+);
+assertThrows(
+  () => normalizeLiveManoFrame({
+    ...hybridState,
+    frame: {
+      ...hybridState.frame,
+      diagnostics: {
+        ...hybridState.frame.diagnostics,
+        completePoseAmbiguity: {
           ambiguous: true,
           score: 1,
           sampleCount: 7,
@@ -1017,6 +1038,11 @@ assertThrows(
           withinClusterRadiusRad: 0.03,
           alternationFraction: 1,
           maxReversalSpeedRadS: 21.8,
+          worldImageResidual: 0.061,
+          worldImageThreshold: 0.05,
+          worldImageInconsistent: true,
+          worldImageInconsistencyStreak: 2,
+          worldImageAmbiguous: true,
         },
       },
     },
@@ -1121,6 +1147,11 @@ const heldCompletePose = normalizeLiveManoFrame({
         withinClusterRadiusRad: 0.03,
         alternationFraction: 1,
         maxReversalSpeedRadS: 21.8,
+        worldImageResidual: 0.061,
+        worldImageThreshold: 0.05,
+        worldImageInconsistent: true,
+        worldImageInconsistencyStreak: 2,
+        worldImageAmbiguous: true,
       },
     },
   },
@@ -1538,24 +1569,34 @@ assert(
   'never invents a stale surface when no trustworthy surface is visible',
 );
 assert(
-  !decideHeldHandSurface({
+  decideHeldHandSurface({
     hasVisibleSurface: true,
     lastTrustworthyAtMs: 500,
     nowMs: 651,
     maxAgeMs: 750,
     fallbackReason: 'stale_wilor_anchor',
   } as Parameters<typeof decideHeldHandSurface>[0]).hold,
-  'stale-anchor presentation expires after its 150ms continuity bridge instead of inheriting the general 750ms hold',
+  'stale-anchor presentation preserves the last MANO surface throughout the bounded visual freshness horizon',
 );
 assert(
   decideHeldHandSurface({
     hasVisibleSurface: true,
     lastTrustworthyAtMs: 500,
-    nowMs: 650,
+    nowMs: 1250,
     maxAgeMs: 750,
     fallbackReason: 'stale_wilor_anchor',
   } as Parameters<typeof decideHeldHandSurface>[0]).hold,
-  'stale-anchor presentation may bridge exactly 150ms while route truth and fluid authority remain invalid',
+  'stale-anchor presentation may bridge exactly 750ms while route truth and fluid authority remain invalid',
+);
+assert(
+  !decideHeldHandSurface({
+    hasVisibleSurface: true,
+    lastTrustworthyAtMs: 500,
+    nowMs: 1251,
+    maxAgeMs: 750,
+    fallbackReason: 'stale_wilor_anchor',
+  } as Parameters<typeof decideHeldHandSurface>[0]).hold,
+  'stale-anchor presentation expires immediately beyond the bounded 750ms visual horizon',
 );
 
 assertThrows(
