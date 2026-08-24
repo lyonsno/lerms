@@ -15,12 +15,22 @@ export interface LiveHandFastDeliverySnapshot {
   trailingCaptureId: string | null;
   pendingCount: number;
   protectedPendingCount: number;
+  protectedOverflowCount: number;
   enqueuedCount: number;
   completedCount: number;
   failedCount: number;
   supersededBeforePostCount: number;
   discardedPendingCount: number;
 }
+
+// The protected queue exists to absorb transient delivery stalls without
+// dropping anchor-paired observations. Beyond this depth, an item would be at
+// least (cap x anchor interval) = ~800ms stale by the time it could deliver —
+// past every downstream authority budget (650ms fast authority, 750ms
+// presentation hold) — so the oldest is superseded loudly (recorded lineage +
+// counter) instead of letting a stalled runtime grow the queue and the
+// delivered-state staleness without bound.
+export const MAX_PROTECTED_PENDING_DELIVERIES = 8;
 
 export interface LiveHandFastDeliveryLineage {
   captureId: string;
@@ -54,6 +64,7 @@ export class LiveHandFastDeliveryMailbox<TItem extends LiveHandFastDeliveryItem>
   private completedCount = 0;
   private failedCount = 0;
   private supersededBeforePostCount = 0;
+  private protectedOverflowCount = 0;
   private discardedPendingCount = 0;
   private idleWaiters: Array<() => void> = [];
 
@@ -75,6 +86,13 @@ export class LiveHandFastDeliveryMailbox<TItem extends LiveHandFastDeliveryItem>
       if (this.latestPending !== null) {
         this.recordSupersession(this.latestPending, item);
         this.latestPending = null;
+      }
+      if (this.protectedPending.length >= MAX_PROTECTED_PENDING_DELIVERIES) {
+        const oldest = this.protectedPending.shift();
+        if (oldest !== undefined) {
+          this.protectedOverflowCount += 1;
+          this.recordSupersession(oldest, item);
+        }
       }
       this.protectedPending.push(item);
       return;
@@ -114,6 +132,7 @@ export class LiveHandFastDeliveryMailbox<TItem extends LiveHandFastDeliveryItem>
     this.completedCount = 0;
     this.failedCount = 0;
     this.supersededBeforePostCount = 0;
+    this.protectedOverflowCount = 0;
     this.discardedPendingCount = 0;
   }
 
@@ -127,6 +146,7 @@ export class LiveHandFastDeliveryMailbox<TItem extends LiveHandFastDeliveryItem>
       trailingCaptureId: trailing?.captureId ?? null,
       pendingCount: this.protectedPending.length + (this.latestPending ? 1 : 0),
       protectedPendingCount: this.protectedPending.length,
+      protectedOverflowCount: this.protectedOverflowCount,
       enqueuedCount: this.enqueuedCount,
       completedCount: this.completedCount,
       failedCount: this.failedCount,

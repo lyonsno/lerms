@@ -474,6 +474,51 @@ assert(
   'protected pair delivery and ordinary coalescing close with exact accounting',
 );
 
+{
+  const overflowStarts: string[] = [];
+  const overflowReleases = new Map<string, () => void>();
+  const overflowSupersessions: string[] = [];
+  const overflowMailbox = new LiveHandFastDeliveryMailbox<{
+    captureId: string;
+    anchorPairRequired?: boolean;
+  }>(
+    item => new Promise<void>(resolve => {
+      overflowStarts.push(item.captureId);
+      overflowReleases.set(item.captureId, resolve);
+    }),
+    supersession => {
+      overflowSupersessions.push(
+        `${supersession.superseded.captureId}->${supersession.replacement.captureId}`,
+      );
+    },
+    errorItem => {
+      throw new Error(`unexpected overflow mailbox failure for ${errorItem.captureId}`);
+    },
+  );
+  overflowMailbox.enqueue({ captureId: 'stalled-active' });
+  for (let index = 0; index < 12; index += 1) {
+    overflowMailbox.enqueue({ captureId: `anchor-${index}`, anchorPairRequired: true });
+  }
+  const overflowSnapshot = overflowMailbox.snapshot();
+  assert(
+    overflowSnapshot.protectedPendingCount === 8,
+    `a stalled delivery must bound the protected queue at the staleness horizon (cap x anchor interval >= every authority budget), superseding the oldest loudly instead of growing without bound; saw ${overflowSnapshot.protectedPendingCount}`,
+  );
+  assert(
+    overflowSupersessions.length === 4
+      && overflowSupersessions[0] === 'anchor-0->anchor-8'
+      && overflowSupersessions.at(-1) === 'anchor-3->anchor-11',
+    `protected overflow must record exact oldest-superseded lineage; saw ${overflowSupersessions.join(',')}`,
+  );
+  assert(
+    (overflowSnapshot as { protectedOverflowCount?: number }).protectedOverflowCount === 4,
+    'protected overflow is separately countable on the visibility surface',
+  );
+  overflowMailbox.discardPending();
+  overflowReleases.get('stalled-active')?.();
+  await overflowMailbox.whenIdle();
+}
+
 const firstLineage = coalesceFastDeliveryLineage([], 'fast-b', 'fast-c');
 const transitiveLineage = coalesceFastDeliveryLineage(firstLineage, 'fast-c', 'fast-d');
 assert(
