@@ -23,6 +23,9 @@ import {
 } from '../src/hand/live-hand-fast-delivery.js';
 import { LiveHandLatencyReceiptJoiner } from '../src/hand/live-hand-latency-receipt.js';
 import {
+  ANCHOR_BUSY_TICK_QUANTIZATION_MS,
+  LIVE_HAND_FAST_AUTHORITY_BUDGET_MS,
+  WILOR_SERVICE_CONTENTION_P95_MS,
   planLiveHandSourceFrame,
   resolveLiveHandAnchorIntervalMs,
 } from '../src/hand/live-hand-source-scheduler.js';
@@ -637,8 +640,11 @@ const pureAnchor = planLiveHandSourceFrame({
 assert(!pureAnchor.submitFastPath && pureAnchor.submitAnchor, 'pure WiLoR remains independent of browser-landmarker availability');
 assert(resolveLiveHandAnchorIntervalMs('pure_wilor') === 50, 'pure WiLoR preserves the current 20Hz request schedule');
 assert(
-  resolveLiveHandAnchorIntervalMs('hybrid_mano') === 100,
-  'hybrid MANO anchor interval must keep worst-case anchor capture-age inside the runtime 650ms fast-authority budget under measured contention (WiLoR service p95 ~416ms + interval + ~100ms busy-tick quantization); 200ms provably breached it in the 2026-08-23 witness (stale-anchor fallback on 86/174 ingests)',
+  WILOR_SERVICE_CONTENTION_P95_MS
+  + resolveLiveHandAnchorIntervalMs('hybrid_mano')
+  + ANCHOR_BUSY_TICK_QUANTIZATION_MS
+  <= LIVE_HAND_FAST_AUTHORITY_BUDGET_MS,
+  'hybrid MANO anchor interval must keep worst-case anchor capture-age (service p95 + interval + busy-tick quantization) inside the runtime fast-authority budget; the 200ms interval provably breached it in the 2026-08-23 witness (stale-anchor fallback on 86/174 ingests), and re-measuring any input must recompute this contract rather than leaving a stale pinned interval green',
 );
 
 const imageLandmarks = Array.from({ length: 21 }, (_, index) => ({ x: index / 20, y: 1 - index / 20, z: -index / 100 }));
