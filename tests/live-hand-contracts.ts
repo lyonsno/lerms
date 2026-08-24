@@ -636,7 +636,10 @@ const pureAnchor = planLiveHandSourceFrame({
 });
 assert(!pureAnchor.submitFastPath && pureAnchor.submitAnchor, 'pure WiLoR remains independent of browser-landmarker availability');
 assert(resolveLiveHandAnchorIntervalMs('pure_wilor') === 50, 'pure WiLoR preserves the current 20Hz request schedule');
-assert(resolveLiveHandAnchorIntervalMs('hybrid_mano') === 200, 'hybrid MANO starts the correction assay at 5Hz');
+assert(
+  resolveLiveHandAnchorIntervalMs('hybrid_mano') === 100,
+  'hybrid MANO anchor interval must keep worst-case anchor capture-age inside the runtime 650ms fast-authority budget under measured contention (WiLoR service p95 ~416ms + interval + ~100ms busy-tick quantization); 200ms provably breached it in the 2026-08-23 witness (stale-anchor fallback on 86/174 ingests)',
+);
 
 const imageLandmarks = Array.from({ length: 21 }, (_, index) => ({ x: index / 20, y: 1 - index / 20, z: -index / 100 }));
 const worldLandmarks = imageLandmarks.map(point => ({ x: point.x - 0.5, y: 0.5 - point.y, z: point.z }));

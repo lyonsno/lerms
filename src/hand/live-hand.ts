@@ -26,7 +26,7 @@ import {
   type RuntimeSidecarStatusTruth,
 } from './live-hand-contract.js';
 import { LiveHandSidecarReadinessCoordinator } from './live-hand-sidecar-readiness.js';
-import { LiveHandOperatorSmokeWitness } from './live-hand-operator-smoke-witness.js';
+import { LiveHandOperatorSmokeWitness, formatAdmissibilityVerdict } from './live-hand-operator-smoke-witness.js';
 import { LiveHandPresentationCapture } from './live-hand-presentation-capture.js';
 import {
   LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,
@@ -1751,8 +1751,11 @@ async function stop(): Promise<void> {
   capturePostAbortController?.abort();
   capturePostAbortController = null;
   let witnessFailure: string | null = null;
+  let admissibilityVerdict: string | null = null;
   try {
-    await operatorSmokeWitness.stop();
+    const witnessReceipt = await operatorSmokeWitness.stop();
+    admissibilityVerdict = formatAdmissibilityVerdict(witnessReceipt);
+    if (admissibilityVerdict) lastBenchmarkError = admissibilityVerdict;
   } catch (error) {
     witnessFailure = `visual witness failure: ${error instanceof Error ? error.message : String(error)}`;
     lastBenchmarkError = witnessFailure;
@@ -1786,7 +1789,7 @@ async function stop(): Promise<void> {
       ? `telemetry incomplete: ${receiptJoinState.pendingFrameCount} unmatched frames, ${receiptJoinState.pendingCaptureCount} unmatched captures, ${receiptJoinState.discardedFrameCount} discarded frames, ${receiptJoinState.discardedCaptureCount} discarded captures, ${receiptJoinState.resolvedWithoutPresentationCount} resolved without presentation, ${benchmarkDroppedBeforeRender} superseded, ${pendingLatencySample ? 1 : 0} awaiting render`
       : null;
   if (missingEvidenceError) lastBenchmarkError = missingEvidenceError;
-  const benchmarkFailure = witnessFailure || missingEvidenceError
+  const benchmarkFailure = witnessFailure || admissibilityVerdict || missingEvidenceError
     || (unflushedLatencySamples.length > 0 ? lastBenchmarkError || 'telemetry failure: viewer latency samples remain unflushed' : null);
   try {
     await runtimeFetch('/sidecar/stop', { method: 'POST' });

@@ -62,6 +62,23 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Render the runtime's availability admissibility verdict from a smoke stop
+ * receipt. Returns null when the run is admissible; otherwise a loud message
+ * that must reach the operator instead of a clean-stop status. A receipt that
+ * carries no verdict at all is treated as inadmissible — absence of the gate
+ * must not read as a pass.
+ */
+export function formatAdmissibilityVerdict(receipt: Record<string, unknown>): string | null {
+  const admissible = receipt.geometryComparisonAdmissible;
+  if (admissible === true) return null;
+  const verdict = receipt.admissibility as { reasons?: unknown } | undefined;
+  const reasons = Array.isArray(verdict?.reasons) && verdict.reasons.length > 0
+    ? verdict.reasons.map(String).join('; ')
+    : 'runtime stop receipt carried no availability verdict';
+  return `SMOKE INADMISSIBLE FOR GEOMETRY JUDGMENT: ${reasons}`;
+}
+
 export class LiveHandOperatorSmokeWitness {
   private readonly dependencies: LiveHandOperatorSmokeWitnessDependencies;
   private active: ActiveRecording | null = null;

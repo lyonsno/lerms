@@ -1,6 +1,7 @@
 import {
   LiveHandOperatorSmokeWitness,
   LIVE_HAND_OPERATOR_SMOKE_RAW_CAPTURE_ROUTE,
+  formatAdmissibilityVerdict,
 } from '../src/hand/live-hand-operator-smoke-witness.js';
 import {
   LiveHandPresentationCapture,
@@ -180,5 +181,29 @@ assert(presentationEvents.join(',') === 'request-frame,request-frame', 'each ren
 assert(presentation.snapshot().capturedFrameCount === 2, 'the direct hand witness reports exact captured-frame cadence');
 presentation.stop();
 assert(presentationEvents.at(-1) === 'track-stop', 'the direct hand presentation track stops explicitly');
+
+const admissiblePass = formatAdmissibilityVerdict({
+  geometryComparisonAdmissible: true,
+  admissibility: { admissible: true, reasons: [] },
+});
+assert(admissiblePass === null, 'an admissible run stops without an inadmissibility banner');
+const inadmissible = formatAdmissibilityVerdict({
+  geometryComparisonAdmissible: false,
+  admissibility: {
+    admissible: false,
+    reasons: ['authoritative_ingest_fraction 0.37 < 0.8', 'longest_authority_drought_ms 4026 > 1500'],
+  },
+});
+assert(
+  inadmissible !== null
+  && inadmissible.includes('INADMISSIBLE FOR GEOMETRY JUDGMENT')
+  && inadmissible.includes('authoritative_ingest_fraction 0.37 < 0.8'),
+  'an inadmissible run surfaces the exact availability reasons instead of a clean stop',
+);
+const verdictless = formatAdmissibilityVerdict({});
+assert(
+  verdictless !== null && verdictless.includes('no availability verdict'),
+  'a stop receipt without any availability verdict must read as inadmissible, never as a pass',
+);
 
 console.log('live hand operator smoke witness contracts ok');
