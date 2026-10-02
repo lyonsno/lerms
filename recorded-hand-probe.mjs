@@ -20,12 +20,15 @@ const save = () => writeFileSync(reportPath, JSON.stringify(report, null, 2));
 const sha = value => createHash('sha256').update(value).digest('hex');
 save();
 let browser;
+let page;
 
 // Append a probe in the existing module scope. No production statement is replaced.
 const injection = `
 window.__recordedHandProbe = {
   snapshot() {
     return { visible: handMesh.visible, status: status.textContent,
+      surfaceFrameId: latestPresentedRouteFrame?.frameId ?? null,
+      lastLiveAt, heldSurfaceReason,
       packetAuthority: latestFluidPacket?.authority ?? null,
       packetSource: latestFluidPacket?.source_route ?? null,
       fluidAvailable: fluidSolver?.available ?? false };
@@ -39,11 +42,25 @@ window.__recordedHandProbe = {
     renderer.render(scene, camera);
     return this.snapshot();
   },
-  fluidExpiryBranch() {
-    const fresh = latestFluidPacket && isLiveFingerFluidPacketFresh(latestFluidPacket, this.evidenceNowMs);
-    if (latestFluidPacket && !fresh) deactivateFluidInlets('hand_state_packet_expired');
+  tick(elapsedMs = 0) {
+    const originalNow = Date.now;
+    const originalRaf = window.requestAnimationFrame;
+    const originalRunning = running;
+    const now = lastLiveAt + elapsedMs;
+    Date.now = () => this.evidenceNowMs + elapsedMs;
+    window.requestAnimationFrame = () => 0;
+    running = true;
+    lastAnimationFrameAt = now - 17;
+    fluidSimulationClockAt = now - 100;
+    fluidGpuBusy = false;
+    handPresentationPending = false;
+    try { animate(now); } finally {
+      Date.now = originalNow;
+      window.requestAnimationFrame = originalRaf;
+      running = originalRunning;
+    }
     renderer.render(scene, camera);
-    return { ...this.snapshot(), fresh };
+    return this.snapshot();
   },
   drawSurface(mano) {
     if (!mano?.available) { handMesh.visible = false; }
@@ -117,8 +134,10 @@ try {
   report.viewport = { width: 640, height: 480 };
   report.failurePhase = 'browser_launch'; save();
   browser = await chromium.launch({ executablePath: executable, headless: true });
-  const page = await browser.newPage({ viewport: report.viewport, deviceScaleFactor: 1 });
+  page = await browser.newPage({ viewport: report.viewport, deviceScaleFactor: 1 });
   page.on('pageerror', error => report.errors.push(String(error)));
+  report.console = [];
+  page.on('console', message => report.console.push({ type: message.type(), text: message.text() }));
   await page.route('**/src/hand/live-hand.ts', async route => {
     const response = await route.fetch();
     const original = await response.text();
@@ -148,21 +167,43 @@ try {
   const anchorAfterHybrid = await apply(anchors[0]);
   const recoveredHybrid = await apply(tracking);
   const holdBeforeFluid = await apply(held);
-  const holdAfterFluid = await page.evaluate(() => window.__recordedHandProbe.fluidExpiryBranch());
+  const holdAfterFluid = await page.evaluate(() => window.__recordedHandProbe.tick());
+  const heldExpired = await page.evaluate(() => window.__recordedHandProbe.tick(751));
   const recoveryAfterHold = await apply(tracking);
+  const trackingExpired = await page.evaluate(() => window.__recordedHandProbe.tick(751));
+  await apply(tracking);
+  const wrongRoute = structuredClone(tracking);
+  wrongRoute.state.frame.source.effectiveRoute = 'unverified-route';
+  const wrongRouteRejected = await apply(wrongRoute);
+  await apply(tracking);
   const invalid = structuredClone(tracking);
   invalid.state.frame.mano.vertices = [];
   const partialMesh = await apply(invalid);
   report.visibilityReproduction = { validHybrid, anchorAfterHybrid, recoveredHybrid,
-    holdBeforeFluid, holdAfterFluid, recoveryAfterHold, partialMesh,
+    holdBeforeFluid, holdAfterFluid, heldExpired, trackingExpired, wrongRouteRejected,
+    recoveryAfterHold, partialMesh,
     sourceSequences: { tracking: tracking.eventSequence, held: held.eventSequence, anchor: anchors[0].eventSequence },
     contractChecks: { validHybridVisible: validHybrid.visible,
       anchorDoesNotEraseHybrid: anchorAfterHybrid.visible,
+      correctionDoesNotRefreshSurfaceClock: anchorAfterHybrid.lastLiveAt === validHybrid.lastLiveAt,
+      correctionDoesNotReplaceSurface: anchorAfterHybrid.surfaceFrameId === validHybrid.surfaceFrameId,
       articulationHoldRemainsVisibleWhenFluidIsDisabled: holdAfterFluid.visible,
+      articulationHoldDisablesFluid: holdAfterFluid.packetAuthority?.simulation_safe !== true,
+      heldSurfaceExpires: !heldExpired.visible,
+      trackingSurfaceExpires: !trackingExpired.visible,
+      unknownRouteRejected: !wrongRouteRejected.visible,
       nextTrackingFrameRecovers: recoveryAfterHold.visible,
       partialMeshRejected: !partialMesh.visible } };
   assert(validHybrid.visible && recoveredHybrid.visible && holdBeforeFluid.visible
     && recoveryAfterHold.visible && !partialMesh.visible, 'reproduction_controls_failed');
+  save();
+  if (args.get('--assert-continuity') === 'true') {
+    const failed = Object.entries(report.visibilityReproduction.contractChecks).filter(([, passed]) => !passed);
+    assert.equal(failed.length, 0, `consumer_continuity_contracts_failed: ${failed.map(([name]) => name).join(', ')}`);
+  }
+  if (args.get('--visibility-only') === 'true') {
+    report.status = 'diagnosed'; report.primaryOutputWritten = true; report.failurePhase = null;
+  } else {
   report.failurePhase = 'comparison_frames'; save();
   await page.evaluate(async () => {
     const video = document.createElement('video');
@@ -211,8 +252,13 @@ try {
   writeFileSync(`${out}/comparison.ffconcat`, 'ffconcat version 1.0\n' + concat.join('\n') + '\n');
   report.comparisonScope = 'All fast observations sorted by source capture time, including fallbacks. Latest earlier-capture WiLoR mesh is a retrospective reference, not available-at-capture latency. No interpolation. Actual product camera and surface normalization. Raw clock lower-bound alignment has unmeasured recorder-start offset.';
   report.status = 'diagnosed'; report.primaryOutputWritten = true; report.failurePhase = null;
+  }
 } catch (error) {
   report.status = 'failed'; report.error = String(error); process.exitCode = 1;
+  if (page) {
+    report.failurePageText = await page.locator('body').innerText().catch(String);
+    await page.screenshot({ path: `${out}/failure.png` }).catch(error => report.errors.push(String(error)));
+  }
 } finally {
   await browser?.close();
   report.browserClosed = true;

@@ -1585,11 +1585,23 @@ function applyState(state: Record<string, unknown>): void {
   try {
     const frame = normalizeLiveManoFrame(state);
     const requestedRoute = sourceMode === 'hybrid_mano' ? LIVE_HAND_HYBRID_ROUTE : LIVE_HAND_ROUTE;
+    // The shared event stream also carries correction inputs. They are not
+    // hybrid presentation frames and must not renew the displayed pose's age.
+    if (sourceMode === 'hybrid_mano' && frame.effectiveRoute === LIVE_HAND_ROUTE) {
+      if (latestPresentedRouteFrame && frame.handedness !== latestPresentedRouteFrame.handedness) {
+        deactivateFluidInlets('correction_handedness_discontinuity');
+        setStatus('waiting for hybrid MANO | correction handedness changed');
+      }
+      return;
+    }
     if (frame.effectiveRoute !== requestedRoute) {
       deactivateFluidInlets('unexpected_live_hand_route');
       setStatus(`waiting for ${requestedRoute} | observed ${frame.effectiveRoute}`);
       setRouteTruth();
       return;
+    }
+    if (Date.now() - frame.captureTimestampMs > maxFrameAgeMs) {
+      throw new Error('hand presentation capture expired');
     }
     updateHandSurface(frame);
     benchmarkAcceptedFrameCount += 1;
@@ -1597,7 +1609,10 @@ function applyState(state: Record<string, unknown>): void {
     if (joinedReceipt) armLatencySample(joinedReceipt);
     const tail = latencySamples.length ? summarizeLiveHandLatency(latencySamples) : null;
     const receipt = tail ? ` | webgl-return p50 ${tail.captureToWebglRenderReturnMs.p50.toFixed(0)} p95 ${tail.captureToWebglRenderReturnMs.p95.toFixed(0)}ms` : '';
-    setStatus(`live MANO | model ${frame.modelLatencyMs.toFixed(0)}ms${receipt}`, 'live');
+    const articulation = frame.articulationAuthorityMode && frame.articulationAuthorityMode !== 'tracking'
+      ? ` | ${frame.articulationAuthorityMode} | fluid disabled`
+      : '';
+    setStatus(`live MANO${articulation} | model ${frame.modelLatencyMs.toFixed(0)}ms${receipt}`, 'live');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const transientFallback = sourceMode === 'hybrid_mano'
@@ -1907,6 +1922,16 @@ function animate(now: number): void {
   }
   fluidFrameDecisionCounts[frameDecision.reason] += 1;
   const interpolationUnsettled = updateInterpolatedSurface();
+  // Visual freshness cannot depend on whether a fluid step was scheduled or
+  // whether the current articulation has permission to emit fluid.
+  if (
+    !heldSurfaceReason
+    && latestPresentedRouteFrame
+    && Date.now() - latestPresentedRouteFrame.captureTimestampMs > maxFrameAgeMs
+  ) {
+    deactivateFluidInlets('hand_presentation_expired');
+    setStatus('waiting for live MANO | hand presentation expired');
+  }
   if (
     heldSurfaceReason
     && !decideHeldHandSurface({
@@ -1967,7 +1992,7 @@ function animate(now: number): void {
   }
   if ((running || densityBenchActive || fluidAssayRunning) && fluidSolver?.available && frameDecision.runFluid) {
     if (!fluidAssayRunning && !densityBenchActive && latestFluidPacket && !isLiveFingerFluidPacketFresh(latestFluidPacket)) {
-      deactivateFluidInlets('hand_state_packet_expired');
+      deactivateFluidInlets(latestFluidPacket.authority.reason ?? 'hand_state_packet_expired', true);
     }
     const catchUp = planLiveFluidSimulationCatchUp(frameDecision.fluidAgeMs);
     const fluidStepStartedAt = performance.now();
