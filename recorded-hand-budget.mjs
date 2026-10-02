@@ -36,12 +36,19 @@ function start(command, argv, cwd, name) {
   const process = spawn(command, argv, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   process.stdout.pipe(createWriteStream(`${out}/${name}.stdout.log`));
   process.stderr.pipe(createWriteStream(`${out}/${name}.stderr.log`));
-  const completion = new Promise(resolve => process.once('exit', (code, signal) => resolve({code, signal})));
+  const completion = new Promise(resolve => {
+    process.once('error', error => {
+      process.launchError = error;
+      resolve({ error: String(error), code: null, signal: null });
+    });
+    process.once('exit', (code, signal) => resolve({code, signal}));
+  });
   processes.push({ process, completion });
   return process;
 }
 async function awaitHttp(url, process) {
   for (;;) {
+    if (process.launchError) throw process.launchError;
     if (process.exitCode !== null || process.signalCode) throw new Error(`service_exited:${url}`);
     try { const response = await fetch(url); if(response.ok) return; } catch {}
     await delay(100);
@@ -79,6 +86,7 @@ window.__recordedBudgetPin = async function() {
   return collectLiveHandDebugState();
 };
 window.__recordedBudgetStart = start;
+window.__recordedBudgetSamples = () => structuredClone(latencySamples);
 `;
 
 try {
@@ -91,7 +99,12 @@ try {
   report.input = { cameraPath, cameraSha256: sha(readFileSync(cameraPath)),
     sourceSessionId: trace.sourceReport.sessionId, sourceRawSha256: trace.sourceHashes['raw-camera.webm'],
     cycleDurationMs: durationMs, cycles: 2,
-    cycleRationale: 'one complete source cycle includes cold inference; second full cycle measures the warmed route' };
+    cycleRationale: 'two full source cycles; snapshots are cumulative, not warm-only percentiles' };
+  const conversion = JSON.parse(readFileSync(args.get('--camera-receipt')));
+  assert.equal(conversion.schema, 'hand-camera-conversion.v0');
+  assert.equal(conversion.sourceSha256, report.input.sourceRawSha256, 'wrong_camera_source');
+  assert.equal(conversion.outputSha256, report.input.cameraSha256, 'wrong_converted_camera');
+  report.input.conversionReceipt = conversion;
   report.browserExecutable = browserPath;
   report.injectionSha256 = sha(pinInjection);
   report.failurePhase = 'vite_start'; save();
@@ -134,6 +147,13 @@ try {
     current.phase = 'start_hand'; save();
     await page.evaluate(() => window.__recordedBudgetStart());
     assert.equal(await page.evaluate(() => window.__lermsLiveHandDebugState().running), true);
+    current.observedSidecarStart = readFileSync(`${stateDir}/process/sidecar/sidecar.stdout.log`, 'utf8')
+      .split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } })
+      .findLast(event => event.event === 'sidecar_started');
+    assert(current.observedSidecarStart, 'missing_observed_sidecar_start');
+    assert.equal(current.observedSidecarStart.chunkSegments, chunks, 'wrong_effective_chunks');
+    assert.equal(current.observedSidecarStart.burstMode, chunks ? 'chunked' : 'monolithic');
+    assert.equal(current.observedSidecarStart.mlxRoot, resolve(args.get('--wilor-root')));
     const pinned = await page.evaluate(() => window.__recordedBudgetPin());
     assert.equal(pinned.fluid.requestedParticleCount, 2400);
     assert.equal(pinned.fluid.latestPacketActiveEmitterCount, 5);
@@ -144,22 +164,25 @@ try {
     current.browserVersion = browser.version();
     current.phase = 'two_complete_camera_cycles'; current.measurementStartedAtMs = Date.now(); save();
     await page.waitForTimeout(durationMs);
-    current.firstCycle = await page.evaluate(() => window.__lermsLiveHandDebugState()); save();
+    current.firstCycle = await page.evaluate(() => window.__lermsLiveHandDebugState());
+    current.secondWindowStartedAtMs = Date.now(); save();
     await page.waitForTimeout(durationMs);
     current.twoCycles = await page.evaluate(() => window.__lermsLiveHandDebugState());
+    current.viewerSamples = await page.evaluate(() => window.__recordedBudgetSamples());
     current.measurementStoppedAtMs = Date.now();
     await page.screenshot({ path: `${out}/${name}/final-view.png` });
     current.runtimeHealth = await (await fetch(`${runtimeUrl}/health`)).json();
+    current.phase = 'stop_and_flush'; save();
+    await page.getByRole('button', { name: 'Stop Hand', exact: true }).click();
+    await page.getByRole('button', { name: 'Start Hand', exact: true }).waitFor();
+    current.final = await page.evaluate(() => window.__lermsLiveHandDebugState());
+    current.phase = 'evidence_validation'; save();
     assert(current.twoCycles.benchmark?.sampleCount > 0, 'no_measured_hand_frames');
     assert.equal(current.twoCycles.benchmark.effectiveRoute, mode === 'hybrid_mano'
       ? 'hand-state-runtime/hybrid-wilor-anchor-browser-fast-mano-v6'
       : 'native_wilor_mini_mlx_detector_sidecar_live', 'wrong_effective_hand_route');
     assert.equal(current.twoCycles.fluid.latestPacketActiveEmitterCount, 5);
     assert.equal(current.twoCycles.fluid.solver.solver_backend, 'webgpu_compute');
-    current.phase = 'stop_and_flush'; save();
-    await page.getByRole('button', { name: 'Stop Hand', exact: true }).click();
-    await page.getByRole('button', { name: 'Start Hand', exact: true }).waitFor();
-    current.final = await page.evaluate(() => window.__lermsLiveHandDebugState());
     current.status = 'captured'; current.phase = null; save();
     await browser.close(); browser = null;
     await stopRuntime();
