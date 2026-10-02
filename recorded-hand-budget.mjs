@@ -78,6 +78,7 @@ window.__recordedBudgetPin = async function() {
   recordedBudgetPacket = structuredClone(latestFluidPacket);
   return collectLiveHandDebugState();
 };
+window.__recordedBudgetStart = start;
 `;
 
 try {
@@ -131,8 +132,8 @@ try {
     });
     await page.goto(`${base}/live-hand.html?hand_route=${mode}&runtime_url=${encodeURIComponent(runtimeUrl)}`);
     current.phase = 'start_hand'; save();
-    await page.getByRole('button', { name: 'Start Hand', exact: true }).click();
-    await page.waitForFunction(() => window.__lermsLiveHandDebugState?.().running === true);
+    await page.evaluate(() => window.__recordedBudgetStart());
+    assert.equal(await page.evaluate(() => window.__lermsLiveHandDebugState().running), true);
     const pinned = await page.evaluate(() => window.__recordedBudgetPin());
     assert.equal(pinned.fluid.requestedParticleCount, 2400);
     assert.equal(pinned.fluid.latestPacketActiveEmitterCount, 5);
@@ -166,6 +167,11 @@ try {
   report.status = 'captured'; report.primaryOutputWritten = true; report.failurePhase = null;
 } catch (error) {
   report.status = 'failed'; report.error = String(error); process.exitCode = 1;
+  const current = report.cases.at(-1);
+  if (current?.status === 'running') {
+    current.status = 'failed';
+    report.failurePhase = `${current.name}:${current.phase}`;
+  }
 } finally {
   await browser?.close();
   await stopRuntime();
