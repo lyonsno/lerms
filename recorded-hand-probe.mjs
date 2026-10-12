@@ -33,14 +33,38 @@ window.__recordedHandProbe = {
       packetSource: latestFluidPacket?.source_route ?? null,
       fluidAvailable: fluidSolver?.available ?? false };
   },
-  apply(state) {
-    const originalNow = Date.now;
-    this.evidenceNowMs = state.frame.frame.captureTimestampMs + 50;
+  capture() {
+    renderer.render(scene, camera);
+    const copy = document.createElement('canvas');
+    copy.width = canvas.width; copy.height = canvas.height;
+    const context = copy.getContext('2d');
+    context.drawImage(canvas, 0, 0);
+    const pixels = context.getImageData(0, 0, copy.width, copy.height).data;
+    const dataUrl = copy.toDataURL('image/png');
+    const visible = handMesh.visible;
+    handMesh.visible = false; renderer.render(scene, camera);
+    context.clearRect(0, 0, copy.width, copy.height);
+    context.drawImage(canvas, 0, 0);
+    const blank = context.getImageData(0, 0, copy.width, copy.height).data;
+    let handPixels = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (Math.abs(pixels[i]-blank[i]) + Math.abs(pixels[i+1]-blank[i+1])
+        + Math.abs(pixels[i+2]-blank[i+2]) > 12) handPixels++;
+    }
+    handMesh.visible = visible; renderer.render(scene, camera);
+    return { dataUrl, handPixels };
+  },
+  apply(state, ageMs = 50, sequenced = false) {
+    this.evidenceNowMs = state.frame.frame.captureTimestampMs + ageMs;
     Date.now = () => this.evidenceNowMs;
-    try { applyState(state); } finally { Date.now = originalNow; }
+    const accepted = sequenced ? applySequencedRuntimeState(state, state.eventDelivery.mode) : (applyState(state), true);
     updateInterpolatedSurface();
     renderer.render(scene, camera);
-    return this.snapshot();
+    return { ...this.snapshot(), accepted };
+  },
+  mode(mode) {
+    deactivateFluidInlets('probe_route_change');
+    sourceMode = mode;
   },
   tick(elapsedMs = 0) {
     const originalNow = Date.now;
@@ -138,11 +162,12 @@ try {
   page.on('pageerror', error => report.errors.push(String(error)));
   report.console = [];
   page.on('console', message => report.console.push({ type: message.type(), text: message.text() }));
-  await page.route('**/src/hand/live-hand.ts', async route => {
+  await page.route(url => url.pathname === '/src/hand/live-hand.ts', async route => {
     const response = await route.fetch();
     const original = await response.text();
     assert(original.includes('function applyState('), 'consumer_module_identity_missing');
     report.servedModuleSha256 = sha(original);
+    report.servedModuleUrl = route.request().url();
     await route.fulfill({ response, body: `${original}\n${injection}` });
   });
   await page.route('**/tests/fixtures/wilor-mano-surface.json', route => route.fulfill({
@@ -154,6 +179,8 @@ try {
   report.failurePhase = 'consumer_load'; save();
   const url = new URL('/live-hand.html?fixture=1&hand_route=hybrid_mano', args.get('--url'));
   await page.goto(url.href);
+  assert(report.servedModuleSha256, 'consumer_module_not_intercepted');
+  assert(await page.evaluate(() => Boolean(window.__recordedHandProbe)), 'consumer_probe_not_installed');
   await page.waitForFunction(() => window.__recordedHandProbe?.snapshot().fluidAvailable === true);
   report.browserVersion = browser.version();
   report.effectiveUrl = page.url();
@@ -162,12 +189,21 @@ try {
     // Keep all source timestamps consistent; freeze the probe clock in module scope.
     return page.evaluate(state => window.__recordedHandProbe.apply(state), state);
   };
+  report.visibilityPixels = {};
+  const capture = async name => {
+    const { dataUrl, handPixels } = await page.evaluate(() => window.__recordedHandProbe.capture());
+    writeFileSync(`${out}/${name}.png`, Buffer.from(dataUrl.split(',')[1], 'base64'));
+    report.visibilityPixels[name] = { file: `${name}.png`, handPixels };
+  };
   report.failurePhase = 'visibility_reproduction'; save();
   const validHybrid = await apply(tracking);
+  await capture('tracking');
   const anchorAfterHybrid = await apply(anchors[0]);
+  await capture('after-correction');
   const recoveredHybrid = await apply(tracking);
   const holdBeforeFluid = await apply(held);
   const holdAfterFluid = await page.evaluate(() => window.__recordedHandProbe.tick());
+  await capture('held-fluid-disabled');
   const heldExpired = await page.evaluate(() => window.__recordedHandProbe.tick(751));
   const recoveryAfterHold = await apply(tracking);
   const trackingExpired = await page.evaluate(() => window.__recordedHandProbe.tick(751));
@@ -179,9 +215,36 @@ try {
   const invalid = structuredClone(tracking);
   invalid.state.frame.mano.vertices = [];
   const partialMesh = await apply(invalid);
+  await capture('invalid-mesh');
+  await apply(tracking);
+  const flipped = structuredClone(anchors[0]);
+  flipped.state.frame.hand.handedness = tracking.state.frame.hand.handedness === 'right' ? 'left' : 'right';
+  const wrongHand = await apply(flipped);
+  const expiredIncoming = await page.evaluate(state => window.__recordedHandProbe.apply(state, 751), tracking.state);
+  const fallback = fastRows.find(row => row.state.frame.diagnostics.fallbackState === 'stale_wilor_anchor');
+  assert(fallback, 'observed_stale_anchor_fallback_missing');
+  await apply(tracking);
+  const boundedFallback = await apply(fallback);
+  const expiredFallback = await page.evaluate(() => window.__recordedHandProbe.tick(751));
+  await apply(tracking);
+  const identityFallback = structuredClone(fallback);
+  identityFallback.state.frame.diagnostics.fallbackState = 'handedness_discontinuity';
+  const invalidIdentity = await apply(identityFallback);
+  await page.evaluate(() => window.__recordedHandProbe.mode('pure_wilor'));
+  const pureFrame = await apply(anchors[0]);
+  await page.evaluate(() => window.__recordedHandProbe.mode('hybrid_mano'));
+  const correctionOnly = await apply(anchors[0]);
+  const sequencedTracking = structuredClone(tracking.state);
+  sequencedTracking.eventDelivery.mode = 'fast_ingest_response';
+  const sequenced = await page.evaluate(state => window.__recordedHandProbe.apply(state, 50, true), sequencedTracking);
+  const duplicate = await page.evaluate(state => window.__recordedHandProbe.apply(state, 50, true), sequencedTracking);
+  const olderAnchor = structuredClone(anchors[0].state);
+  olderAnchor.eventDelivery.mode = 'long_poll';
+  const outOfOrder = await page.evaluate(state => window.__recordedHandProbe.apply(state, 50, true), olderAnchor);
   report.visibilityReproduction = { validHybrid, anchorAfterHybrid, recoveredHybrid,
     holdBeforeFluid, holdAfterFluid, heldExpired, trackingExpired, wrongRouteRejected,
-    recoveryAfterHold, partialMesh,
+    recoveryAfterHold, partialMesh, wrongHand, expiredIncoming, boundedFallback,
+    expiredFallback, invalidIdentity, pureFrame, correctionOnly, sequenced, duplicate, outOfOrder,
     sourceSequences: { tracking: tracking.eventSequence, held: held.eventSequence, anchor: anchors[0].eventSequence },
     contractChecks: { validHybridVisible: validHybrid.visible,
       anchorDoesNotEraseHybrid: anchorAfterHybrid.visible,
@@ -194,6 +257,22 @@ try {
       unknownRouteRejected: !wrongRouteRejected.visible,
       nextTrackingFrameRecovers: recoveryAfterHold.visible,
       partialMeshRejected: !partialMesh.visible } };
+  Object.assign(report.visibilityReproduction.contractChecks, {
+    correctionHandednessChangeClears: !wrongHand.visible,
+    expiredIncomingRejected: !expiredIncoming.visible,
+    staleAnchorFallbackHeld: boundedFallback.visible && boundedFallback.heldSurfaceReason === 'stale_wilor_anchor',
+    staleAnchorFallbackExpires: !expiredFallback.visible,
+    identityFallbackClears: !invalidIdentity.visible,
+    pureRouteStillPresents: pureFrame.visible,
+    correctionCannotCreateHybridSurface: !correctionOnly.visible,
+    directResponseApplied: sequenced.accepted && sequenced.visible,
+    duplicateIgnored: !duplicate.accepted && duplicate.visible,
+    outOfOrderIgnored: !outOfOrder.accepted && outOfOrder.visible,
+    trackingPixelsPresent: report.visibilityPixels.tracking.handPixels > 0,
+    correctionPixelsPresent: report.visibilityPixels['after-correction'].handPixels > 0,
+    heldPixelsPresent: report.visibilityPixels['held-fluid-disabled'].handPixels > 0,
+    invalidPixelsAbsent: report.visibilityPixels['invalid-mesh'].handPixels === 0,
+  });
   assert(validHybrid.visible && recoveredHybrid.visible && holdBeforeFluid.visible
     && recoveryAfterHold.visible && !partialMesh.visible, 'reproduction_controls_failed');
   save();

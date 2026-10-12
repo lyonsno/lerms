@@ -367,7 +367,8 @@ function normalizePendingAnchorTruth(diagnostics: RecordLike): PendingAnchorTrut
 export function normalizeTransientHybridFallback(value: unknown): TransientHybridFallbackTruth | null {
   try {
     const state = record(value, 'runtime fallback state');
-    if (state.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER || state.status !== 'fallback') return null;
+    // Envelope freshness describes delivery age; frame authority describes the hand.
+    if (state.runtimeOwner !== LIVE_HAND_RUNTIME_OWNER || !['fresh', 'fallback'].includes(String(state.status))) return null;
     const frame = record(state.frame, 'runtime fallback frame');
     const source = record(frame.source, 'runtime fallback source');
     const authority = record(frame.authority, 'runtime fallback authority');

@@ -1519,6 +1519,14 @@ assert(
   transientHybridFallbackReason(transientFallbackState) === 'reanchor_step_trust_conflict',
   'admits a source-identifiable transient hybrid fallback for stale-surface presentation',
 );
+assert(
+  transientHybridFallbackReason({ ...transientFallbackState, status: 'fresh' }) === 'reanchor_step_trust_conflict',
+  'fresh delivery of an explicitly stale hybrid frame preserves bounded visual hold eligibility',
+);
+assert(
+  normalizeTransientHybridFallback({ ...malformedFreshAuthorityFallback, status: 'fresh' }) === null,
+  'fresh delivery cannot turn conflicting live authority into a fallback hold',
+);
 const failedPendingFallback = normalizeTransientHybridFallback({
   ...transientFallbackState,
   frame: {
