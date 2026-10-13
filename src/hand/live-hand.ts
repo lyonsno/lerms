@@ -271,6 +271,8 @@ let fluidSimulationClockAt = 0;
 let lastFluidWallSubmitAt = 0;
 let captureWorker: Worker | null = null;
 let captureWorkerError: string | null = null;
+let latestCaptureFailure: Record<string, unknown> | null = null;
+let captureDeadlineMissCount = 0;
 let landmarkerWorker: Worker | null = null;
 let landmarkerWorkerReady = false;
 let landmarkerWorkerError: string | null = null;
@@ -1227,9 +1229,21 @@ function disposeCaptureWorker(error: Error): void {
   captureWorker = null;
 }
 
-function failCaptureWorker(worker: Worker, error: Error): void {
+function failCaptureWorker(worker: Worker, error: Error, expiredCaptureId: string | null = null): void {
   if (captureWorker !== worker) return;
-  captureWorkerError = error.message;
+  latestCaptureFailure = {
+    schema: 'lerms.live-hand-capture-failure.v0',
+    routeIdentity: LIVE_HAND_CAPTURE_WORKER_ROUTE,
+    captureId: expiredCaptureId,
+    failurePhase: expiredCaptureId === null ? 'worker_failure' : 'encode_deadline',
+    error: error.message,
+    failedAtMs: Date.now(),
+    recovery: expiredCaptureId === null ? 'requires_restart' : 'next_camera_frame',
+    primaryOutputWritten: false,
+  };
+  // A late JPEG loses this correction, not the independent landmark stream.
+  captureWorkerError = expiredCaptureId === null ? error.message : null;
+  if (expiredCaptureId !== null) captureDeadlineMissCount += 1;
   disposeCaptureWorker(error);
   deactivateFluidInlets('capture_worker_failed');
   setStatus(error.message, 'error');
@@ -1242,6 +1256,7 @@ function ensureCaptureWorker(): Worker {
   }
   const worker = new Worker(new URL('./live-hand-capture.worker.ts', import.meta.url), { type: 'module' });
   worker.addEventListener('message', event => {
+    if (captureWorker !== worker) return;
     const value = event.data as Record<string, unknown>;
     const captureId = typeof value?.captureId === 'string' ? value.captureId : '';
     const pending = pendingCaptureWorkerResults.get(captureId);
@@ -1284,7 +1299,7 @@ function encodeCameraFrame(
       if (!pendingCaptureWorkerResults.has(captureId)) return;
       failCaptureWorker(worker, new Error(
         `${LIVE_HAND_CAPTURE_WORKER_ROUTE} missed the ${LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS}ms live-frame deadline`,
-      ));
+      ), captureId);
     }, LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS);
     pendingCaptureWorkerResults.set(captureId, { resolve, reject, timeoutId });
     try {
@@ -1663,6 +1678,8 @@ async function start(): Promise<void> {
   ]);
   sidecarStatusTruth = modelStatus;
   captureWorkerError = null;
+  latestCaptureFailure = null;
+  captureDeadlineMissCount = 0;
   landmarkerWorkerError = null;
   latestLandmarkerFailure = null;
   latestFastIngestReceipt = null;
@@ -2145,6 +2162,8 @@ function collectLiveHandDebugState(): Record<string, unknown> {
       route: LIVE_HAND_CAPTURE_WORKER_ROUTE,
       workerActive: Boolean(captureWorker),
       workerError: captureWorkerError,
+      latestFailure: latestCaptureFailure,
+      deadlineMissCount: captureDeadlineMissCount,
       acquireMs: distribution(captureAcquireMs),
       workerEncodeMs: distribution(captureWorkerEncodeMs),
       replyDeadlineMs: LIVE_HAND_CAPTURE_REPLY_DEADLINE_MS,

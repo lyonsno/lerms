@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import './live-hand-capture-recovery-contracts.mjs';
 
 const source = readFileSync(new URL('../src/hand/live-hand-landmarker.worker.ts', import.meta.url), 'utf8');
 const liveHandSource = readFileSync(new URL('../src/hand/live-hand.ts', import.meta.url), 'utf8');
